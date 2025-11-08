@@ -200,6 +200,7 @@ private:
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI,
 		PASS_MODE_DEPTH_MATERIAL,
 		PASS_MODE_SDF,
+		PASS_MODE_VISIBILITY_BUFFER,
 		PASS_MODE_MAX
 	};
 
@@ -441,6 +442,7 @@ private:
 	void _setup_environment(const RenderDataRD *p_render_data, bool p_no_fog, const Size2i &p_screen_size, const Color &p_default_bg_color, bool p_opaque_render_buffers = false, bool p_apply_alpha_multiplier = false, bool p_pancake_shadows = false, int p_index = 0);
 	void _setup_voxelgis(const PagedArray<RID> &p_voxelgis);
 	void _setup_lightmaps(const RenderDataRD *p_render_data, const PagedArray<RID> &p_lightmaps, const Transform3D &p_cam_transform);
+	void _render_visibility_buffer_pass(RenderDataRD *p_render_data, const RendererRD::MaterialStorage::Samplers &p_samplers, bool p_reverse_cull, const SceneShaderForwardClustered::ShaderSpecialization &p_base_specialization);
 
 	struct RenderElementInfo {
 		enum { MAX_REPEATS = (1 << 20) - 1 };

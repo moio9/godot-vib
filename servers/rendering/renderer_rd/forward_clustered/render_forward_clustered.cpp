@@ -479,6 +479,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 				ERR_FAIL_COND_MSG(p_params->view_count > 1, "Multiview not supported for SDF pass");
 				pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_SDF;
 			} break;
+			case PASS_MODE_VISIBILITY_BUFFER: {
+				pipeline_key.version = (p_params->view_count > 1) ? SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW : SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER;
+			} break;
 		}
 
 		pipeline_key.framebuffer_format_id = framebuffer_format;
@@ -657,6 +660,9 @@ void RenderForwardClustered::_render_list(RenderingDevice::DrawListID p_draw_lis
 		} break;
 		case PASS_MODE_SDF: {
 			_render_list_template<PASS_MODE_SDF>(p_draw_list, p_framebuffer_Format, p_params, p_from_element, p_to_element);
+		} break;
+		case PASS_MODE_VISIBILITY_BUFFER: {
+			_render_list_template<PASS_MODE_VISIBILITY_BUFFER>(p_draw_list, p_framebuffer_Format, p_params, p_from_element, p_to_element);
 		} break;
 		default: {
 			// Unknown pass mode.
@@ -1223,6 +1229,53 @@ void RenderForwardClustered::_setup_lightmaps(const RenderDataRD *p_render_data,
 	if (scene_state.lightmaps_used > 0) {
 		RD::get_singleton()->buffer_update(scene_state.lightmap_buffer, 0, sizeof(LightmapData) * scene_state.lightmaps_used, scene_state.lightmaps);
 	}
+}
+
+void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_render_data, const RendererRD::MaterialStorage::Samplers &p_samplers, bool p_reverse_cull, const SceneShaderForwardClustered::ShaderSpecialization &p_base_specialization) {
+	ERR_FAIL_NULL(p_render_data);
+
+	if (p_render_data->reflection_probe.is_valid()) {
+		return; // Debug visibility buffer is only meaningful for the main view.
+	}
+
+	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	ERR_FAIL_COND(rb.is_null());
+
+	RID vb_vis = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
+	RID vb_aux = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+	RID vb_depth = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+
+	if (vb_vis.is_null() || vb_depth.is_null()) {
+		return;
+	}
+
+	RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache_multiview(rb->get_view_count(), vb_vis, vb_aux, vb_depth);
+
+	RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, RID(), p_samplers);
+
+	RenderListParameters render_list_params(
+			render_list[RENDER_LIST_OPAQUE].elements.ptr(),
+			render_list[RENDER_LIST_OPAQUE].element_info.ptr(),
+			render_list[RENDER_LIST_OPAQUE].elements.size(),
+			p_reverse_cull,
+			PASS_MODE_VISIBILITY_BUFFER,
+			0,
+			true,
+			false,
+			rp_uniform_set,
+			false,
+			Vector2(),
+			p_render_data->scene_data->lod_distance_multiplier,
+			p_render_data->scene_data->screen_mesh_lod_threshold,
+			p_render_data->scene_data->view_count,
+			0,
+			p_base_specialization);
+
+	Vector<Color> clear_colors;
+	clear_colors.push_back(Color(0, 0, 0, 0));
+	clear_colors.push_back(Color(0, 0, 0, 0));
+
+	_render_list_with_draw_list(&render_list_params, framebuffer, RD::DRAW_CLEAR_ALL, clear_colors, 0.0f, 0u, p_render_data->render_region);
 }
 
 /* SDFGI */
@@ -2491,6 +2544,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			taa->process(rb, rb->get_base_data_format(), p_render_data->scene_data->z_near, p_render_data->scene_data->z_far);
 			RD::get_singleton()->draw_command_end_label();
 		}
+	}
+
+	if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER) {
+		_render_visibility_buffer_pass(p_render_data, samplers, reverse_cull, base_specialization);
 	}
 
 	if (rb_data.is_valid()) {

@@ -1004,6 +1004,9 @@ layout(location = 2) out vec4 orm_output_buffer;
 layout(location = 3) out vec4 emission_output_buffer;
 layout(location = 4) out float depth_output_buffer;
 
+#elif defined(MODE_RENDER_VISIBILITY)
+layout(location = 0) out uvec4 visibility_id_output;
+layout(location = 1) out vec4 visibility_aux_output;
 #endif // MODE_RENDER_MATERIAL
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
@@ -1159,6 +1162,13 @@ vec3 encode24(vec3 v) {
 
 void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
+
+#ifdef MODE_RENDER_VISIBILITY
+	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID), instance_index);
+	visibility_id_output = uvec4(packed_ids, 0u, 0u);
+	visibility_aux_output = vec4(0.0);
+	return;
+#endif
 
 #ifdef PREMUL_ALPHA_USED
 	float premul_alpha = 1.0;

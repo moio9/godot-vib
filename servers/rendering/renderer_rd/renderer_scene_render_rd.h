@@ -168,10 +168,12 @@ private:
 	uint32_t volumetric_fog_size = 128;
 	uint32_t volumetric_fog_depth = 128;
 	bool volumetric_fog_filter_active = true;
+
+	bool vb_test_pattern_enabled = true;
 	
 	// --- Visibility Buffer (VB) ---
-	ShaderRD *vb_resolve_shader_rd = nullptr; // clasa din vb_resolve.glsl.gen.h
-	RID vb_resolve_shader;     // compute
+	VbResolveShaderRD *vb_resolve_shader_rd = nullptr;
+	RID vb_resolve_shader_version; // ShaderRD version handle
 	RID vb_resolve_pipeline;
 
 	// TEST: fill (runtime)
@@ -182,10 +184,13 @@ private:
 	Vector<RID> vb_out_color_storage;
 	Size2i      vb_out_size = Size2i();
 	uint32_t    vb_out_views = 0;
+	RID vb_dummy_aux_image;
+	RID vb_dummy_depth_image;
 
 	// Asigurări textures/buffers
 	void _ensure_vb_out_storage(RenderSceneBuffersRD *rb);
 	void _ensure_vb_vis_texture(RenderSceneBuffersRD *rb);
+	void _ensure_vb_dummy_images();
 
 	// Etapele VB (test)
 	void visibility_fill_test(RenderSceneBuffersRD *rb, const RenderDataRD *p_render_data);
