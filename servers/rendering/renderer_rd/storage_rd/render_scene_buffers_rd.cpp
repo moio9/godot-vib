@@ -195,6 +195,36 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_COLOR_MSAA, get_base_data_format(), get_color_usage_bits(false, true, can_be_storage), texture_samples, Size2i(), 0, 1, true, true);
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH_MSAA, get_depth_format(false, true, can_be_storage), get_depth_usage_bits(false, true, can_be_storage), texture_samples, Size2i(), 0, 1, true, true);
 	}
+	
+	// --- Visibility Buffer (named textures) -----------------------------------
+	//  - vb_vis   : R32G32_UINT  (object_id, tri_id)
+	//  - vb_aux   : R16G16_SFLOAT (opțional, UV/barycentrics etc.)
+	//  - vb_depth : D32_SFLOAT    (depth prepass VB)
+	{
+		using RD = RenderingDevice;
+
+		// 1) VIS (R32G32_UINT)
+		{
+			const RD::DataFormat fmt = RD::DATA_FORMAT_R32G32_UINT;
+			const uint32_t usage = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, fmt, usage, RD::TEXTURE_SAMPLES_1, internal_size);
+		}
+
+		// 2) AUX (RG16F)
+		{
+			const RD::DataFormat fmt = RD::DATA_FORMAT_R16G16_SFLOAT;
+			const uint32_t usage = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, fmt, usage, RD::TEXTURE_SAMPLES_1, internal_size);
+		}
+
+		// 3) DEPTH prepass-ul VB
+		{
+			const RD::DataFormat fmt = RD::DATA_FORMAT_D32_SFLOAT;
+			const uint32_t usage = RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, fmt, usage, RD::TEXTURE_SAMPLES_1, internal_size);
+		}
+	}
+	// --------------------------------------------------------------------------
 
 	// VRS (note, our vrs object will only be set if VRS is supported)
 	RID vrs_texture;
@@ -306,6 +336,11 @@ RID RenderSceneBuffersRD::create_texture(const StringName &p_context, const Stri
 	tf.usage_bits = p_usage_bits;
 	tf.samples = p_texture_samples;
 	tf.is_discardable = p_discardable;
+	
+	#ifdef DEBUG_ENABLED
+	tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_TO_BIT; //Remember to delete both
+	tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	#endif
 
 	return create_texture_from_format(p_context, p_texture_name, tf, RD::TextureView(), p_unique);
 }

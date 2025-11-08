@@ -37,6 +37,7 @@
 #include "servers/rendering/renderer_rd/shaders/decal_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/light_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/scene_data_inc.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/vb_resolve.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_server_default.h"
 #include "servers/rendering/shader_include_db.h"
@@ -450,6 +451,274 @@ void RendererSceneRenderRD::_render_buffers_copy_depth_texture(const RenderDataR
 	RD::get_singleton()->draw_command_end_label();
 }
 
+#include "servers/rendering/renderer_rd/shader_rd.h" // asigură-te că e inclus
+void RendererSceneRenderRD::visibility_resolve(RenderSceneBuffersRD *rb, const RenderDataRD *p_render_data) {
+	ERR_FAIL_NULL(rb);
+
+	// CODUL SHADERULUI COMPUTE
+	static const char *VB_RESOLVE_CS = R"GLSL(
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(rg32ui,  set = 0, binding = 0) uniform uimage2D vb_vis_image; // (prim_id, mesh_id)
+layout(rgba16f, set = 0, binding = 1) uniform image2D  out_color_image;
+
+void main() {
+	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 sz = imageSize(out_color_image);
+	if (px.x >= sz.x || px.y >= sz.y) return;
+
+	uvec2 id = imageLoad(vb_vis_image, px).xy;
+	if (id.x == 0u && id.y == 0u) {                  // pixel neatins de fill-pass
+		imageStore(out_color_image, px, vec4(1,0,1,1)); // magenta
+		return;
+	}
+	vec3 rgb = vec3( (id.x & 255u)/255.0,
+		             ((id.x>>8)&255u)/255.0,
+		             (id.y & 255u)/255.0 );
+	imageStore(out_color_image, px, vec4(rgb,1));
+}
+
+)GLSL";
+
+
+
+	//----------------------------------------------------------------------
+	// 1) Compile shaderul (DOAR O DATĂ)
+	//----------------------------------------------------------------------
+	if (!vb_resolve_shader.is_valid()) {
+		Vector<String> stage_sources;
+		stage_sources.resize(RenderingDevice::SHADER_STAGE_MAX); // nu 3
+		stage_sources.write[RenderingDevice::SHADER_STAGE_VERTEX]   = String();          // gol
+		stage_sources.write[RenderingDevice::SHADER_STAGE_FRAGMENT] = String();          // gol
+		stage_sources.write[RenderingDevice::SHADER_STAGE_COMPUTE]  = String(VB_RESOLVE_CS); // compute
+
+		Vector<uint64_t> dyn;
+		Vector<RD::ShaderStageSPIRVData> stages_spirv =
+			ShaderRD::compile_stages(stage_sources, dyn);
+
+		ERR_FAIL_COND_MSG(stages_spirv.is_empty(), "compile_stages() failed for vb_resolve.");
+
+		vb_resolve_shader = RD::get_singleton()->shader_create_from_spirv(stages_spirv, "vb_resolve");
+		ERR_FAIL_COND_MSG(!vb_resolve_shader.is_valid(), "shader_create_from_spirv() failed for vb_resolve.");
+	}
+
+	//----------------------------------------------------------------------
+	// 2) Creează pipeline-ul compute (o singură dată)
+	//----------------------------------------------------------------------
+	if (!vb_resolve_pipeline.is_valid()) {
+		vb_resolve_pipeline = RD::get_singleton()->compute_pipeline_create(vb_resolve_shader);
+		ERR_FAIL_COND_MSG(!vb_resolve_pipeline.is_valid(), "Failed to create compute pipeline for vb_resolve.");
+	}
+
+	//----------------------------------------------------------------------
+	// 3) Asigură textura de ieșire (cu STORAGE)
+	//----------------------------------------------------------------------
+	_ensure_vb_out_storage(rb);
+
+	Size2i isz = rb->get_internal_size();
+	if (isz.x <= 0 || isz.y <= 0)
+		return;
+
+	uint32_t gx = (isz.x + 7) / 8;
+	uint32_t gy = (isz.y + 7) / 8;
+
+	//----------------------------------------------------------------------
+	// 4) DISPATCH COMPUTE
+	//----------------------------------------------------------------------
+	RD::ComputeListID cl = RD::get_singleton()->compute_list_begin();
+	RD::get_singleton()->compute_list_bind_compute_pipeline(cl, vb_resolve_pipeline);
+
+	uint32_t view_count = rb->get_view_count();
+	for (uint32_t v = 0; v < view_count; v++) {
+
+		RID tex_vis  = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, v, 0);
+		RID tex_out  = vb_out_color_storage[v];
+
+		Vector<RD::Uniform> uvec;
+		{
+			RD::Uniform u; 
+			u.binding = 0; 
+			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			u.append_id(tex_vis);
+			uvec.push_back(u);
+		}
+		{
+			RD::Uniform u;
+			u.binding = 1;
+			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			u.append_id(tex_out);
+			uvec.push_back(u);
+		}
+
+		VectorView<RD::Uniform> uview(uvec.ptr(), uvec.size());
+		RID set = RD::get_singleton()->uniform_set_create(uview, vb_resolve_shader, 0, false);
+		ERR_FAIL_COND_MSG(!set.is_valid(), "uniform_set_create() NULL la vb_resolve.");
+
+		RD::get_singleton()->compute_list_bind_uniform_set(cl, set, 0);
+		RD::get_singleton()->compute_list_dispatch(cl, gx, gy, 1);
+	}
+	
+	RD::get_singleton()->compute_list_add_barrier(cl);
+
+	RD::get_singleton()->compute_list_end();
+
+	// în loc de texture_copy pe view 0:
+	for (uint32_t v = 0; v < view_count; v++) {
+		RID src    = vb_out_color_storage[v];                 // STORAGE | SAMPLING — ok
+		RID dst_fb = FramebufferCacheRD::get_singleton()->get_cache(rb->get_internal_texture(v));
+		// Copiază prin raster (safe în cadrul command buffer-elor Godot):
+		copy_effects->copy_to_fb_rect(src, dst_fb, Rect2i(0, 0, isz.x, isz.y));
+	}
+}
+
+// ——— VISIBILITY FILL (runtime test) ————————————————————————————————
+void RendererSceneRenderRD::_ensure_vb_vis_texture(RenderSceneBuffersRD *rb) {
+	// Asigură textura RG32UI pe care o scriem în fill-pass (dacă nu e creată încă).
+	// Dacă o ai creată în alt loc, poți sări funcția asta.
+	RD::TextureFormat tf = rb->get_texture_format(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
+	bool need_create = (tf.format == RD::DATA_FORMAT_MAX); // "nu există" în cache-ul RB
+
+	if (need_create) {
+		Size2i isz = rb->get_internal_size();
+		uint32_t usage = RD::TEXTURE_USAGE_STORAGE_BIT |
+		                 RD::TEXTURE_USAGE_CAN_UPDATE_BIT |
+		                 RD::TEXTURE_USAGE_CAN_COPY_TO_BIT |
+		                 RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT |
+		                 RD::TEXTURE_USAGE_SAMPLING_BIT;
+
+		rb->create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS,
+    RD::DATA_FORMAT_R32G32_UINT,
+    RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT |
+    RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT,
+    RD::TEXTURE_SAMPLES_1);
+	}
+}
+
+void RendererSceneRenderRD::visibility_fill_test(RenderSceneBuffersRD *rb, const RenderDataRD *p_render_data) {
+	ERR_FAIL_NULL(rb);
+	_ensure_vb_vis_texture(rb);
+
+	// Compute care scrie un pattern în vb_vis_image (uvec2)
+	static const char *VB_FILL_CS = R"GLSL(
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rg32ui, set = 0, binding = 0) uniform uimage2D vb_vis_image;
+
+void main() {
+	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 sz = imageSize(vb_vis_image);
+	if (px.x >= sz.x || px.y >= sz.y) return;
+
+	uint prim_id = uint((px.x ^ px.y) & 0xFFFFu);
+	uint mesh_id = uint(((px.x * 131u) + (px.y * 17u)) & 0xFFFFu);
+	imageStore(vb_vis_image, px, uvec4(prim_id, mesh_id, 0u, 0u));
+}
+)GLSL";
+
+	// 1) Compile shader (o dată)
+	if (!vb_fill_shader.is_valid()) {
+		Vector<String> stage_sources;
+		stage_sources.resize(RenderingDevice::SHADER_STAGE_MAX);
+		stage_sources.write[RenderingDevice::SHADER_STAGE_COMPUTE] = String(VB_FILL_CS);
+
+		Vector<uint64_t> dyn;
+		Vector<RD::ShaderStageSPIRVData> stages_spirv = ShaderRD::compile_stages(stage_sources, dyn);
+		ERR_FAIL_COND_MSG(stages_spirv.is_empty(), "compile_stages() failed for vb_fill.");
+
+		vb_fill_shader = RD::get_singleton()->shader_create_from_spirv(stages_spirv, "vb_fill");
+		ERR_FAIL_COND_MSG(!vb_fill_shader.is_valid(), "shader_create_from_spirv() failed for vb_fill.");
+	}
+
+	// 2) Pipeline (o dată)
+	if (!vb_fill_pipeline.is_valid()) {
+		vb_fill_pipeline = RD::get_singleton()->compute_pipeline_create(vb_fill_shader);
+		ERR_FAIL_COND_MSG(!vb_fill_pipeline.is_valid(), "Failed to create compute pipeline for vb_fill.");
+	}
+
+	// 3) Dispatch
+	Size2i isz = rb->get_internal_size();
+	if (isz.x <= 0 || isz.y <= 0) {
+		return;
+	}
+	uint32_t gx = (isz.x + 7) / 8;
+	uint32_t gy = (isz.y + 7) / 8;
+
+	RD::ComputeListID cl = RD::get_singleton()->compute_list_begin();
+	RD::get_singleton()->compute_list_bind_compute_pipeline(cl, vb_fill_pipeline);
+
+	uint32_t view_count = rb->get_view_count();
+	for (uint32_t v = 0; v < view_count; v++) {
+		RID tex_vis = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, v, 0);
+
+		Vector<RD::Uniform> uvec;
+		{
+			RD::Uniform u;
+			u.binding = 0;
+			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			u.append_id(tex_vis);
+			uvec.push_back(u);
+		}
+		VectorView<RD::Uniform> uview(uvec.ptr(), uvec.size());
+		RID set = RD::get_singleton()->uniform_set_create(uview, vb_fill_shader, 0, false);
+		ERR_FAIL_COND_MSG(!set.is_valid(), "uniform_set_create() NULL la vb_fill.");
+
+		RD::get_singleton()->compute_list_bind_uniform_set(cl, set, 0);
+		RD::get_singleton()->compute_list_dispatch(cl, gx, gy, 1);
+	}
+
+	RD::get_singleton()->compute_list_add_barrier(cl);
+	RD::get_singleton()->compute_list_end();
+}
+
+void RendererSceneRenderRD::_ensure_vb_out_storage(RenderSceneBuffersRD *rb) {
+	Size2i isz = rb->get_internal_size();
+	uint32_t views = rb->get_view_count();
+
+	bool recreate =
+		(isz != vb_out_size) ||
+		(views != vb_out_views) ||
+		(vb_out_color_storage.size() != (int)views);
+
+	if (!recreate)
+		return;
+
+	for (int i = 0; i < vb_out_color_storage.size(); i++) {
+		if (vb_out_color_storage[i].is_valid())
+			RD::get_singleton()->free_rid(vb_out_color_storage[i]);
+	}
+
+	vb_out_color_storage.clear();
+	vb_out_color_storage.resize(views);
+
+	RD::TextureFormat tf;
+	tf.texture_type = RD::TEXTURE_TYPE_2D;
+	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	tf.width  = MAX(1, isz.x);
+	tf.height = MAX(1, isz.y);
+	tf.depth  = 1;
+	tf.array_layers = 1;
+	tf.mipmaps = 1;
+	tf.samples = RD::TEXTURE_SAMPLES_1;
+
+	tf.usage_bits =
+		RD::TEXTURE_USAGE_STORAGE_BIT |
+		RD::TEXTURE_USAGE_CAN_UPDATE_BIT |
+		RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT |
+		RD::TEXTURE_USAGE_CAN_COPY_TO_BIT |
+		RD::TEXTURE_USAGE_SAMPLING_BIT;
+
+	RD::TextureView tv;
+
+	for (uint32_t v = 0; v < views; v++) {
+		vb_out_color_storage.write[v] =
+			RD::get_singleton()->texture_create(tf, tv);
+	}
+
+	vb_out_size  = isz;
+	vb_out_views = views;
+}
+
 void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const RenderDataRD *p_render_data, bool p_use_msaa) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -478,6 +747,11 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			spatial_upscaler = mfx_spatial;
 #endif
 		}
+	}
+	if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER) {
+		visibility_fill_test(rb.ptr(), p_render_data);
+		visibility_resolve(rb.ptr(), p_render_data);
+		can_use_effects = false;  // dacă ai o astfel de variabilă
 	}
 
 	bool use_smaa = smaa && rb->get_screen_space_aa() == RS::VIEWPORT_SCREEN_SPACE_AA_SMAA;
@@ -963,6 +1237,9 @@ bool RendererSceneRenderRD::_debug_draw_can_use_effects(RS::ViewportDebugDraw p_
 		case RS::VIEWPORT_DEBUG_DRAW_CLUSTER_DECALS:
 		case RS::VIEWPORT_DEBUG_DRAW_CLUSTER_REFLECTION_PROBES:
 		case RS::VIEWPORT_DEBUG_DRAW_INTERNAL_BUFFER:
+			can_use_effects = false;
+			break;
+		case RS::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER:
 			can_use_effects = false;
 			break;
 		// Modes that draws information over part of the viewport needs camera effects because we see partially the normal draw mode.
@@ -1709,6 +1986,11 @@ void RendererSceneRenderRD::init() {
 }
 
 RendererSceneRenderRD::~RendererSceneRenderRD() {
+	for (int i = 0; i < vb_out_color_storage.size(); i++) {
+		if (vb_out_color_storage[i].is_valid()) {
+			RD::get_singleton()->free(vb_out_color_storage[i]);
+		}
+	}
 	if (forward_id_storage) {
 		memdelete(forward_id_storage);
 	}
@@ -1736,6 +2018,12 @@ RendererSceneRenderRD::~RendererSceneRenderRD() {
 	}
 	if (fsr) {
 		memdelete(fsr);
+	}
+	if (vb_resolve_pipeline.is_valid()) {
+		RD::get_singleton()->free_rid(vb_resolve_pipeline);
+	}
+	if (vb_resolve_shader.is_valid()) {
+		RD::get_singleton()->free_rid(vb_resolve_shader);
 	}
 #ifdef METAL_ENABLED
 	if (mfx_spatial) {

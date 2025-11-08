@@ -59,6 +59,11 @@
 #define RB_TEX_BACK_COLOR SNAME("back_color")
 #define RB_TEX_BACK_DEPTH SNAME("back_depth")
 
+#define RB_TEX_VB_VIS      SNAME("vb_vis")      // R32G32_UINT: (object_id, tri_id)
+#define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F
+#define RB_TEX_VB_DEPTH    SNAME("vb_depth")    // D32_SFLOAT
+
+
 class RenderSceneBuffersRD : public RenderSceneBuffers {
 	GDCLASS(RenderSceneBuffersRD, RenderSceneBuffers);
 
@@ -241,6 +246,16 @@ public:
 	_FORCE_INLINE_ RS::ViewportScreenSpaceAA get_screen_space_aa() const { return screen_space_aa; }
 	_FORCE_INLINE_ bool get_use_taa() const { return use_taa; }
 	_FORCE_INLINE_ bool get_use_debanding() const { return use_debanding; }
+	
+	_FORCE_INLINE_ RID get_vb_vis_texture() const {
+	return get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
+	}
+	_FORCE_INLINE_ RID get_vb_aux_texture() const {
+		return get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+	}
+	_FORCE_INLINE_ RID get_vb_depth_texture_rb() const {
+		return get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+	}
 
 	uint64_t get_auto_exposure_version() const { return auto_exposure_version; }
 	void set_auto_exposure_version(const uint64_t p_auto_exposure_version) { auto_exposure_version = p_auto_exposure_version; }
