@@ -502,6 +502,7 @@ private:
 		StringName distance_fade_min;
 		StringName distance_fade_max;
 		StringName ao_light_affect;
+		StringName mesh_blend;
 
 		StringName metallic_texture_channel;
 		StringName ao_texture_channel;
@@ -598,6 +599,7 @@ private:
 	DistanceFadeMode distance_fade = DISTANCE_FADE_DISABLED;
 	float distance_fade_max_distance = 0.0f;
 	float distance_fade_min_distance = 0.0f;
+	float mesh_blend = 0.0f;
 
 	BlendMode blend_mode = BLEND_MODE_MIX;
 	BlendMode detail_blend_mode = BLEND_MODE_MIX;
@@ -838,6 +840,8 @@ public:
 
 	void set_distance_fade_min_distance(float p_distance);
 	float get_distance_fade_min_distance() const;
+	void set_mesh_blend(float p_value);
+	float get_mesh_blend() const;
 
 	void set_emission_operator(EmissionOperator p_op);
 	EmissionOperator get_emission_operator() const;

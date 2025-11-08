@@ -1948,6 +1948,9 @@ void RendererSceneRenderRD::init() {
 
 	GLOBAL_DEF_RST("rendering/debug/visibility_buffer/test_pattern", true);
 	vb_test_pattern_enabled = GLOBAL_GET("rendering/debug/visibility_buffer/test_pattern");
+	GLOBAL_DEF_RST("rendering/mesh_blend/enabled", false);
+	GLOBAL_DEF_RST("rendering/mesh_blend/max_distance", 1.0);
+	GLOBAL_DEF_RST("rendering/mesh_blend/edge_radius_pixels", 8.0);
 
 	decals_set_filter(RS::DecalFilter(int(GLOBAL_GET("rendering/textures/decals/filter"))));
 	light_projectors_set_filter(RS::LightProjectorFilter(int(GLOBAL_GET("rendering/textures/light_projectors/filter"))));
