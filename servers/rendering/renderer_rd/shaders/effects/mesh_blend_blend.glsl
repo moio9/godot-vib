@@ -42,11 +42,11 @@ camera_data;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 resolution;
-	float edge_radius_pixels;
+	float edge_radius;
 	float max_distance;
 	int view_index;
-	int pad0;
-	vec2 pad1;
+	int use_world_radius;
+	vec2 pad0;
 }
 params;
 
@@ -85,22 +85,23 @@ void main() {
 		return;
 	}
 
-    vec2 edge_mask = texelFetch(mask_tex, edge_coord, 0).xy;
-    float edge_id = edge_mask.x;
-    float intensity = max(mask_value.y, edge_mask.y);
-    if (edge_id == 0.0 || edge_id == current_id || intensity <= 0.0) {
-        frag_color = texelFetch(source_color, pixel, 0);
-        return;
-    }
+	vec2 edge_mask = texelFetch(mask_tex, edge_coord, 0).xy;
+	float edge_id = edge_mask.x;
+	if (edge_id == 0.0 || edge_id == current_id) {
+		frag_color = texelFetch(source_color, pixel, 0);
+		return;
+	}
 
-    float distance_falloff = intensity * params.max_distance;
-    if (distance_falloff <= 0.0) {
-        frag_color = texelFetch(source_color, pixel, 0);
-        return;
-    }
+	float material_scale = max(mask_value.y, 0.0);
+	float neighbor_scale = max(edge_mask.y, 0.0);
+	float distance_scale = material_scale > 0.0 ? material_scale : neighbor_scale;
+	float distance_falloff = distance_scale * params.max_distance * 0.01;
+	if (distance_falloff <= 0.0) {
+		frag_color = texelFetch(source_color, pixel, 0);
+		return;
+	}
 
 	vec2 best_offset = vec2(edge_coord) - vec2(pixel);
-	float best_dist = length(best_offset);
 
 	vec2 seam_uv = (vec2(pixel) + best_offset * 2.0 + 0.5) * resolution_rcp;
 	seam_uv = clamp(seam_uv, vec2(0.0), vec2(1.0));
@@ -111,7 +112,10 @@ void main() {
 	vec4 gather_mask = textureGather(mask_tex, seam_uv, 0);
 	vec4 gather_depth = textureGather(source_depth, seam_uv, 0);
 
-	vec3 current_pos = reconstruct_position(pixel_uv, texelFetch(source_depth, pixel, 0).r);
+	float depth_current = texelFetch(source_depth, pixel, 0).r;
+	vec3 current_pos = reconstruct_position(pixel_uv, depth_current);
+	float edge_depth = texelFetch(source_depth, edge_coord, 0).r;
+	vec3 edge_pos = reconstruct_position((vec2(edge_coord) + 0.5) * resolution_rcp, edge_depth);
 
 	vec3 other_color = vec3(0.0);
 	float sum = 0.0;
@@ -134,12 +138,27 @@ void main() {
 		return;
 	}
 
-    other_color /= sum;
-    dweight /= sum;
-    
-    float scale = params.edge_radius_pixels * intensity * 500.0;
+	other_color /= sum;
+	dweight /= sum;
 
-    float radius = max(scale, 0.0001);
-    float weight = clamp(0.5 - best_dist / radius, 0.0, 1.0) * dweight;
-    frag_color = vec4(mix(original.rgb, other_color, weight), 1.0);
+	float world_best_dist = length(edge_pos - current_pos);
+	float radius = params.edge_radius;
+	if (params.use_world_radius == 0) {
+		float pixel_world = 0.0;
+		ivec2 offsets[2] = ivec2[](ivec2(1, 0), ivec2(0, 1));
+		for (int i = 0; i < 2 && pixel_world <= 0.0; i++) {
+			ivec2 neighbor_px = clamp(pixel + offsets[i], ivec2(0), resolution - ivec2(1));
+			float neighbor_depth = texelFetch(source_depth, neighbor_px, 0).r;
+			vec3 neighbor_pos = reconstruct_position((vec2(neighbor_px) + 0.5) * resolution_rcp, neighbor_depth);
+			pixel_world = length(neighbor_pos - current_pos);
+		}
+		if (pixel_world <= 0.0) {
+			pixel_world = 1.0;
+		}
+		radius = params.edge_radius * pixel_world;
+	}
+
+	radius = max(radius*0.01, 0.0001);
+	float weight = clamp(0.5 - world_best_dist / radius, 0.0, 1.0) * dweight;
+	frag_color = vec4(mix(original.rgb, other_color, weight), 1.0);
 }

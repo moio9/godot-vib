@@ -50,15 +50,17 @@ public:
 
 	void update_camera_data(const CameraData &p_data);
 
-	void generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_max_distance, float p_depth_tolerance);
+	void generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_max_distance, float p_depth_tolerance, bool p_require_pair);
 	void jump_flood(RID p_edge_src, RID p_edge_dst, RID p_mask, const Size2i &p_size, int p_spread);
-	void blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius_pixels, float p_max_distance, int p_view_index);
+	void blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, float p_max_distance, int p_view_index, bool p_use_world_radius);
 
 private:
 	struct MaskPushConstant {
 		int32_t resolution[2] = { 0, 0 };
 		float max_distance = 0.0f;
 		float depth_tolerance = 0.0f;
+		int32_t require_pair = 0;
+		float pad[3] = { 0.0f, 0.0f, 0.0f };
 	};
 
 	struct JumpFloodPushConstant {
@@ -69,10 +71,10 @@ private:
 
 	struct BlendPushConstant {
 		int32_t resolution[2] = { 0, 0 };
-		float edge_radius_pixels = 0.0f;
+		float edge_radius = 0.0f;
 		float max_distance = 0.0f;
 		int32_t view_index = 0;
-		int32_t pad0 = 0;
+		int32_t use_world_radius = 0;
 		float pad1[2] = { 0.0f, 0.0f };
 	};
 

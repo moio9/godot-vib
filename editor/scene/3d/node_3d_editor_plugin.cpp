@@ -6165,7 +6165,7 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Internal Buffer"), VIEW_DISPLAY_INTERNAL_BUFFER, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
 			TTRC("Shows the scene rendered in linear colorspace before any tonemapping or post-processing."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Visibility Buffer"), VIEW_DISPLAY_VISIBILITY_BUFFER, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
-			TTRC("Shows the scene rendered in linear colorspace before any tonemapping or post-processing!"));
+			TTRC("Displays per-pixel primitive/instance IDs from the visibility buffer.")
 	view_display_menu->get_popup()->add_submenu_node_item(TTRC("Display Advanced..."), display_submenu, VIEW_DISPLAY_ADVANCED);
 
 	view_display_menu->get_popup()->add_separator();

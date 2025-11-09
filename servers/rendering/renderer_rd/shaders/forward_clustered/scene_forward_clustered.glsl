@@ -1181,10 +1181,7 @@ void fragment_shader(in SceneData scene_data) {
 	visibility_id_output = uvec4(packed_ids, 0u, 0u);
 
 	float material_mesh_blend = sc_get_material_mesh_blend();
-	vec2 aux = vec2(0.0);
-	if (material_mesh_blend > 0.0) {
-		aux = vec2(material_mesh_blend, sc_instance_hash(packed_ids.y));
-	}
+	vec2 aux = vec2(clamp(material_mesh_blend, 0.0, 1.0), sc_instance_hash(packed_ids.y));
 	visibility_aux_output = vec4(aux, 0.0, 0.0);
 	return;
 #endif

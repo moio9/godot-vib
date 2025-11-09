@@ -16,6 +16,7 @@ layout(push_constant, std430) uniform Params {
 	ivec2 resolution;
 	float max_distance;
 	float depth_tolerance;
+	int require_pair;
 }
 params;
 
@@ -60,11 +61,10 @@ void main() {
 			vec2 aux = imageLoad(vb_aux, sample_pixel).xy;
 			float depth_value = imageLoad(mesh_depth, sample_pixel).x;
 
-			if (ids.x != 0u && aux.x > 0.0) {
+			if (ids.x != 0u) {
 				float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
-				float inv_max = params.max_distance > 0.0 ? (1.0 / params.max_distance) : 0.0;
-				float normalized = clamp(aux.x * inv_max, 0.0, 1.0);
-				value = vec2(id_quantized, normalized);
+				float intensity = max(aux.x, 0.0);
+				value = vec2(id_quantized, intensity);
 			}
 
 			int cache_idx = coord_to_index(ivec2(x, y));
@@ -81,7 +81,9 @@ void main() {
 	float current_depth = cached_depth[current_index];
 	imageStore(mesh_mask, pixel, vec4(current, 0.0, 0.0));
 
-	if (current.x <= 0.0) {
+	float current_id = current.x;
+	float current_intensity = current.y;
+	if (current_intensity <= 0.0 || current_id <= 0.0) {
 		imageStore(mesh_edges, pixel, uvec4(0u));
 		return;
 	}
@@ -90,12 +92,17 @@ void main() {
 	for (int i = 0; i < 8; i++) {
 		int neighbor_idx = coord_to_index(local_pixel + neighbor_offsets[i]);
 		vec2 neighbor = cached_mask[neighbor_idx];
-		if (neighbor.x <= 0.0 || neighbor.x == current.x) {
+		float neighbor_id = neighbor.x;
+		if (neighbor_id <= 0.0 || neighbor_id == current_id) {
 			continue;
 		}
 
 		float neighbor_depth = cached_depth[neighbor_idx];
 		if (abs(neighbor_depth - current_depth) > params.depth_tolerance) {
+			continue;
+		}
+
+		if (params.require_pair != 0 && neighbor.y <= 0.0) {
 			continue;
 		}
 
