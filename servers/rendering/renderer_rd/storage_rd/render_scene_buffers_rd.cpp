@@ -220,7 +220,7 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 		// 3) DEPTH prepass-ul VB
 		{
 			const RD::DataFormat fmt = RD::DATA_FORMAT_D32_SFLOAT;
-			const uint32_t usage = RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			const uint32_t usage = RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
 			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, fmt, usage, RD::TEXTURE_SAMPLES_1, internal_size);
 		}
 	}

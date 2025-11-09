@@ -62,6 +62,10 @@
 #define RB_TEX_VB_VIS      SNAME("vb_vis")      // R32G32_UINT: (object_id, tri_id)
 #define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F
 #define RB_TEX_VB_DEPTH    SNAME("vb_depth")    // D32_SFLOAT
+#define RB_TEX_MESH_BLEND_MASK SNAME("mesh_blend_mask")       // RG16F: (id, normalized distance)
+#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords
+#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong
+#define RB_TEX_MESH_BLEND_SOURCE SNAME("mesh_blend_source")   // source color copy
 
 
 class RenderSceneBuffersRD : public RenderSceneBuffers {

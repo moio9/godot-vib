@@ -2546,7 +2546,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		}
 	}
 
-	if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER) {
+	bool visibility_debug = get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER;
+	if (visibility_debug || _mesh_blend_enabled()) {
 		_render_visibility_buffer_pass(p_render_data, samplers, reverse_cull, base_specialization);
 	}
 

@@ -185,6 +185,10 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 		version = SceneShaderForwardClustered::singleton->shader.version_create(false);
 	}
 
+	if (uniforms.has(StringName("mesh_blend"))) {
+		gen_code.defines.push_back(String("#define MATERIAL_HAS_MESH_BLEND\n"));
+	}
+
 	depth_draw = DepthDraw(depth_drawi);
 	if (depth_test_disabledi) {
 		depth_test = DEPTH_TEST_DISABLED;
@@ -757,7 +761,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["BACKLIGHT"] = "backlight";
 		actions.renames["AO"] = "ao";
 		actions.renames["AO_LIGHT_AFFECT"] = "ao_light_affect";
-		actions.renames["MESH_BLEND"] = "mesh_blend";
+		actions.renames["MESH_BLEND"] = "mesh_blend_value";
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["POINT_COORD"] = "gl_PointCoord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";

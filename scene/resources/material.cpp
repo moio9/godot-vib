@@ -2058,6 +2058,7 @@ void fragment() {)";
 )";
 	}
 
+	code += "	MESH_BLEND = mesh_blend;\n";
 	code += "}\n";
 
 	// We must create the shader outside the shader_map_mutex to avoid potential deadlocks with
@@ -3773,6 +3774,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "distance_fade_mode", PROPERTY_HINT_ENUM, "Disabled,PixelAlpha,PixelDither,ObjectDither"), "set_distance_fade", "get_distance_fade");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "distance_fade_min_distance", PROPERTY_HINT_RANGE, "0,4096,0.01,suffix:m"), "set_distance_fade_min_distance", "get_distance_fade_min_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "distance_fade_max_distance", PROPERTY_HINT_RANGE, "0,4096,0.01,suffix:m"), "set_distance_fade_max_distance", "get_distance_fade_max_distance");
+	ADD_GROUP("Mesh Blend", "mesh_blend");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_blend", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mesh_blend", "get_mesh_blend");
 
 	ADD_GROUP("Stencil", "stencil_");

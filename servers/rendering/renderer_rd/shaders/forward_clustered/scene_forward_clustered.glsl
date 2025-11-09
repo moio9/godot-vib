@@ -1138,6 +1138,19 @@ uint cluster_get_range_clip_mask(uint i, uint z_min, uint z_max) {
 
 #endif //!MODE_RENDER DEPTH
 
+float sc_get_material_mesh_blend() {
+#if defined(MATERIAL_UNIFORMS_USED) && defined(MATERIAL_HAS_MESH_BLEND)
+	return material.m_mesh_blend;
+#else
+	return 0.0;
+#endif
+}
+
+float sc_instance_hash(uint id) {
+	const uint hashed = id * 1664525u + 1013904223u;
+	return float(hashed & 0x00FFFFFFu) * (1.0 / 16777215.0);
+}
+
 #if defined(MODE_RENDER_NORMAL_ROUGHNESS) || defined(MODE_RENDER_MATERIAL)
 // https://advances.realtimerendering.com/s2010/Kaplanyan-CryEngine3(SIGGRAPH%202010%20Advanced%20RealTime%20Rendering%20Course).pdf
 vec3 encode24(vec3 v) {
@@ -1164,9 +1177,15 @@ void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
 
 #ifdef MODE_RENDER_VISIBILITY
-	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID), instance_index);
+	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
 	visibility_id_output = uvec4(packed_ids, 0u, 0u);
-	visibility_aux_output = vec4(0.0);
+
+	float material_mesh_blend = sc_get_material_mesh_blend();
+	vec2 aux = vec2(0.0);
+	if (material_mesh_blend > 0.0) {
+		aux = vec2(material_mesh_blend, sc_instance_hash(packed_ids.y));
+	}
+	visibility_aux_output = vec4(aux, 0.0, 0.0);
 	return;
 #endif
 
@@ -1202,6 +1221,7 @@ void fragment_shader(in SceneData scene_data) {
 	float anisotropy = 0.0;
 	vec2 anisotropy_flow = vec2(1.0, 0.0);
 	vec3 energy_compensation = vec3(1.0);
+	float mesh_blend_value = 0.0;
 #ifndef FOG_DISABLED
 	vec4 fog = vec4(0.0, 0.0, 0.0, 1.0);
 #endif // !FOG_DISABLED

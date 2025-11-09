@@ -1109,6 +1109,7 @@ void main() {
 	float clearcoat_roughness_highp = 0.0;
 	float anisotropy_highp = 0.0;
 	vec2 anisotropy_flow_highp = vec2(1.0, 0.0);
+	float mesh_blend_value = 0.0;
 #ifdef PREMUL_ALPHA_USED
 	float premul_alpha_highp = 1.0;
 #endif

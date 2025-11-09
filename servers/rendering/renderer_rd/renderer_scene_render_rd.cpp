@@ -38,6 +38,7 @@
 #include "servers/rendering/renderer_rd/shaders/light_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/scene_data_inc.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/vb_resolve.glsl.gen.h"
+#include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_server_default.h"
@@ -527,6 +528,106 @@ void RendererSceneRenderRD::visibility_resolve(RenderSceneBuffersRD *rb, const R
 	}
 }
 
+bool RendererSceneRenderRD::_mesh_blend_enabled() const {
+	return mesh_blend != nullptr && bool(GLOBAL_GET("rendering/mesh_blend/enabled"));
+}
+
+void RendererSceneRenderRD::_ensure_mesh_blend_textures(RenderSceneBuffersRD *p_render_buffers) {
+	ERR_FAIL_NULL(p_render_buffers);
+
+	Size2i size = p_render_buffers->get_internal_size();
+	if (size.x <= 0 || size.y <= 0) {
+		return;
+	}
+
+	uint32_t usage = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_MASK, RD::DATA_FORMAT_R16G16_SFLOAT, usage);
+	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE0, RD::DATA_FORMAT_R32G32_UINT, usage);
+	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE1, RD::DATA_FORMAT_R32G32_UINT, usage);
+	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_SOURCE, p_render_buffers->get_base_data_format(), usage);
+}
+
+void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_data) {
+	if (!_mesh_blend_enabled()) {
+		return;
+	}
+
+	ERR_FAIL_NULL(p_render_data);
+	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	ERR_FAIL_COND(rb.is_null());
+
+	RID vb_vis = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
+	RID vb_aux = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+	if (vb_vis.is_null() || vb_aux.is_null()) {
+		return;
+	}
+
+	Size2i size = rb->get_internal_size();
+	if (size.x <= 0 || size.y <= 0) {
+		return;
+	}
+
+	_ensure_mesh_blend_textures(rb.ptr());
+	float max_distance = MAX(0.001f, float(GLOBAL_GET("rendering/mesh_blend/max_distance")));
+	float edge_radius = MAX(1.0f, float(GLOBAL_GET("rendering/mesh_blend/edge_radius_pixels")));
+	float depth_tolerance = MAX(0.0f, float(GLOBAL_GET("rendering/mesh_blend/depth_tolerance")));
+
+	RendererRD::MeshBlend::CameraData camera_data = {};
+	uint32_t view_count = rb->get_view_count();
+	for (uint32_t v = 0; v < MIN(view_count, RendererRD::MeshBlend::CameraData::MAX_CAMERAS); v++) {
+		Projection projection = (view_count > 1) ? p_render_data->scene_data->get_view_projection(v) : p_render_data->scene_data->get_cam_projection();
+		Projection inv_projection = projection.inverse();
+		Transform3D eye_transform = p_render_data->scene_data->cam_transform;
+		if (view_count > 1) {
+			eye_transform.origin += eye_transform.basis.xform(p_render_data->scene_data->view_eye_offset[v]);
+		}
+		Projection inv_view = Projection(eye_transform);
+		Projection inv_view_proj = inv_view * inv_projection;
+		RendererRD::MaterialStorage::store_camera(inv_view_proj, camera_data.inv_view_projection[v]);
+	}
+	mesh_blend->update_camera_data(camera_data);
+
+	RD::get_singleton()->draw_command_begin_label("Mesh Blend");
+
+	for (uint32_t v = 0; v < view_count; v++) {
+		RID mask_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_MASK, v, 0);
+		RID edge_ping = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE0, v, 0);
+		RID edge_pong = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE1, v, 0);
+		RID color_source = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_SOURCE, v, 0);
+
+		RID vb_vis_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, v, 0);
+		RID vb_aux_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, v, 0);
+		RID vb_depth_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, v, 0);
+		if (vb_depth_slice.is_null()) {
+			continue;
+		}
+		mesh_blend->generate_mask(vb_vis_slice, vb_aux_slice, vb_depth_slice, mask_slice, edge_ping, size, max_distance, depth_tolerance);
+
+		int spread = 1;
+		while (spread < int(edge_radius)) {
+			spread <<= 1;
+		}
+		if (spread < 1) {
+			spread = 1;
+		}
+
+		RID current_edge = edge_ping;
+		RID next_edge = edge_pong;
+		while (spread >= 1) {
+			mesh_blend->jump_flood(current_edge, next_edge, mask_slice, size, spread);
+			SWAP(current_edge, next_edge);
+			spread >>= 1;
+		}
+
+		copy_effects->copy_to_rect(rb->get_internal_texture(v), color_source, Rect2i(0, 0, size.x, size.y));
+
+		RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache(rb->get_internal_texture(v));
+		int view_slot = MIN<int>(v, int(RendererRD::MeshBlend::CameraData::MAX_CAMERAS) - 1);
+		mesh_blend->blend(color_source, rb->get_depth_texture(v), mask_slice, current_edge, framebuffer, size, edge_radius, max_distance, view_slot);
+	}
+
+	RD::get_singleton()->draw_command_end_label();
+}
 // ——— VISIBILITY FILL (runtime test) ————————————————————————————————
 void RendererSceneRenderRD::_ensure_vb_vis_texture(RenderSceneBuffersRD *rb) {
 	// Asigură textura RG32UI pe care o scriem în fill-pass (dacă nu e creată încă).
@@ -731,6 +832,10 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		}
 		visibility_resolve(rb.ptr(), p_render_data);
 		can_use_effects = false;  // dacă ai o astfel de variabilă
+	}
+
+	if (_mesh_blend_enabled()) {
+		_process_mesh_blend(p_render_data);
 	}
 
 	bool use_smaa = smaa && rb->get_screen_space_aa() == RS::VIEWPORT_SCREEN_SPACE_AA_SMAA;
@@ -1948,9 +2053,10 @@ void RendererSceneRenderRD::init() {
 
 	GLOBAL_DEF_RST("rendering/debug/visibility_buffer/test_pattern", true);
 	vb_test_pattern_enabled = GLOBAL_GET("rendering/debug/visibility_buffer/test_pattern");
-	GLOBAL_DEF_RST("rendering/mesh_blend/enabled", false);
-	GLOBAL_DEF_RST("rendering/mesh_blend/max_distance", 1.0);
-	GLOBAL_DEF_RST("rendering/mesh_blend/edge_radius_pixels", 8.0);
+	GLOBAL_DEF("rendering/mesh_blend/enabled", false);
+	GLOBAL_DEF("rendering/mesh_blend/max_distance", 1.0);
+	GLOBAL_DEF("rendering/mesh_blend/edge_radius_pixels", 8.0);
+	GLOBAL_DEF("rendering/mesh_blend/depth_tolerance", 0.001);
 
 	decals_set_filter(RS::DecalFilter(int(GLOBAL_GET("rendering/textures/decals/filter"))));
 	light_projectors_set_filter(RS::LightProjectorFilter(int(GLOBAL_GET("rendering/textures/light_projectors/filter"))));
@@ -1972,6 +2078,7 @@ void RendererSceneRenderRD::init() {
 	}
 	if (can_use_storage) {
 		fsr = memnew(RendererRD::FSR);
+		mesh_blend = memnew(RendererRD::MeshBlend);
 	}
 #ifdef METAL_ENABLED
 	mfx_spatial = memnew(RendererRD::MFXSpatialEffect);
@@ -2027,6 +2134,9 @@ RendererSceneRenderRD::~RendererSceneRenderRD() {
 	}
 	if (tone_mapper) {
 		memdelete(tone_mapper);
+	}
+	if (mesh_blend) {
+		memdelete(mesh_blend);
 	}
 	if (vrs) {
 		memdelete(vrs);
