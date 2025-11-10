@@ -2053,10 +2053,10 @@ void RendererSceneRenderRD::init() {
 
 	GLOBAL_DEF_RST("rendering/debug/visibility_buffer/test_pattern", true);
 	vb_test_pattern_enabled = GLOBAL_GET("rendering/debug/visibility_buffer/test_pattern");
-	GLOBAL_DEF("rendering/mesh_blend/enabled", false);
-	GLOBAL_DEF("rendering/mesh_blend/max_distance", 1.0);
-	GLOBAL_DEF("rendering/mesh_blend/edge_radius_pixels", 8.0);
-	GLOBAL_DEF("rendering/mesh_blend/world_radius", 0.0);
+	GLOBAL_DEF("rendering/mesh_blend/enabled", true);
+	GLOBAL_DEF("rendering/mesh_blend/max_distance", 100.0);
+	GLOBAL_DEF("rendering/mesh_blend/edge_radius_pixels", 9.0);
+	GLOBAL_DEF("rendering/mesh_blend/world_radius", 20.0);
 	GLOBAL_DEF("rendering/mesh_blend/require_pair", false);
 	GLOBAL_DEF("rendering/mesh_blend/depth_tolerance", 0.001);
 
