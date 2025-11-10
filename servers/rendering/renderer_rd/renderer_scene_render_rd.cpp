@@ -2057,7 +2057,7 @@ void RendererSceneRenderRD::init() {
 	GLOBAL_DEF("rendering/mesh_blend/max_distance", 100.0);
 	GLOBAL_DEF("rendering/mesh_blend/edge_radius_pixels", 9.0);
 	GLOBAL_DEF("rendering/mesh_blend/world_radius", 20.0);
-	GLOBAL_DEF("rendering/mesh_blend/require_pair", false);
+	GLOBAL_DEF("rendering/mesh_blend/neighbor_blend", 0.0);
 	GLOBAL_DEF("rendering/mesh_blend/depth_tolerance", 0.001);
 
 	decals_set_filter(RS::DecalFilter(int(GLOBAL_GET("rendering/textures/decals/filter"))));

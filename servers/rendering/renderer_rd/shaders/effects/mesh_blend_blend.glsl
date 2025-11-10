@@ -41,18 +41,18 @@ layout(set = 0, binding = 0, std140) uniform MeshBlendCamera {
 camera_data;
 
 layout(push_constant, std430) uniform Params {
-	ivec2 resolution;
-	float edge_radius;
-	float max_distance;
-	int view_index;
-	int use_world_radius;
-	vec2 pad0;
-}
+	ivec2 resolution;		// 8
+	float edge_radius;		// 12
+	float max_distance;		// 16
+	int view_index;			// 20
+	int use_world_radius;	// 24
+	float neighbor_blend;	// 28 
+	float pad_pc0;			// 32
 params;
 
 layout(set = 1, binding = 0) uniform sampler2D source_color;
 layout(set = 1, binding = 1) uniform sampler2D source_depth;
-layout(set = 1, binding = 2) uniform sampler2D mask_tex;
+layout(set = 1, binding = 2) uniform sampler2D mask_tex;   // .x = id, .y = material_scale
 layout(set = 1, binding = 3) uniform usampler2D edge_tex;
 
 vec3 reconstruct_position(vec2 uv, float depth) {
@@ -73,6 +73,7 @@ void main() {
 
 	vec2 mask_value = texelFetch(mask_tex, pixel, 0).xy;
 	float current_id = mask_value.x;
+
 	if (current_id == 0.0) {
 		frag_color = texelFetch(source_color, pixel, 0);
 		return;
@@ -94,7 +95,13 @@ void main() {
 
 	float material_scale = max(mask_value.y, 0.0);
 	float neighbor_scale = max(edge_mask.y, 0.0);
-	float distance_scale = material_scale > 0.0 ? material_scale : neighbor_scale;
+
+	float base_scale_max = max(material_scale, neighbor_scale);
+	float base_scale_avg = 0.5 * (material_scale + neighbor_scale);
+
+	float nb = clamp(params.neighbor_blend, 0.0, 1.0);
+	float distance_scale = mix(base_scale_max, base_scale_avg, nb);
+
 	float distance_falloff = distance_scale * params.max_distance * 0.01;
 	if (distance_falloff <= 0.0) {
 		frag_color = texelFetch(source_color, pixel, 0);
@@ -158,7 +165,8 @@ void main() {
 		radius = params.edge_radius * pixel_world;
 	}
 
-	radius = max(radius*0.01, 0.0001);
+	radius = max(radius * 0.01, 0.0001);
 	float weight = clamp(0.5 - world_best_dist / radius, 0.0, 1.0) * dweight;
 	frag_color = vec4(mix(original.rgb, other_color, weight), 1.0);
 }
+

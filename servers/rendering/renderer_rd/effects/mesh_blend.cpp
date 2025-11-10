@@ -95,7 +95,7 @@ void MeshBlend::update_camera_data(const CameraData &p_data) {
 	RD::get_singleton()->buffer_update(camera_ubo, 0, sizeof(CameraData), &p_data);
 }
 
-void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_max_distance, float p_depth_tolerance, bool p_require_pair) {
+void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_max_distance, float p_depth_tolerance, float p_neighbor_blend) {
 	if (!mask_pipeline.is_valid()) {
 		return;
 	}
@@ -125,7 +125,7 @@ void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_
 	push_constant.resolution[1] = p_size.y;
 	push_constant.max_distance = p_max_distance;
 	push_constant.depth_tolerance = p_depth_tolerance;
-	push_constant.require_pair = p_require_pair ? 1 : 0;
+	push_constant.neighbor_blend = p_neighbor_blend;
 	RD::get_singleton()->compute_list_set_push_constant(compute_list, &push_constant, sizeof(MaskPushConstant));
 
 	uint32_t gx = (p_size.x + 7) / 8;
