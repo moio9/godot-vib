@@ -2051,7 +2051,7 @@ void RendererSceneRenderRD::init() {
 	environment_set_volumetric_fog_volume_size(GLOBAL_GET("rendering/environment/volumetric_fog/volume_size"), GLOBAL_GET("rendering/environment/volumetric_fog/volume_depth"));
 	environment_set_volumetric_fog_filter_active(GLOBAL_GET("rendering/environment/volumetric_fog/use_filter"));
 
-	GLOBAL_DEF_RST("rendering/debug/visibility_buffer/test_pattern", true);
+	//GLOBAL_DEF_RST("rendering/debug/visibility_buffer/test_pattern", true);
 	vb_test_pattern_enabled = GLOBAL_GET("rendering/debug/visibility_buffer/test_pattern");
 	GLOBAL_DEF("rendering/mesh_blend/enabled", true);
 	GLOBAL_DEF("rendering/mesh_blend/max_distance", 100.0);
