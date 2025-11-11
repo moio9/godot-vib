@@ -14,7 +14,6 @@ layout(r32f, set = 0, binding = 4) uniform readonly image2D mesh_depth;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 resolution;
-	float max_distance;
 	float depth_tolerance;
 	int require_pair;
 }

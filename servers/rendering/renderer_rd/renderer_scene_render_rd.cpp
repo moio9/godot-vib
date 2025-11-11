@@ -568,7 +568,6 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 	}
 
 	_ensure_mesh_blend_textures(rb.ptr());
-	float max_distance = MAX(0.001f, float(GLOBAL_GET("rendering/mesh_blend/max_distance")));
 	float edge_radius_pixels = MAX(0.001f, float(GLOBAL_GET("rendering/mesh_blend/edge_radius_pixels")));
 	float world_radius = MAX(0.0f, float(GLOBAL_GET("rendering/mesh_blend/world_radius")));
 	bool use_world_radius = world_radius > 0.0f;
@@ -605,7 +604,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		if (vb_depth_slice.is_null()) {
 			continue;
 		}
-		mesh_blend->generate_mask(vb_vis_slice, vb_aux_slice, vb_depth_slice, mask_slice, edge_ping, size, max_distance, depth_tolerance, neighbor_blend);
+		mesh_blend->generate_mask(vb_vis_slice, vb_aux_slice, vb_depth_slice, mask_slice, edge_ping, size, depth_tolerance, neighbor_blend);
 
 	int spread = 1;
 	while (spread < int(edge_radius_pixels)) {
@@ -627,7 +626,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 
 		RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache(rb->get_internal_texture(v));
 		int view_slot = MIN<int>(v, int(RendererRD::MeshBlend::CameraData::MAX_CAMERAS) - 1);
-		mesh_blend->blend(color_source, rb->get_depth_texture(v), mask_slice, current_edge, framebuffer, size, effective_radius, max_distance, view_slot, use_world_radius, neighbor_blend);
+		mesh_blend->blend(color_source, rb->get_depth_texture(v), mask_slice, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);
 	}
 
 	RD::get_singleton()->draw_command_end_label();
@@ -2054,9 +2053,8 @@ void RendererSceneRenderRD::init() {
 	//GLOBAL_DEF_RST("rendering/debug/visibility_buffer/test_pattern", true);
 	vb_test_pattern_enabled = GLOBAL_GET("rendering/debug/visibility_buffer/test_pattern");
 	GLOBAL_DEF("rendering/mesh_blend/enabled", true);
-	GLOBAL_DEF("rendering/mesh_blend/max_distance", 100.0);
 	GLOBAL_DEF("rendering/mesh_blend/edge_radius_pixels", 9.0);
-	GLOBAL_DEF("rendering/mesh_blend/world_radius", 20.0);
+	GLOBAL_DEF("rendering/mesh_blend/world_radius", 3.0);
 	GLOBAL_DEF("rendering/mesh_blend/neighbor_blend", 0.0);
 	GLOBAL_DEF("rendering/mesh_blend/depth_tolerance", 0.001);
 

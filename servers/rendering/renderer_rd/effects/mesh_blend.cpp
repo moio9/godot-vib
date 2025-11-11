@@ -95,7 +95,7 @@ void MeshBlend::update_camera_data(const CameraData &p_data) {
 	RD::get_singleton()->buffer_update(camera_ubo, 0, sizeof(CameraData), &p_data);
 }
 
-void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_max_distance, float p_depth_tolerance, float p_neighbor_blend) {
+void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_depth_tolerance, float p_neighbor_blend) {
 	if (!mask_pipeline.is_valid()) {
 		return;
 	}
@@ -123,9 +123,8 @@ void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_
 	MaskPushConstant push_constant;
 	push_constant.resolution[0] = p_size.x;
 	push_constant.resolution[1] = p_size.y;
-	push_constant.max_distance = p_max_distance;
 	push_constant.depth_tolerance = p_depth_tolerance;
-	push_constant.neighbor_blend = p_neighbor_blend;
+	push_constant.require_pair = (p_neighbor_blend != 0.0f) ? 1 : 0;
 	RD::get_singleton()->compute_list_set_push_constant(compute_list, &push_constant, sizeof(MaskPushConstant));
 
 	uint32_t gx = (p_size.x + 7) / 8;
@@ -167,7 +166,7 @@ void MeshBlend::jump_flood(RID p_edge_src, RID p_edge_dst, RID p_mask, const Siz
 	RD::get_singleton()->compute_list_end();
 }
 
-void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, float p_max_distance, int p_view_index, bool p_use_world_radius, float p_neighbor_blend) {
+void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, int p_view_index, bool p_use_world_radius, float p_neighbor_blend) {
 	ERR_FAIL_COND_MSG(!camera_ubo.is_valid(), "MeshBlend camera buffer was not initialized.");
 
 	RID shader_rid = blend_shader.version_get_shader(blend_shader_version, 0);
@@ -201,7 +200,6 @@ void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, 
 	push_constant.resolution[0] = p_size.x;
 	push_constant.resolution[1] = p_size.y;
 	push_constant.edge_radius = p_edge_radius;
-	push_constant.max_distance = p_max_distance;
 	push_constant.view_index = p_view_index;
 	push_constant.use_world_radius = p_use_world_radius ? 1 : 0;
 	push_constant.neighbor_blend = p_neighbor_blend;

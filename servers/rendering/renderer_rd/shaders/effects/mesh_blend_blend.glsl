@@ -43,11 +43,11 @@ camera_data;
 layout(push_constant, std430) uniform Params {
 	ivec2 resolution;		// 8
 	float edge_radius;		// 12
-	float max_distance;		// 16
-	int view_index;			// 20
-	int use_world_radius;	// 24
-	float neighbor_blend;	// 28
-	float pad_pc0;			// 32
+	int view_index;			// 16
+	int use_world_radius;	// 20
+	float neighbor_blend;	// 24
+	float pad_pc0;			// 28
+	float pad_pc1;			// 32
 } params;
 
 layout(set = 1, binding = 0) uniform sampler2D source_color;
@@ -102,7 +102,7 @@ void main() {
 	float nb = clamp(params.neighbor_blend, -1.0, 1.0);
 	float distance_scale = mix(base_scale_max, base_scale_avg, nb);
 
-	float distance_falloff = distance_scale * params.max_distance * 0.01;
+	float distance_falloff = distance_scale;
 	if (distance_falloff <= 0.0) {
 		frag_color = texelFetch(source_color, pixel, 0);
 		return;
@@ -165,7 +165,7 @@ void main() {
 		radius = params.edge_radius * pixel_world;
 	}
 
-	radius = max(radius * 0.01, 0.0001);
+	radius = max(radius, 0.0001);
 	float weight = clamp(0.5 - world_best_dist / radius, 0.0, 1.0) * dweight;
 	frag_color = vec4(mix(original.rgb, other_color, weight), 1.0);
 }

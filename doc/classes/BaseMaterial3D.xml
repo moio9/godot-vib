@@ -210,7 +210,7 @@
 			Specifies which type of fade to use. Can be any of the [enum DistanceFadeMode]s.
 		</member>
 		<member name="mesh_blend" type="float" setter="set_mesh_blend" getter="get_mesh_blend" default="0.0">
-			Scales how much this material contributes to the visibility buffer seam blending pass. Set to [code]0.0[/code] to disable mesh blending for the material. Values between [code]0.0[/code] and [code]1.0[/code] multiply [member ProjectSettings.rendering/mesh_blend/edge_radius_pixels] and [member ProjectSettings.rendering/mesh_blend/max_distance], letting you fine-tune on a per-material basis.
+			Scales how much this material contributes to the visibility buffer seam blending pass. Set to [code]0.0[/code] to disable mesh blending for the material. Values between [code]0.0[/code] and [code]1.0[/code] multiply [member ProjectSettings.rendering/mesh_blend/edge_radius_pixels] (and [member ProjectSettings.rendering/mesh_blend/world_radius] when enabled), letting you fine-tune on a per-material basis.
 			[b]Note:[/b] Mesh blending only runs when the project setting [member ProjectSettings.rendering/mesh_blend/enabled] is [code]true[/code] and is currently only available with the clustered Forward+ renderer.
 		</member>
 		<member name="emission" type="Color" setter="set_emission" getter="get_emission" default="Color(0, 0, 0, 1)">
