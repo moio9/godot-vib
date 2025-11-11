@@ -46,9 +46,9 @@ layout(push_constant, std430) uniform Params {
 	float max_distance;		// 16
 	int view_index;			// 20
 	int use_world_radius;	// 24
-	float neighbor_blend;	// 28 
+	float neighbor_blend;	// 28
 	float pad_pc0;			// 32
-params;
+} params;
 
 layout(set = 1, binding = 0) uniform sampler2D source_color;
 layout(set = 1, binding = 1) uniform sampler2D source_depth;
@@ -99,7 +99,7 @@ void main() {
 	float base_scale_max = max(material_scale, neighbor_scale);
 	float base_scale_avg = 0.5 * (material_scale + neighbor_scale);
 
-	float nb = clamp(params.neighbor_blend, 0.0, 1.0);
+	float nb = clamp(params.neighbor_blend, -1.0, 1.0);
 	float distance_scale = mix(base_scale_max, base_scale_avg, nb);
 
 	float distance_falloff = distance_scale * params.max_distance * 0.01;
@@ -169,4 +169,3 @@ void main() {
 	float weight = clamp(0.5 - world_best_dist / radius, 0.0, 1.0) * dweight;
 	frag_color = vec4(mix(original.rgb, other_color, weight), 1.0);
 }
-

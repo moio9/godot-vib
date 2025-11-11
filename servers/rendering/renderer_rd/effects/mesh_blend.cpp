@@ -167,7 +167,7 @@ void MeshBlend::jump_flood(RID p_edge_src, RID p_edge_dst, RID p_mask, const Siz
 	RD::get_singleton()->compute_list_end();
 }
 
-void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, float p_max_distance, int p_view_index, bool p_use_world_radius) {
+void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, float p_max_distance, int p_view_index, bool p_use_world_radius, float p_neighbor_blend) {
 	ERR_FAIL_COND_MSG(!camera_ubo.is_valid(), "MeshBlend camera buffer was not initialized.");
 
 	RID shader_rid = blend_shader.version_get_shader(blend_shader_version, 0);
@@ -204,6 +204,7 @@ void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, 
 	push_constant.max_distance = p_max_distance;
 	push_constant.view_index = p_view_index;
 	push_constant.use_world_radius = p_use_world_radius ? 1 : 0;
+	push_constant.neighbor_blend = p_neighbor_blend;
 	RD::get_singleton()->draw_list_set_push_constant(draw_list, &push_constant, sizeof(BlendPushConstant));
 
 	RD::get_singleton()->draw_list_draw(draw_list, false, 1, 3);

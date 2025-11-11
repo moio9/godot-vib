@@ -82,8 +82,7 @@ void main() {
 	imageStore(mesh_mask, pixel, vec4(current, 0.0, 0.0));
 
 	float current_id = current.x;
-	float current_intensity = current.y;
-	if (current_intensity <= 0.0 || current_id <= 0.0) {
+	if (current_id <= 0.0) {
 		imageStore(mesh_edges, pixel, uvec4(0u));
 		return;
 	}

@@ -574,7 +574,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 	bool use_world_radius = world_radius > 0.0f;
 	float effective_radius = use_world_radius ? world_radius : edge_radius_pixels;
 	float depth_tolerance = MAX(0.0f, float(GLOBAL_GET("rendering/mesh_blend/depth_tolerance")));
-	bool require_pair = bool(GLOBAL_GET("rendering/mesh_blend/require_pair"));
+	float neighbor_blend = MAX(0.0f, float(GLOBAL_GET("rendering/mesh_blend/neighbor_blend")));
 
 	RendererRD::MeshBlend::CameraData camera_data = {};
 	uint32_t view_count = rb->get_view_count();
@@ -605,7 +605,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		if (vb_depth_slice.is_null()) {
 			continue;
 		}
-		mesh_blend->generate_mask(vb_vis_slice, vb_aux_slice, vb_depth_slice, mask_slice, edge_ping, size, max_distance, depth_tolerance, require_pair);
+		mesh_blend->generate_mask(vb_vis_slice, vb_aux_slice, vb_depth_slice, mask_slice, edge_ping, size, max_distance, depth_tolerance, neighbor_blend);
 
 	int spread = 1;
 	while (spread < int(edge_radius_pixels)) {
@@ -627,7 +627,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 
 		RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache(rb->get_internal_texture(v));
 		int view_slot = MIN<int>(v, int(RendererRD::MeshBlend::CameraData::MAX_CAMERAS) - 1);
-		mesh_blend->blend(color_source, rb->get_depth_texture(v), mask_slice, current_edge, framebuffer, size, effective_radius, max_distance, view_slot, use_world_radius);
+		mesh_blend->blend(color_source, rb->get_depth_texture(v), mask_slice, current_edge, framebuffer, size, effective_radius, max_distance, view_slot, use_world_radius, neighbor_blend);
 	}
 
 	RD::get_singleton()->draw_command_end_label();

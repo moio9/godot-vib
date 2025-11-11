@@ -52,7 +52,7 @@ public:
 
 	void generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_max_distance, float p_depth_tolerance, float p_neighbor_blend);
 	void jump_flood(RID p_edge_src, RID p_edge_dst, RID p_mask, const Size2i &p_size, int p_spread);
-	void blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, float p_max_distance, int p_view_index, bool p_use_world_radius);
+	void blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, RID p_dest_framebuffer, const Size2i &p_size, float p_edge_radius, float p_max_distance, int p_view_index, bool p_use_world_radius, float p_neighbor_blend);
 
 private:
 	struct MaskPushConstant {
@@ -75,7 +75,8 @@ private:
 		float max_distance = 0.0f;
 		int32_t view_index = 0;
 		int32_t use_world_radius = 0;
-		float pad1[2] = { 0.0f, 0.0f };
+		float neighbor_blend = 0.0f;
+		float pad1 = 0.0f;
 	};
 
 	MeshBlendMaskShaderRD mask_shader;
