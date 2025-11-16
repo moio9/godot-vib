@@ -1938,6 +1938,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 					using_sdfgi ||
 					environment_get_ssao_enabled(p_render_data->environment) ||
 					using_ssil ||
+					environment_get_cs_enabled(p_render_data->environment) ||
 					ce_needs_normal_roughness ||
 					get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_NORMAL_BUFFER ||
 					scene_state.used_normal_texture) {
@@ -1983,7 +1984,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		rb_data->ensure_specular();
 	}
 
-	if (global_surface_data.normal_texture_used && !is_reflection_probe) {
+	bool cs_enabled = !is_reflection_probe && p_render_data->environment.is_valid() && environment_get_cs_enabled(p_render_data->environment);
+	if ((global_surface_data.normal_texture_used || cs_enabled) && !is_reflection_probe && rb_data.is_valid()) {
 		rb_data->ensure_normal_roughness_texture();
 	}
 
@@ -2462,14 +2464,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		_process_compositor_effects(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
 	}
 
-	RD::get_singleton()->draw_command_begin_label("Copy framebuffer for SSIL");
-	if (using_ssil) {
-		RENDER_TIMESTAMP("Copy Final Framebuffer (SSIL)");
-		_copy_framebuffer_to_ssil(rb);
-	}
-	RD::get_singleton()->draw_command_end_label();
-
-	if (p_render_data->environment.is_valid()) {
+	if (!p_render_data->environment.is_valid()) {
+		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
+	} else {
 
 		RID directional_light;
 		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
@@ -2478,16 +2475,55 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 			if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
 				directional_light = li;
+				break;
 			}
 		}
 
-		if(directional_light.is_valid()) {
+		if (!directional_light.is_valid() && p_render_data->lights != nullptr) {
+			const PagedArray<RID> &scene_lights = *p_render_data->lights;
+			for (int i = 0; i < (int)scene_lights.size(); i++) {
+				RID li = scene_lights[i];
+				if (!light_storage->owns_light_instance(li)) {
+					continue;
+				}
+
+				RID base = light_storage->light_instance_get_base_light(li);
+				if (base.is_null()) {
+					continue;
+				}
+
+				if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
+					directional_light = li;
+					break;
+				}
+			}
+		}
+
+		if (!directional_light.is_valid()) {
+			ERR_PRINT_ONCE("Contact shadows: no directional light found, skipping screen-space pass.");
+		} else if (!environment_get_cs_enabled(p_render_data->environment)) {
+			// Contact shadows disabled; nothing to do.
+		} else {
+			RID normal_texture;
+			if (rb_data.is_valid() && rb_data->has_normal_roughness()) {
+				normal_texture = rb_data->get_normal_roughness();
+			}
+
 			RD::get_singleton()->draw_command_begin_label("ScreenSpaceShadows");
 			RENDER_TIMESTAMP("ScreenSpaceShadows");
 			Projection correction;
 			correction.set_depth_correction(true);
 			correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
-			ss_effects->gen_screen_space_shadows(rb, environment_get_cs_thickness(p_render_data->environment), environment_get_cs_max_dist(p_render_data->environment), environment_get_cs_opacity(p_render_data->environment), light_storage->light_instance_get_base_transform(directional_light), correction * p_render_data->scene_data->view_projection[0], p_render_data->scene_data->cam_transform);
+			ss_effects->gen_screen_space_shadows(
+					rb,
+					normal_texture,
+					environment_get_cs_thickness(p_render_data->environment),
+					environment_get_cs_max_dist(p_render_data->environment),
+					environment_get_cs_intensity(p_render_data->environment),
+					environment_get_cs_sample_count(p_render_data->environment),
+					light_storage->light_instance_get_base_transform(directional_light),
+					correction * p_render_data->scene_data->view_projection[0],
+					p_render_data->scene_data->cam_transform);
 			RD::get_singleton()->draw_command_end_label();
 		}
 	}
@@ -2540,12 +2576,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 			RD::get_singleton()->draw_command_end_label();
 
-			if (p_render_data->environment.is_valid()) {
-				RENDER_TIMESTAMP("Sharpen & CA");
-				RD::get_singleton()->draw_command_begin_label("Sharpen & CA");
-				ss_effects->do_misc_effects(rb, rb->get_upscaled_texture(), rb->get_internal_size(), environment_get_sharpen_strength(p_render_data->environment), environment_get_ca_strength(p_render_data->environment));
-				RD::get_singleton()->draw_command_end_label();
-			}
 		} else if (scale_type == SCALE_MFX) {
 #ifdef METAL_MFXTEMPORAL_ENABLED
 			bool reset = rb_data->ensure_mfx_temporal(mfx_temporal_effect);

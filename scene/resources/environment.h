@@ -223,9 +223,11 @@ private:
 	void _update_cs();
 
 	// Contact Shadows
+	bool cs_enabled = true;
 	float cs_thickness = 0.1f;
-	float cs_max_dist = 0.1f;
-	float cs_opacity = 0.8f;
+	float cs_max_dist = 0.5f;
+	float cs_intensity = 1.0f;
+	int cs_sample_count = 16;
 
 protected:
 	static void _bind_methods();
@@ -449,12 +451,16 @@ public:
 	Ref<Texture> get_adjustment_color_correction() const;
 
 	// Contact Shadows
+	void set_cs_enabled(bool p_enabled);
+	bool is_cs_enabled() const;
 	void set_cs_thickness(float thickness);
 	float get_cs_thickness() const;
 	void set_cs_max_dist(float max_dist);
 	float get_cs_max_dist() const;
-	void set_cs_opacity(float opacity);
-	float get_cs_opacity() const;
+	void set_cs_intensity(float intensity);
+	float get_cs_intensity() const;
+	void set_cs_sample_count(int p_samples);
+	int get_cs_sample_count() const;
 
 	Environment();
 	~Environment();

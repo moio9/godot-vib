@@ -46,8 +46,6 @@
 #include "servers/rendering/renderer_rd/shaders/effects/ssil_importance_map.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/ssil_interleave.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/subsurface_scattering.glsl.gen.h"
-#include "servers/rendering/renderer_rd/shaders/effects/sharpen.glsl.gen.h"
-#include "servers/rendering/renderer_rd/shaders/effects/chromatic_abberation.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/screen_space_shadows.glsl.gen.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -163,8 +161,7 @@ public:
 
 	void sub_surface_scattering(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_diffuse, RID p_depth, const Projection &p_camera, const Size2i &p_screen_size);
 
-	void do_misc_effects(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_diffuse, const Size2i &p_screen_size, float p_sharpen_strength, float p_ca_strength);
-	void gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, float p_thickness, float p_max_dist, float p_opacity, Transform3D light_dir, Projection p_projection, Transform3D p_view);
+	void gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_thickness, float p_max_dist, float p_intensity, int p_sample_count, Transform3D light_dir, Projection p_projection, Transform3D p_view);
 
 private:
 	/* Settings */
@@ -534,32 +531,6 @@ private:
 		PipelineDeferredRD pipelines[SUBSURFACE_SCATTERING_MODE_MAX];
 	} sss;
 
-	struct SharpenPushConstant {
-		int32_t screen_size[2];
-		float strength;
-		int32_t pad;
-	};
-
-	struct Sharpen {
-		SharpenPushConstant push_constant;
-		SharpenShaderRD shader;
-		RID shader_version;
-		RID pipelines[1];
-	} sharpen;
-
-	struct ChromaticAbberationPushConstant {
-    	float screen_size_rcp[2];
-    	float strength;
-    	int32_t pad;
-    };
-
-	struct ChromaticAbberation {
-		ChromaticAbberationPushConstant push_constant;
-		ChromaticAbberationShaderRD shader;
-		RID shader_version;
-		RID pipelines[1];
-	} chromatic_abberation;
-
 	struct ScreenSpaceShadowsPushConstant {
 		float screen_size_rcp[2];
 		float screen_size[2];
@@ -568,9 +539,9 @@ private:
 		float thickness;
 
 		float max_dist;
-		float opacity;
-
-		uint32_t pad[2];
+		float intensity;
+		uint32_t sample_count;
+		uint32_t use_normals;
 	};
 
 	struct ScreenSpaceShadowsData {

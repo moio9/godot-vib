@@ -4,10 +4,13 @@
 
 #VERSION_DEFINES
 
+#define BRDF_NDOTL_BIAS 0.1
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(rgba8, set = 0, binding = 0) uniform image2D color_image;
 layout(set = 1, binding = 0) uniform sampler2D depth_image;
+layout(set = 1, binding = 1) uniform sampler2D normal_image;
 
 layout(set = 2, binding = 0, std140) uniform Params {
     mat4x4 proj;
@@ -24,8 +27,9 @@ layout(push_constant, std430) uniform PushConstant {
     float thickness;
 
     float max_dist;
-    float opacity;
-    int pad[2];
+    float intensity;
+    uint sample_count;
+    uint use_normals;
 } push_constant;
 
 float get_noise_interleaved(vec2 screen_pos) {
@@ -66,7 +70,7 @@ bool is_valid_uv(vec2 uv) {
     return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)));
 }
 
-float screen_space_shadow_raycast(vec3 position_ws, vec3 ray_dir_ws, float initial_depth, float linear_depth, float ray_length, vec2 position_ss, mat4 viewmat, mat4 projmat, mat4 invviewmat, mat4 invprojmat, out float fade) {
+float screen_space_shadow_raycast(vec3 position_ws, vec3 ray_dir_ws, float initial_depth, float linear_depth, float ray_length, vec2 position_ss, mat4 viewmat, mat4 projmat, mat4 invviewmat, mat4 invprojmat, int sample_count, out float fade) {
 
     float sss_smoothness = 0.0;
     float ray_bias = 0.1 * 0.0001;
@@ -78,7 +82,7 @@ float screen_space_shadow_raycast(vec3 position_ws, vec3 ray_dir_ws, float initi
         return 1.0;
     }
     float dither_bias = 0.5;
-    int sample_count = 16;
+    int samples = max(sample_count, 1);
     float dither = get_noise_interleaved2(position_ss * push_constant.screen_size) - dither_bias;
 
     vec3 ray_start_ws = position_ws - position_ws * ray_bias;
@@ -98,7 +102,7 @@ float screen_space_shadow_raycast(vec3 position_ws, vec3 ray_dir_ws, float initi
 
     vec3 ray_dir_cs = ray_end_cs.xyz - ray_start_cs.xyz;
 
-    float step_size = 1.0 / float(sample_count);
+    float step_size = 1.0 / float(samples);
     float compare_threshold = abs(ray_ortho_cs.z - ray_start_cs.z) * /*_ContactShadowThickness*/push_constant.thickness * 10. * max(0.07, step_size);
 
     float occluded = 0.;
@@ -107,10 +111,9 @@ float screen_space_shadow_raycast(vec3 position_ws, vec3 ray_dir_ws, float initi
     vec3 ray_start = vec3(start_uv, ray_start_cs.z);
     vec3 ray_dir = vec3(ray_dir_cs.x * 0.5, ray_dir_cs.y * 0.5, ray_dir_cs.z);
 
-    float t = step_size * dither + step_size;
-    // float t = step_size + step_size;
+    float t = step_size * (dither + 1.0);
 
-    for (int i = 0; i < sample_count; i++) {
+    for (int i = 0; i < samples; i++) {
         vec3 sample_pos = ray_start + t * ray_dir;
 
         if (!is_valid_uv(sample_pos.xy)) {
@@ -122,8 +125,8 @@ float screen_space_shadow_raycast(vec3 position_ws, vec3 ray_dir_ws, float initi
         float depth_diff = sample_depth - sample_pos.z;
 
         if (depth_diff > 0.0 && abs(compare_threshold - depth_diff) < compare_threshold && sample_pos.z > 0.0) {
-            // return smoothstep(sss_smoothness, 1.0, (float(i) / float(sample_count))); // Occluded
-            occluded = 1.0f;
+            float progress = float(i) / float(samples);
+            occluded = 1.0 - pow(progress, 4.0);
             break;
         }
 
@@ -154,12 +157,26 @@ void main() {
     roview.xyz = roview.xyz / roview.w;
     vec3 ro = (params.view_inv * vec4(roview.xyz, 1.0)).xyz;
     vec3 rd = -push_constant.light_dir;
+    vec3 normal_ws = vec3(0.0, 0.0, 1.0);
+    if (push_constant.use_normals != 0u) {
+        vec4 encoded = texture(normal_image, uv);
+        vec3 normal_vs = normalize(encoded.xyz * 2.0 - 1.0);
+        normal_ws = normalize(mat3(params.view_inv) * normal_vs);
+        float ndotl = dot(normal_ws, -push_constant.light_dir);
+        if (ndotl <= BRDF_NDOTL_BIAS) {
+            imageStore(color_image, iuv, orig_color);
+            return;
+        }
+        ro += normal_ws * 0.01f;
+    }
     float fade = 0.;
-    float shadow = screen_space_shadow_raycast(ro, rd, depth, -roview.z, push_constant.max_dist, uv, params.view, params.proj, params.view_inv, params.proj_inv, fade);
-    //fade *= clamp((-roview.z - /*_ContactShadowMinDistance*/0.) * (/*_ContactShadowFadeInEnd*/1./0.), 0., 1.);
+    int samples = max(int(push_constant.sample_count), 1);
+    float shadow = screen_space_shadow_raycast(ro, rd, depth, -roview.z, push_constant.max_dist, uv, params.view, params.proj, params.view_inv, params.proj_inv, samples, fade);
     fade *= clamp((/*_ContactShadowFadeEnd*/50. - (-roview.z)) * /*_ContactShadowFadeOneOverRange*/0.2, 0., 1.);
 
-    imageStore(color_image, iuv, vec4(mix(shadow_color, orig_color.rgb, clamp(1.-fade*shadow, 1.-push_constant.opacity, 1.0)), orig_color.a));
+    float shadow_strength = clamp(fade * shadow * push_constant.intensity, 0.0, 1.0);
+    vec3 result = mix(orig_color.rgb, shadow_color, shadow_strength);
+    imageStore(color_image, iuv, vec4(result, orig_color.a));
     // imageStore(color_image, iuv, vec4(vec3(clamp(params.proj[2][3]*1000., 0., 1.0)), orig_color.a));
     // imageStore(color_image, iuv, vec4(vec3(clamp(shadow, 0., 1.)), 1.0));
     //imageStore(color_image, iuv, vec4(orig_color.rgb * max(0.2, shadow), orig_color.a));

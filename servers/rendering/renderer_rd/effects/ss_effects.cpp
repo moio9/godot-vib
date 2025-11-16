@@ -70,8 +70,8 @@ SSEffects::SSEffects() {
 			ss_effects.pipelines[i].create_compute_pipeline(ss_effects.downsample_shader.version_get_shader(ss_effects.downsample_shader_version, i));
 		}
 
-		ss_effects.gather_constants_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(SSEffectsGatherConstants));
-		SSEffectsGatherConstants gather_constants;
+			ss_effects.gather_constants_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(SSEffectsGatherConstants));
+			SSEffectsGatherConstants gather_constants;
 
 		const int sub_pass_count = 5;
 		for (int pass = 0; pass < 4; pass++) {
@@ -159,6 +159,17 @@ SSEffects::SSEffects() {
 		ssil.blur_shader_version = ssil.blur_shader.version_create();
 		for (int i = SSIL_BLUR_PASS; i <= SSIL_BLUR_PASS_WIDE; i++) {
 			ssil.pipelines[i].create_compute_pipeline(ssil.blur_shader.version_get_shader(ssil.blur_shader_version, i - SSIL_BLUR_PASS));
+		}
+
+		{
+			// Screen Space Shadows
+			Vector<String> sss_modes;
+			sss_modes.push_back("\n");
+
+			screen_space_shadows.shader.initialize(sss_modes);
+			screen_space_shadows.shader_version = screen_space_shadows.shader.version_create();
+
+			screen_space_shadows.pipelines[0] = RD::get_singleton()->compute_pipeline_create(screen_space_shadows.shader.version_get_shader(screen_space_shadows.shader_version, 0));
 		}
 	}
 
@@ -419,16 +430,6 @@ void SSEffects::copy_internal_texture_to_last_frame(Ref<RenderSceneBuffersRD> p_
 		}
 	}
 
-	{
-		// Screen Space Shadows
-		Vector<String> sss_modes;
-		sss_modes.push_back("\n");
-
-		screen_space_shadows.shader.initialize(sss_modes);
-		screen_space_shadows.shader_version = screen_space_shadows.shader.version_create();
-
-		screen_space_shadows.pipelines[0] = RD::get_singleton()->compute_pipeline_create(screen_space_shadows.shader.version_get_shader(screen_space_shadows.shader_version, 0));
-	}
 }
 
 SSEffects::~SSEffects() {
@@ -505,13 +506,13 @@ SSEffects::~SSEffects() {
 		sss.shader.version_free(sss.shader_version);
 	}
 
-	{
-		// Cleanup ScreenSpaceShadows
-		screen_space_shadows.shader.version_free(screen_space_shadows.shader_version);
-		if (screen_space_shadows.ubo.is_valid()) {
-			RD::get_singleton()->free(screen_space_shadows.ubo);
+		{
+			// Cleanup ScreenSpaceShadows
+			screen_space_shadows.shader.version_free(screen_space_shadows.shader_version);
+			if (screen_space_shadows.ubo.is_valid()) {
+				RD::get_singleton()->free_rid(screen_space_shadows.ubo);
+			}
 		}
-	}
 
 	singleton = nullptr;
 }
@@ -1833,60 +1834,7 @@ void SSEffects::sub_surface_scattering(Ref<RenderSceneBuffersRD> p_render_buffer
 	}
 }
 
-void SSEffects::do_misc_effects(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_diffuse, const Size2i &p_screen_size, float p_sharpen_strength, float p_ca_strength) {
-	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
-	ERR_FAIL_NULL(uniform_set_cache);
-	MaterialStorage *material_storage = MaterialStorage::get_singleton();
-	ERR_FAIL_NULL(material_storage);
-
-	RID default_sampler = material_storage->sampler_rd_get_default(RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-
-	{
-		RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
-
-		sharpen.push_constant.screen_size[0] = p_screen_size.x;
-		sharpen.push_constant.screen_size[1] = p_screen_size.y;
-		sharpen.push_constant.strength = p_sharpen_strength;
-
-		RID shader = sharpen.shader.version_get_shader(sharpen.shader_version, 0);
-		RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, sharpen.pipelines[0]);
-
-		RD::Uniform u_diffuse(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ p_diffuse }));
-
-		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_diffuse), 0);
-
-		RD::get_singleton()->compute_list_set_push_constant(compute_list, &sharpen.push_constant, sizeof(SharpenPushConstant));
-
-		RD::get_singleton()->compute_list_dispatch_threads(compute_list, p_screen_size.width, p_screen_size.height, 1);
-
-		RD::get_singleton()->compute_list_end();
-	}
-
-	if(p_ca_strength > 0.1f) {
-		RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
-
-		chromatic_abberation.push_constant.screen_size_rcp[0] = 1.0f / p_screen_size.x;
-		chromatic_abberation.push_constant.screen_size_rcp[1] = 1.0f / p_screen_size.y;
-		chromatic_abberation.push_constant.strength = p_ca_strength;
-
-		RID shader = chromatic_abberation.shader.version_get_shader(chromatic_abberation.shader_version, 0);
-		RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, chromatic_abberation.pipelines[0]);
-
-		RD::Uniform u_diffuse(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ p_diffuse }));
-		RD::Uniform u_diffuse_with_sampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, p_diffuse }));
-
-		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_diffuse_with_sampler), 0);
-		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_diffuse), 1);
-
-		RD::get_singleton()->compute_list_set_push_constant(compute_list, &chromatic_abberation.push_constant, sizeof(ChromaticAbberationPushConstant));
-
-		RD::get_singleton()->compute_list_dispatch_threads(compute_list, p_screen_size.width, p_screen_size.height, 1);
-
-		RD::get_singleton()->compute_list_end();
-	}
-}
-
-void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, float p_thickness, float p_max_dist, float p_opacity, Transform3D light_dir, Projection p_projection, Transform3D p_view) {
+void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_thickness, float p_max_dist, float p_intensity, int p_sample_count, Transform3D light_dir, Projection p_projection, Transform3D p_view) {
 	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
 	ERR_FAIL_NULL(uniform_set_cache);
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
@@ -1896,6 +1844,8 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	auto screen_size = p_render_buffers->get_internal_size();
 	auto diffuse = p_render_buffers->get_internal_texture();
 	auto depth = p_render_buffers->get_depth_texture();
+	bool use_normals = p_normal_roughness.is_valid();
+	RID normal_texture = use_normals ? p_normal_roughness : depth;
 	auto dir = light_dir.basis.get_quaternion().normalized().xform(Vector3(0, 0, -1));
 
 	ScreenSpaceShadowsData data;
@@ -1913,7 +1863,9 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	screen_space_shadows.push_constant.light_dir[2] = dir.z;
 	screen_space_shadows.push_constant.thickness = p_thickness;
 	screen_space_shadows.push_constant.max_dist = p_max_dist;
-	screen_space_shadows.push_constant.opacity = p_opacity;
+	screen_space_shadows.push_constant.intensity = CLAMP(p_intensity, 0.0f, 1.0f);
+	screen_space_shadows.push_constant.sample_count = MAX(1, p_sample_count);
+	screen_space_shadows.push_constant.use_normals = use_normals ? 1 : 0;
 	// printf("Light: %f %f %f\n", dir.x, dir.y, dir.z);
 	MaterialStorage::store_camera(p_projection, data.proj);
 	MaterialStorage::store_camera(p_projection.inverse(), data.proj_inv);
@@ -1937,7 +1889,8 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	RD::Uniform u_diffuse(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ diffuse }));
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_diffuse), 0);
 	RD::Uniform u_depthsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, depth }));
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler), 1);
+	RD::Uniform u_normalsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, normal_texture }));
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler), 1);
 	RD::Uniform u_data(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, screen_space_shadows.ubo);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 2, u_data), 2);
 

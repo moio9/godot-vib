@@ -1066,23 +1066,17 @@ Ref<Texture> Environment::get_adjustment_color_correction() const {
 	return adjustment_color_correction;
 }
 
-
-void Environment::set_sharpen_strength(float p_sharpen_strength) {
-	adjustment_sharpen_strength = p_sharpen_strength;
-	_update_adjustment();
+void Environment::set_cs_enabled(bool p_enabled) {
+	if (cs_enabled == p_enabled) {
+		return;
+	}
+	cs_enabled = p_enabled;
+	_update_cs();
+	notify_property_list_changed();
 }
 
-float Environment::get_sharpen_strength() const {
-	return adjustment_sharpen_strength;
-}
-
-void Environment::set_ca_strength(float p_ca_strength) {
-	adjustment_ca_strength = p_ca_strength;
-	_update_adjustment();
-}
-
-float Environment::get_ca_strength() const {
-	return adjustment_ca_strength;
+bool Environment::is_cs_enabled() const {
+	return cs_enabled;
 }
 
 void Environment::set_cs_thickness(float thickness) {
@@ -1103,37 +1097,50 @@ float Environment::get_cs_max_dist() const {
 	return cs_max_dist;
 }
 
-void Environment::set_cs_opacity(float opacity) {
-	cs_opacity = opacity;
+void Environment::set_cs_intensity(float intensity) {
+	cs_intensity = CLAMP(intensity, 0.0f, 1.0f);
 	_update_cs();
 }
 
-float Environment::get_cs_opacity() const {
-	return cs_opacity;
+float Environment::get_cs_intensity() const {
+	return cs_intensity;
+}
+
+void Environment::set_cs_sample_count(int p_samples) {
+	int clamped = CLAMP(p_samples, 1, 128);
+	if (cs_sample_count == clamped) {
+		return;
+	}
+	cs_sample_count = clamped;
+	_update_cs();
+}
+
+int Environment::get_cs_sample_count() const {
+	return cs_sample_count;
 }
 
 
 void Environment::_update_adjustment() {
 	RID color_correction = adjustment_color_correction.is_valid() ? adjustment_color_correction->get_rid() : RID();
 
-	RS::get_singleton()->environment_set_adjustment(
-			environment,
-			adjustment_enabled,
-			adjustment_brightness,
-			adjustment_contrast,
-			adjustment_saturation,
-			use_1d_color_correction,
-			color_correction,
-			adjustment_sharpen_strength,
-			adjustment_ca_strength);
+		RS::get_singleton()->environment_set_adjustment(
+				environment,
+				adjustment_enabled,
+				adjustment_brightness,
+				adjustment_contrast,
+				adjustment_saturation,
+				use_1d_color_correction,
+				color_correction);
 }
 
 void Environment::_update_cs() {
 	RS::get_singleton()->environment_set_cs(
-		environment,
-		cs_thickness,
-		cs_max_dist,
-		cs_opacity);
+			environment,
+			cs_enabled,
+			cs_thickness,
+			cs_max_dist,
+			cs_intensity,
+			cs_sample_count);
 }
 
 // Private methods, constructor and destructor
@@ -1220,6 +1227,10 @@ void Environment::_validate_property(PropertyInfo &p_property) const {
 	}
 
 	if (p_property.name == "background_intensity" && !GLOBAL_GET_CACHED(bool, "rendering/lights_and_shadows/use_physical_light_units")) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	}
+
+	if (!cs_enabled && p_property.name.begins_with("cs_") && p_property.name != "cs_enabled") {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 }
@@ -1593,17 +1604,23 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "adjustment_saturation", PROPERTY_HINT_RANGE, "0.0,2.0,0.01,or_less,or_greater"), "set_adjustment_saturation", "get_adjustment_saturation");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "adjustment_color_correction", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D,Texture3D"), "set_adjustment_color_correction", "get_adjustment_color_correction");
 
+	ClassDB::bind_method(D_METHOD("set_cs_enabled", "enabled"), &Environment::set_cs_enabled);
+	ClassDB::bind_method(D_METHOD("is_cs_enabled"), &Environment::is_cs_enabled);
 	ClassDB::bind_method(D_METHOD("set_cs_thickness", "thickness"), &Environment::set_cs_thickness);
 	ClassDB::bind_method(D_METHOD("get_cs_thickness"), &Environment::get_cs_thickness);
 	ClassDB::bind_method(D_METHOD("set_cs_max_dist", "max_dist"), &Environment::set_cs_max_dist);
 	ClassDB::bind_method(D_METHOD("get_cs_max_dist"), &Environment::get_cs_max_dist);
-	ClassDB::bind_method(D_METHOD("set_cs_opacity"), &Environment::set_cs_opacity);
-	ClassDB::bind_method(D_METHOD("get_cs_opacity"), &Environment::get_cs_opacity);
+	ClassDB::bind_method(D_METHOD("set_cs_intensity", "intensity"), &Environment::set_cs_intensity);
+	ClassDB::bind_method(D_METHOD("get_cs_intensity"), &Environment::get_cs_intensity);
+	ClassDB::bind_method(D_METHOD("set_cs_sample_count", "sample_count"), &Environment::set_cs_sample_count);
+	ClassDB::bind_method(D_METHOD("get_cs_sample_count"), &Environment::get_cs_sample_count);
 
-	ADD_GROUP("Contact Shadows", "cs_");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_thickness", PROPERTY_HINT_RANGE, "0.00,1.0,0.01"), "set_cs_thickness", "get_cs_thickness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_max_dist", PROPERTY_HINT_RANGE, "0.00,1.0,0.01"), "set_cs_max_dist", "get_cs_max_dist");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_opacity", PROPERTY_HINT_RANGE, "0.00,1.0,0.01"), "set_cs_opacity", "get_cs_opacity");
+	ADD_GROUP("SSS", "cs_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cs_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_cs_enabled", "is_cs_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_thickness", PROPERTY_HINT_RANGE, "0.00,2.0,0.01"), "set_cs_thickness", "get_cs_thickness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_max_dist", PROPERTY_HINT_RANGE, "0.00,2.0,0.01"), "set_cs_max_dist", "get_cs_max_dist");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_intensity", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_cs_intensity", "get_cs_intensity");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "cs_sample_count", PROPERTY_HINT_RANGE, "4,128,1"), "set_cs_sample_count", "get_cs_sample_count");
 
 	// Constants
 
@@ -1667,6 +1684,7 @@ Environment::Environment() {
 	_update_glow();
 	_update_fog();
 	_update_adjustment();
+	_update_cs();
 	_update_volumetric_fog();
 	_update_bg_energy();
 	notify_property_list_changed();

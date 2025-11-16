@@ -153,13 +153,13 @@ private:
 		float adjustments_saturation = 1.0f;
 		bool use_1d_color_correction = false;
 		RID color_correction;
-		float sharpen_strength = 0.1f;
-		float ca_strength = 5.0f;
 
 		// Contact Shadows
+		bool cs_enabled = true;
 		float cs_thickness = 0.1f;
 		float cs_max_dist = 0.1f;
-		float cs_opacity = 0.8f;
+		float cs_intensity = 0.8f;
+		int cs_sample_count = 16;
 	};
 
 	mutable RID_Owner<Environment, true> environment_owner;
@@ -303,19 +303,19 @@ public:
 	RS::EnvironmentSDFGIYScale environment_get_sdfgi_y_scale(RID p_env) const;
 
 	// Adjustment
-	void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction, float p_sharpen_strength, float p_ca_strength);
+	void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction);
 	bool environment_get_adjustments_enabled(RID p_env) const;
 	float environment_get_adjustments_brightness(RID p_env) const;
 	float environment_get_adjustments_contrast(RID p_env) const;
 	float environment_get_adjustments_saturation(RID p_env) const;
 	bool environment_get_use_1d_color_correction(RID p_env) const;
 	RID environment_get_color_correction(RID p_env) const;
-	float environment_get_sharpen_strength(RID p_env) const;
-	float environment_get_ca_strength(RID p_env) const;
 
 	// CS
-	void environment_set_cs(RID p_env, float thickness, float max_dist, float opacity);
+	void environment_set_cs(RID p_env, bool enabled, float thickness, float max_dist, float intensity, int sample_count);
+	bool environment_get_cs_enabled(RID p_env) const;
 	float environment_get_cs_thickness(RID p_env) const;
 	float environment_get_cs_max_dist(RID p_env) const;
-	float environment_get_cs_opacity(RID p_env) const;
+	float environment_get_cs_intensity(RID p_env) const;
+	int environment_get_cs_sample_count(RID p_env) const;
 };
