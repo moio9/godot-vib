@@ -533,7 +533,6 @@ SSEffects::~SSEffects() {
 		if (screen_space_shadows.history_dummy.is_valid()) {
 			RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
 		}
-	}
 
 	singleton = nullptr;
 }
