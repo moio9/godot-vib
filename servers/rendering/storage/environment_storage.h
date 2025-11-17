@@ -154,12 +154,17 @@ private:
 		bool use_1d_color_correction = false;
 		RID color_correction;
 
-		// Contact Shadows
-		bool cs_enabled = true;
-		float cs_thickness = 0.1f;
-		float cs_max_dist = 0.1f;
-		float cs_intensity = 0.8f;
-		int cs_sample_count = 16;
+		// Screen-space shadow tracing
+		bool ss_shadow_enabled = true;
+		float ss_shadow_thickness = 0.1f;
+		float ss_shadow_max_distance = 0.1f;
+		float ss_shadow_strength = 0.8f;
+		int ss_shadow_steps = 16;
+		float ss_shadow_light_radius = 0.05f;
+		float ss_shadow_thickness_falloff = 1.0f;
+		float ss_shadow_contact_distance = 1.0f;
+		float ss_shadow_fade_range = 10.0f;
+		float ss_shadow_history_weight = 0.4f;
 	};
 
 	mutable RID_Owner<Environment, true> environment_owner;
@@ -311,11 +316,16 @@ public:
 	bool environment_get_use_1d_color_correction(RID p_env) const;
 	RID environment_get_color_correction(RID p_env) const;
 
-	// CS
-	void environment_set_cs(RID p_env, bool enabled, float thickness, float max_dist, float intensity, int sample_count);
-	bool environment_get_cs_enabled(RID p_env) const;
-	float environment_get_cs_thickness(RID p_env) const;
-	float environment_get_cs_max_dist(RID p_env) const;
-	float environment_get_cs_intensity(RID p_env) const;
-	int environment_get_cs_sample_count(RID p_env) const;
+	// Screen-space shadow tracing
+	void environment_set_screen_space_shadows(RID p_env, bool enabled, float thickness, float max_distance, float strength, int step_count, float light_radius, float thickness_falloff, float contact_distance, float fade_range, float history_weight);
+	bool environment_get_screen_space_shadow_enabled(RID p_env) const;
+	float environment_get_screen_space_shadow_thickness(RID p_env) const;
+	float environment_get_screen_space_shadow_max_distance(RID p_env) const;
+	float environment_get_screen_space_shadow_strength(RID p_env) const;
+	int environment_get_screen_space_shadow_steps(RID p_env) const;
+	float environment_get_screen_space_shadow_light_radius(RID p_env) const;
+	float environment_get_screen_space_shadow_thickness_falloff(RID p_env) const;
+	float environment_get_screen_space_shadow_contact_distance(RID p_env) const;
+	float environment_get_screen_space_shadow_fade_range(RID p_env) const;
+	float environment_get_screen_space_shadow_history_weight(RID p_env) const;
 };

@@ -1066,64 +1066,129 @@ Ref<Texture> Environment::get_adjustment_color_correction() const {
 	return adjustment_color_correction;
 }
 
-void Environment::set_cs_enabled(bool p_enabled) {
-	if (cs_enabled == p_enabled) {
+void Environment::set_ss_shadow_enabled(bool p_enabled) {
+	if (ss_shadow_enabled == p_enabled) {
 		return;
 	}
-	cs_enabled = p_enabled;
-	_update_cs();
+	ss_shadow_enabled = p_enabled;
+	_update_screen_space_shadows();
 	notify_property_list_changed();
 }
 
-bool Environment::is_cs_enabled() const {
-	return cs_enabled;
+bool Environment::is_ss_shadow_enabled() const {
+	return ss_shadow_enabled;
 }
 
-void Environment::set_cs_thickness(float thickness) {
-	cs_thickness = thickness;
-	_update_cs();
+void Environment::set_ss_shadow_thickness(float p_thickness) {
+	ss_shadow_thickness = p_thickness;
+	_update_screen_space_shadows();
 }
 
-float Environment::get_cs_thickness() const {
-	return cs_thickness;
+float Environment::get_ss_shadow_thickness() const {
+	return ss_shadow_thickness;
 }
 
-void Environment::set_cs_max_dist(float max_dist) {
-	cs_max_dist = max_dist;
-	_update_cs();
+void Environment::set_ss_shadow_max_distance(float p_max_distance) {
+	ss_shadow_max_distance = p_max_distance;
+	_update_screen_space_shadows();
 }
 
-float Environment::get_cs_max_dist() const {
-	return cs_max_dist;
+float Environment::get_ss_shadow_max_distance() const {
+	return ss_shadow_max_distance;
 }
 
-void Environment::set_cs_intensity(float intensity) {
-	cs_intensity = CLAMP(intensity, 0.0f, 1.0f);
-	_update_cs();
+void Environment::set_ss_shadow_strength(float p_strength) {
+	ss_shadow_strength = CLAMP(p_strength, 0.0f, 1.0f);
+	_update_screen_space_shadows();
 }
 
-float Environment::get_cs_intensity() const {
-	return cs_intensity;
+float Environment::get_ss_shadow_strength() const {
+	return ss_shadow_strength;
 }
 
-void Environment::set_cs_sample_count(int p_samples) {
+void Environment::set_ss_shadow_steps(int p_samples) {
 	int clamped = CLAMP(p_samples, 1, 128);
-	if (cs_sample_count == clamped) {
+	if (ss_shadow_steps == clamped) {
 		return;
 	}
-	cs_sample_count = clamped;
-	_update_cs();
+	ss_shadow_steps = clamped;
+	_update_screen_space_shadows();
 }
 
-int Environment::get_cs_sample_count() const {
-	return cs_sample_count;
+int Environment::get_ss_shadow_steps() const {
+	return ss_shadow_steps;
+}
+
+void Environment::set_ss_shadow_light_radius(float p_radius) {
+	float clamped = MAX(p_radius, 0.0f);
+	if (Math::is_equal_approx(ss_shadow_light_radius, clamped)) {
+		return;
+	}
+	ss_shadow_light_radius = clamped;
+	_update_screen_space_shadows();
+}
+
+float Environment::get_ss_shadow_light_radius() const {
+	return ss_shadow_light_radius;
+}
+
+void Environment::set_ss_shadow_thickness_falloff(float p_falloff) {
+	float clamped = MAX(p_falloff, 0.0f);
+	if (Math::is_equal_approx(ss_shadow_thickness_falloff, clamped)) {
+		return;
+	}
+	ss_shadow_thickness_falloff = clamped;
+	_update_screen_space_shadows();
+}
+
+float Environment::get_ss_shadow_thickness_falloff() const {
+	return ss_shadow_thickness_falloff;
+}
+
+void Environment::set_ss_shadow_contact_distance(float p_distance) {
+	float clamped = MAX(p_distance, 0.0f);
+	if (Math::is_equal_approx(ss_shadow_contact_distance, clamped)) {
+		return;
+	}
+	ss_shadow_contact_distance = clamped;
+	_update_screen_space_shadows();
+}
+
+float Environment::get_ss_shadow_contact_distance() const {
+	return ss_shadow_contact_distance;
+}
+
+void Environment::set_ss_shadow_fade_range(float p_range) {
+	float clamped = MAX(p_range, 0.0f);
+	if (Math::is_equal_approx(ss_shadow_fade_range, clamped)) {
+		return;
+	}
+	ss_shadow_fade_range = clamped;
+	_update_screen_space_shadows();
+}
+
+float Environment::get_ss_shadow_fade_range() const {
+	return ss_shadow_fade_range;
+}
+
+void Environment::set_ss_shadow_history_weight(float p_weight) {
+	float clamped = CLAMP(p_weight, 0.0f, 1.0f);
+	if (Math::is_equal_approx(ss_shadow_history_weight, clamped)) {
+		return;
+	}
+	ss_shadow_history_weight = clamped;
+	_update_screen_space_shadows();
+}
+
+float Environment::get_ss_shadow_history_weight() const {
+	return ss_shadow_history_weight;
 }
 
 
 void Environment::_update_adjustment() {
 	RID color_correction = adjustment_color_correction.is_valid() ? adjustment_color_correction->get_rid() : RID();
 
-		RS::get_singleton()->environment_set_adjustment(
+			RS::get_singleton()->environment_set_adjustment(
 				environment,
 				adjustment_enabled,
 				adjustment_brightness,
@@ -1133,14 +1198,19 @@ void Environment::_update_adjustment() {
 				color_correction);
 }
 
-void Environment::_update_cs() {
-	RS::get_singleton()->environment_set_cs(
+void Environment::_update_screen_space_shadows() {
+	RS::get_singleton()->environment_set_screen_space_shadows(
 			environment,
-			cs_enabled,
-			cs_thickness,
-			cs_max_dist,
-			cs_intensity,
-			cs_sample_count);
+			ss_shadow_enabled,
+			ss_shadow_thickness,
+			ss_shadow_max_distance,
+			ss_shadow_strength,
+			ss_shadow_steps,
+			ss_shadow_light_radius,
+			ss_shadow_thickness_falloff,
+			ss_shadow_contact_distance,
+			ss_shadow_fade_range,
+			ss_shadow_history_weight);
 }
 
 // Private methods, constructor and destructor
@@ -1230,7 +1300,7 @@ void Environment::_validate_property(PropertyInfo &p_property) const {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 
-	if (!cs_enabled && p_property.name.begins_with("cs_") && p_property.name != "cs_enabled") {
+	if (!ss_shadow_enabled && p_property.name.begins_with("ss_shadow_") && p_property.name != "ss_shadow_enabled") {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 }
@@ -1366,6 +1436,27 @@ void Environment::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ssao_ao_channel_affect", "amount"), &Environment::set_ssao_ao_channel_affect);
 	ClassDB::bind_method(D_METHOD("get_ssao_ao_channel_affect"), &Environment::get_ssao_ao_channel_affect);
 
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_enabled", "enabled"), &Environment::set_ss_shadow_enabled);
+	ClassDB::bind_method(D_METHOD("is_ss_shadow_enabled"), &Environment::is_ss_shadow_enabled);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_thickness", "thickness"), &Environment::set_ss_shadow_thickness);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_thickness"), &Environment::get_ss_shadow_thickness);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_max_distance", "max_distance"), &Environment::set_ss_shadow_max_distance);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_max_distance"), &Environment::get_ss_shadow_max_distance);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_strength", "strength"), &Environment::set_ss_shadow_strength);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_strength"), &Environment::get_ss_shadow_strength);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_steps", "steps"), &Environment::set_ss_shadow_steps);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_steps"), &Environment::get_ss_shadow_steps);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_light_radius", "radius"), &Environment::set_ss_shadow_light_radius);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_light_radius"), &Environment::get_ss_shadow_light_radius);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_thickness_falloff", "falloff"), &Environment::set_ss_shadow_thickness_falloff);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_thickness_falloff"), &Environment::get_ss_shadow_thickness_falloff);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_contact_distance", "contact_distance"), &Environment::set_ss_shadow_contact_distance);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_contact_distance"), &Environment::get_ss_shadow_contact_distance);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_fade_range", "fade_range"), &Environment::set_ss_shadow_fade_range);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_fade_range"), &Environment::get_ss_shadow_fade_range);
+	ClassDB::bind_method(D_METHOD("set_ss_shadow_history_weight", "weight"), &Environment::set_ss_shadow_history_weight);
+	ClassDB::bind_method(D_METHOD("get_ss_shadow_history_weight"), &Environment::get_ss_shadow_history_weight);
+
 	ADD_GROUP("SSAO", "ssao_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ssao_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_ssao_enabled", "is_ssao_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_radius", PROPERTY_HINT_RANGE, "0.01,16,0.01,or_greater"), "set_ssao_radius", "get_ssao_radius");
@@ -1376,6 +1467,18 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_sharpness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssao_sharpness", "get_ssao_sharpness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_light_affect", PROPERTY_HINT_RANGE, "0.00,1,0.01"), "set_ssao_direct_light_affect", "get_ssao_direct_light_affect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_ao_channel_affect", PROPERTY_HINT_RANGE, "0.00,1,0.01"), "set_ssao_ao_channel_affect", "get_ssao_ao_channel_affect");
+
+	ADD_GROUP("SSS", "ss_shadow_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ss_shadow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_ss_shadow_enabled", "is_ss_shadow_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_thickness", PROPERTY_HINT_RANGE, "0.00,2.0,0.01"), "set_ss_shadow_thickness", "get_ss_shadow_thickness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_max_distance", PROPERTY_HINT_RANGE, "0.00,2.0,0.01"), "set_ss_shadow_max_distance", "get_ss_shadow_max_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_strength", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_ss_shadow_strength", "get_ss_shadow_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "ss_shadow_steps", PROPERTY_HINT_RANGE, "4,128,1"), "set_ss_shadow_steps", "get_ss_shadow_steps");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_light_radius", PROPERTY_HINT_RANGE, "0.0,1.0,0.001"), "set_ss_shadow_light_radius", "get_ss_shadow_light_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_thickness_falloff", PROPERTY_HINT_RANGE, "0.0,8.0,0.01"), "set_ss_shadow_thickness_falloff", "get_ss_shadow_thickness_falloff");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_contact_distance", PROPERTY_HINT_RANGE, "0.0,10.0,0.01"), "set_ss_shadow_contact_distance", "get_ss_shadow_contact_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_fade_range", PROPERTY_HINT_RANGE, "0.0,128.0,0.01,or_greater"), "set_ss_shadow_fade_range", "get_ss_shadow_fade_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ss_shadow_history_weight", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_ss_shadow_history_weight", "get_ss_shadow_history_weight");
 
 	// SSIL
 	ClassDB::bind_method(D_METHOD("set_ssil_enabled", "enabled"), &Environment::set_ssil_enabled);
@@ -1604,24 +1707,6 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "adjustment_saturation", PROPERTY_HINT_RANGE, "0.0,2.0,0.01,or_less,or_greater"), "set_adjustment_saturation", "get_adjustment_saturation");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "adjustment_color_correction", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D,Texture3D"), "set_adjustment_color_correction", "get_adjustment_color_correction");
 
-	ClassDB::bind_method(D_METHOD("set_cs_enabled", "enabled"), &Environment::set_cs_enabled);
-	ClassDB::bind_method(D_METHOD("is_cs_enabled"), &Environment::is_cs_enabled);
-	ClassDB::bind_method(D_METHOD("set_cs_thickness", "thickness"), &Environment::set_cs_thickness);
-	ClassDB::bind_method(D_METHOD("get_cs_thickness"), &Environment::get_cs_thickness);
-	ClassDB::bind_method(D_METHOD("set_cs_max_dist", "max_dist"), &Environment::set_cs_max_dist);
-	ClassDB::bind_method(D_METHOD("get_cs_max_dist"), &Environment::get_cs_max_dist);
-	ClassDB::bind_method(D_METHOD("set_cs_intensity", "intensity"), &Environment::set_cs_intensity);
-	ClassDB::bind_method(D_METHOD("get_cs_intensity"), &Environment::get_cs_intensity);
-	ClassDB::bind_method(D_METHOD("set_cs_sample_count", "sample_count"), &Environment::set_cs_sample_count);
-	ClassDB::bind_method(D_METHOD("get_cs_sample_count"), &Environment::get_cs_sample_count);
-
-	ADD_GROUP("SSS", "cs_");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cs_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_cs_enabled", "is_cs_enabled");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_thickness", PROPERTY_HINT_RANGE, "0.00,2.0,0.01"), "set_cs_thickness", "get_cs_thickness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_max_dist", PROPERTY_HINT_RANGE, "0.00,2.0,0.01"), "set_cs_max_dist", "get_cs_max_dist");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_intensity", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_cs_intensity", "get_cs_intensity");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "cs_sample_count", PROPERTY_HINT_RANGE, "4,128,1"), "set_cs_sample_count", "get_cs_sample_count");
-
 	// Constants
 
 	BIND_ENUM_CONSTANT(BG_CLEAR_COLOR);
@@ -1684,7 +1769,7 @@ Environment::Environment() {
 	_update_glow();
 	_update_fog();
 	_update_adjustment();
-	_update_cs();
+	_update_screen_space_shadows();
 	_update_volumetric_fog();
 	_update_bg_energy();
 	notify_property_list_changed();

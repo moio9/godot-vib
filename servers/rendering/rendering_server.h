@@ -1287,7 +1287,7 @@ public:
 
 	virtual void environment_set_tonemap(RID p_env, EnvironmentToneMapper p_tone_mapper, float p_exposure, float p_white) = 0;
 	virtual void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) = 0;
-	virtual void environment_set_cs(RID p_env, bool p_enabled, float p_thickness, float p_max_dist, float p_intensity, int p_sample_count) = 0;
+	virtual void environment_set_screen_space_shadows(RID p_env, bool p_enabled, float p_thickness, float p_max_distance, float p_strength, int p_step_count, float p_light_radius, float p_thickness_falloff, float p_contact_shadow_distance, float p_shadow_fade_range, float p_history_weight) = 0;
 
 	virtual void environment_set_ssr(RID p_env, bool p_enable, int p_max_steps, float p_fade_in, float p_fade_out, float p_depth_tolerance) = 0;
 

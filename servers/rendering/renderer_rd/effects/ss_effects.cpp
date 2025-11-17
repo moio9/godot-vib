@@ -372,6 +372,19 @@ SSEffects::SSEffects() {
 			sss.pipelines[i].create_compute_pipeline(sss.shader.version_get_shader(sss.shader_version, i));
 		}
 	}
+
+	{
+		RD::TextureFormat tf;
+		tf.format = RD::DATA_FORMAT_R8_UNORM;
+		tf.width = 1;
+		tf.height = 1;
+		tf.mipmaps = 1;
+		tf.array_layers = 1;
+		tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+		Vector<Vector<uint8_t>> dummy;
+		screen_space_shadows.history_dummy = RD::get_singleton()->texture_create(tf, RD::TextureView(), dummy);
+		RD::get_singleton()->texture_clear(screen_space_shadows.history_dummy, Color(0, 0, 0, 0), 0, 1, 0, 1);
+	}
 }
 
 void SSEffects::allocate_last_frame_buffer(Ref<RenderSceneBuffersRD> p_render_buffers, bool p_use_ssil, bool p_use_ssr) {
@@ -506,13 +519,21 @@ SSEffects::~SSEffects() {
 		sss.shader.version_free(sss.shader_version);
 	}
 
-		{
-			// Cleanup ScreenSpaceShadows
-			screen_space_shadows.shader.version_free(screen_space_shadows.shader_version);
-			if (screen_space_shadows.ubo.is_valid()) {
-				RD::get_singleton()->free_rid(screen_space_shadows.ubo);
+	{
+		// Cleanup ScreenSpaceShadows
+		screen_space_shadows.shader.version_free(screen_space_shadows.shader_version);
+		if (screen_space_shadows.ubo.is_valid()) {
+			RD::get_singleton()->free_rid(screen_space_shadows.ubo);
+		}
+		for (int i = 0; i < 2; i++) {
+			if (screen_space_shadows.history_textures[i].is_valid()) {
+				RD::get_singleton()->free_rid(screen_space_shadows.history_textures[i]);
 			}
 		}
+		if (screen_space_shadows.history_dummy.is_valid()) {
+			RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
+		}
+	}
 
 	singleton = nullptr;
 }
@@ -1834,18 +1855,42 @@ void SSEffects::sub_surface_scattering(Ref<RenderSceneBuffersRD> p_render_buffer
 	}
 }
 
-void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_thickness, float p_max_dist, float p_intensity, int p_sample_count, Transform3D light_dir, Projection p_projection, Transform3D p_view) {
+void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_depth_threshold, float p_trace_distance, float p_shadow_weight, int p_ray_steps, float p_light_radius, float p_thickness_falloff, float p_contact_distance, float p_fade_range, float p_history_weight, uint32_t p_frame_count, const Vector3 &p_camera_position, Transform3D light_dir, Projection p_projection, Transform3D p_view) {
 	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
 	ERR_FAIL_NULL(uniform_set_cache);
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
 	ERR_FAIL_NULL(material_storage);
 
 	RID default_sampler = material_storage->sampler_rd_get_default(RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-	auto screen_size = p_render_buffers->get_internal_size();
+	Size2i screen_size = p_render_buffers->get_internal_size();
 	auto diffuse = p_render_buffers->get_internal_texture();
 	auto depth = p_render_buffers->get_depth_texture();
 	bool use_normals = p_normal_roughness.is_valid();
 	RID normal_texture = use_normals ? p_normal_roughness : depth;
+	bool history_requested = (p_history_weight > 0.0f) && p_render_buffers->get_view_count() == 1;
+	if (history_requested) {
+		if (screen_space_shadows.history_textures[0].is_null() || screen_space_shadows.history_size != screen_size) {
+			for (int i = 0; i < 2; i++) {
+				if (screen_space_shadows.history_textures[i].is_valid()) {
+					RD::get_singleton()->free_rid(screen_space_shadows.history_textures[i]);
+				}
+				RD::TextureFormat tf;
+				tf.format = RD::DATA_FORMAT_R8_UNORM;
+				tf.width = screen_size.x;
+				tf.height = screen_size.y;
+				tf.mipmaps = 1;
+				tf.array_layers = 1;
+				tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+				Vector<Vector<uint8_t>> dummy;
+				screen_space_shadows.history_textures[i] = RD::get_singleton()->texture_create(tf, RD::TextureView(), dummy);
+				RD::get_singleton()->texture_clear(screen_space_shadows.history_textures[i], Color(0, 0, 0, 0), 0, 1, 0, 1);
+			}
+			screen_space_shadows.history_size = screen_size;
+			screen_space_shadows.history_index = 0;
+		}
+	}
+	RID history_read = history_requested ? screen_space_shadows.history_textures[screen_space_shadows.history_index] : screen_space_shadows.history_dummy;
+	RID history_write = history_requested ? screen_space_shadows.history_textures[screen_space_shadows.history_index ^ 1] : screen_space_shadows.history_dummy;
 	auto dir = light_dir.basis.get_quaternion().normalized().xform(Vector3(0, 0, -1));
 
 	ScreenSpaceShadowsData data;
@@ -1861,11 +1906,23 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	screen_space_shadows.push_constant.light_dir[0] = dir.x;
 	screen_space_shadows.push_constant.light_dir[1] = dir.y;
 	screen_space_shadows.push_constant.light_dir[2] = dir.z;
-	screen_space_shadows.push_constant.thickness = p_thickness;
-	screen_space_shadows.push_constant.max_dist = p_max_dist;
-	screen_space_shadows.push_constant.intensity = CLAMP(p_intensity, 0.0f, 1.0f);
-	screen_space_shadows.push_constant.sample_count = MAX(1, p_sample_count);
+	screen_space_shadows.push_constant.thickness = p_depth_threshold;
+	screen_space_shadows.push_constant.max_dist = p_trace_distance;
+	screen_space_shadows.push_constant.intensity = CLAMP(p_shadow_weight, 0.0f, 1.0f);
+	screen_space_shadows.push_constant.sample_count = MAX(1, p_ray_steps);
 	screen_space_shadows.push_constant.use_normals = use_normals ? 1 : 0;
+	screen_space_shadows.push_constant.light_radius = MAX(p_light_radius, 0.0f);
+	screen_space_shadows.push_constant.thickness_falloff = MAX(p_thickness_falloff, 0.0f);
+	screen_space_shadows.push_constant.contact_shadow_distance = MAX(p_contact_distance, 0.0f);
+	screen_space_shadows.push_constant.shadow_fade_range = MAX(p_fade_range, 0.0f);
+	bool history_available = history_requested;
+	float history_strength = CLAMP(p_history_weight, 0.0f, 1.0f);
+	screen_space_shadows.push_constant.history_blend = history_available ? (1.0f - history_strength) : 1.0f;
+	screen_space_shadows.push_constant.use_history = history_available ? 1 : 0;
+	screen_space_shadows.push_constant.camera_pos[0] = p_camera_position.x;
+	screen_space_shadows.push_constant.camera_pos[1] = p_camera_position.y;
+	screen_space_shadows.push_constant.camera_pos[2] = p_camera_position.z;
+	screen_space_shadows.push_constant.frame_count = p_frame_count;
 	// printf("Light: %f %f %f\n", dir.x, dir.y, dir.z);
 	MaterialStorage::store_camera(p_projection, data.proj);
 	MaterialStorage::store_camera(p_projection.inverse(), data.proj_inv);
@@ -1890,7 +1947,9 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_diffuse), 0);
 	RD::Uniform u_depthsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, depth }));
 	RD::Uniform u_normalsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, normal_texture }));
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler), 1);
+	RD::Uniform u_historysampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ default_sampler, history_read }));
+	RD::Uniform u_historywrite(RD::UNIFORM_TYPE_IMAGE, 3, Vector<RID>({ history_write }));
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_historywrite), 1);
 	RD::Uniform u_data(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, screen_space_shadows.ubo);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 2, u_data), 2);
 
@@ -1899,4 +1958,8 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	RD::get_singleton()->compute_list_dispatch_threads(compute_list, screen_size.x, screen_size.y, 1);
 
 	RD::get_singleton()->compute_list_end();
+
+	if (history_available) {
+		screen_space_shadows.history_index ^= 1;
+	}
 }

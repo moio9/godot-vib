@@ -723,26 +723,46 @@ RID RendererSceneRender::environment_get_color_correction(RID p_env) const {
 	return environment_storage.environment_get_color_correction(p_env);
 }
 
-void RendererSceneRender::environment_set_cs(RID p_env, bool enabled, float thickness, float max_dist, float intensity, int sample_count) {
-	environment_storage.environment_set_cs(p_env, enabled, thickness, max_dist, intensity, sample_count);
+void RendererSceneRender::environment_set_screen_space_shadows(RID p_env, bool enabled, float thickness, float max_distance, float intensity, int step_count, float light_radius, float thickness_falloff, float contact_distance, float fade_range, float history_weight) {
+	environment_storage.environment_set_screen_space_shadows(p_env, enabled, thickness, max_distance, intensity, step_count, light_radius, thickness_falloff, contact_distance, fade_range, history_weight);
 }
 
-bool RendererSceneRender::environment_get_cs_enabled(RID p_env) const {
-	return environment_storage.environment_get_cs_enabled(p_env);
+bool RendererSceneRender::environment_get_screen_space_shadow_enabled(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_enabled(p_env);
 }
 
-float RendererSceneRender::environment_get_cs_thickness(RID p_env) const {
-	return environment_storage.environment_get_cs_thickness(p_env);
+float RendererSceneRender::environment_get_screen_space_shadow_thickness(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_thickness(p_env);
 }
 
-float RendererSceneRender::environment_get_cs_max_dist(RID p_env) const {
-	return environment_storage.environment_get_cs_max_dist(p_env);
+float RendererSceneRender::environment_get_screen_space_shadow_max_distance(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_max_distance(p_env);
 }
 
-float RendererSceneRender::environment_get_cs_intensity(RID p_env) const {
-	return environment_storage.environment_get_cs_intensity(p_env);
+float RendererSceneRender::environment_get_screen_space_shadow_strength(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_strength(p_env);
 }
 
-int RendererSceneRender::environment_get_cs_sample_count(RID p_env) const {
-	return environment_storage.environment_get_cs_sample_count(p_env);
+int RendererSceneRender::environment_get_screen_space_shadow_steps(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_steps(p_env);
+}
+
+float RendererSceneRender::environment_get_screen_space_shadow_light_radius(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_light_radius(p_env);
+}
+
+float RendererSceneRender::environment_get_screen_space_shadow_thickness_falloff(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_thickness_falloff(p_env);
+}
+
+float RendererSceneRender::environment_get_screen_space_shadow_contact_distance(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_contact_distance(p_env);
+}
+
+float RendererSceneRender::environment_get_screen_space_shadow_fade_range(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_fade_range(p_env);
+}
+
+float RendererSceneRender::environment_get_screen_space_shadow_history_weight(RID p_env) const {
+	return environment_storage.environment_get_screen_space_shadow_history_weight(p_env);
 }

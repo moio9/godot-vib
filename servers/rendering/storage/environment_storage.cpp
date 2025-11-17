@@ -838,43 +838,78 @@ RID RendererEnvironmentStorage::environment_get_color_correction(RID p_env) cons
 	return env->color_correction;
 }
 
-void RendererEnvironmentStorage::environment_set_cs(RID p_env, bool enabled, float thickness, float max_dist, float intensity, int sample_count) {
+void RendererEnvironmentStorage::environment_set_screen_space_shadows(RID p_env, bool enabled, float thickness, float max_dist, float intensity, int sample_count, float light_radius, float thickness_falloff, float contact_distance, float fade_range, float history_weight) {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL(env);
 
-	env->cs_enabled = enabled;
-	env->cs_thickness = thickness;
-	env->cs_max_dist = max_dist;
-	env->cs_intensity = intensity;
-	env->cs_sample_count = MAX(1, sample_count);
+	env->ss_shadow_enabled = enabled;
+	env->ss_shadow_thickness = thickness;
+	env->ss_shadow_max_distance = max_dist;
+	env->ss_shadow_strength = intensity;
+	env->ss_shadow_steps = MAX(1, sample_count);
+	env->ss_shadow_light_radius = MAX(light_radius, 0.0f);
+	env->ss_shadow_thickness_falloff = MAX(thickness_falloff, 0.0f);
+	env->ss_shadow_contact_distance = MAX(contact_distance, 0.0f);
+	env->ss_shadow_fade_range = MAX(fade_range, 0.0f);
+	env->ss_shadow_history_weight = CLAMP(history_weight, 0.0f, 1.0f);
 }
 
-bool RendererEnvironmentStorage::environment_get_cs_enabled(RID p_env) const {
+bool RendererEnvironmentStorage::environment_get_screen_space_shadow_enabled(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, false);
-	return env->cs_enabled;
+	return env->ss_shadow_enabled;
 }
 
-float RendererEnvironmentStorage::environment_get_cs_thickness(RID p_env) const {
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_thickness(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, 0.1f);
-	return env->cs_thickness;
+	return env->ss_shadow_thickness;
 }
 
-float RendererEnvironmentStorage::environment_get_cs_max_dist(RID p_env) const {
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_max_distance(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, 0.1f);
-	return env->cs_max_dist;
+	return env->ss_shadow_max_distance;
 }
 
-float RendererEnvironmentStorage::environment_get_cs_intensity(RID p_env) const {
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_strength(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, 0.8f);
-	return env->cs_intensity;
+	return env->ss_shadow_strength;
 }
 
-int RendererEnvironmentStorage::environment_get_cs_sample_count(RID p_env) const {
+int RendererEnvironmentStorage::environment_get_screen_space_shadow_steps(RID p_env) const {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, 16);
-	return env->cs_sample_count;
+	return env->ss_shadow_steps;
+}
+
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_light_radius(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 0.05f);
+	return env->ss_shadow_light_radius;
+}
+
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_thickness_falloff(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 1.0f);
+	return env->ss_shadow_thickness_falloff;
+}
+
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_contact_distance(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 1.0f);
+	return env->ss_shadow_contact_distance;
+}
+
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_fade_range(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 10.0f);
+	return env->ss_shadow_fade_range;
+}
+
+float RendererEnvironmentStorage::environment_get_screen_space_shadow_history_weight(RID p_env) const {
+	Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 0.4f);
+	return env->ss_shadow_history_weight;
 }

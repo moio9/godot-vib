@@ -255,13 +255,18 @@ public:
 	bool environment_get_use_1d_color_correction(RID p_env) const;
 	RID environment_get_color_correction(RID p_env) const;
 
-	// CS
-	void environment_set_cs(RID p_env, bool enabled, float thickness, float max_dist, float intensity, int sample_count);
-	bool environment_get_cs_enabled(RID p_env) const;
-	float environment_get_cs_thickness(RID p_env) const;
-	float environment_get_cs_max_dist(RID p_env) const;
-	float environment_get_cs_intensity(RID p_env) const;
-	int environment_get_cs_sample_count(RID p_env) const;
+	// Screen-space shadow tracing
+	void environment_set_screen_space_shadows(RID p_env, bool enabled, float thickness, float max_distance, float strength, int step_count, float light_radius, float thickness_falloff, float contact_distance, float fade_range, float history_weight);
+	bool environment_get_screen_space_shadow_enabled(RID p_env) const;
+	float environment_get_screen_space_shadow_thickness(RID p_env) const;
+	float environment_get_screen_space_shadow_max_distance(RID p_env) const;
+	float environment_get_screen_space_shadow_strength(RID p_env) const;
+	int environment_get_screen_space_shadow_steps(RID p_env) const;
+	float environment_get_screen_space_shadow_light_radius(RID p_env) const;
+	float environment_get_screen_space_shadow_thickness_falloff(RID p_env) const;
+	float environment_get_screen_space_shadow_contact_distance(RID p_env) const;
+	float environment_get_screen_space_shadow_fade_range(RID p_env) const;
+	float environment_get_screen_space_shadow_history_weight(RID p_env) const;
 
 	virtual Ref<Image> environment_bake_panorama(RID p_env, bool p_bake_irradiance, const Size2i &p_size) = 0;
 

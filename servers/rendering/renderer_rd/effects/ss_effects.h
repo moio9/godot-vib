@@ -48,6 +48,7 @@
 #include "servers/rendering/renderer_rd/shaders/effects/subsurface_scattering.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/screen_space_shadows.glsl.gen.h"
 #include "servers/rendering/rendering_server.h"
+#include "core/math/vector2i.h"
 
 #define RB_SCOPE_SSLF SNAME("rb_sslf")
 #define RB_SCOPE_SSDS SNAME("rb_ssds")
@@ -161,7 +162,7 @@ public:
 
 	void sub_surface_scattering(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_diffuse, RID p_depth, const Projection &p_camera, const Size2i &p_screen_size);
 
-	void gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_thickness, float p_max_dist, float p_intensity, int p_sample_count, Transform3D light_dir, Projection p_projection, Transform3D p_view);
+	void gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_depth_threshold, float p_trace_distance, float p_shadow_weight, int p_ray_steps, float p_light_radius, float p_thickness_falloff, float p_contact_distance, float p_fade_range, float p_history_weight, uint32_t p_frame_count, const Vector3 &p_camera_position, Transform3D light_dir, Projection p_projection, Transform3D p_view);
 
 private:
 	/* Settings */
@@ -542,6 +543,16 @@ private:
 		float intensity;
 		uint32_t sample_count;
 		uint32_t use_normals;
+
+		float camera_pos[3];
+		uint32_t frame_count;
+		float light_radius;
+		float thickness_falloff;
+		float contact_shadow_distance;
+		float shadow_fade_range;
+		float history_blend;
+		uint32_t use_history;
+		float history_pad[2];
 	};
 
 	struct ScreenSpaceShadowsData {
@@ -557,6 +568,10 @@ private:
 		RID shader_version;
 		RID pipelines[1];
 		RID ubo;
+		RID history_textures[2];
+		RID history_dummy;
+		Size2i history_size;
+		uint32_t history_index = 0;
 	} screen_space_shadows;
 };
 

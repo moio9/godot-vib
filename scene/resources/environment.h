@@ -220,14 +220,19 @@ private:
 	bool use_1d_color_correction = true;
 	Ref<Texture> adjustment_color_correction;
 	void _update_adjustment();
-	void _update_cs();
+	void _update_screen_space_shadows();
 
-	// Contact Shadows
-	bool cs_enabled = true;
-	float cs_thickness = 0.1f;
-	float cs_max_dist = 0.5f;
-	float cs_intensity = 1.0f;
-	int cs_sample_count = 16;
+	// Screen-space shadow tracing
+	bool ss_shadow_enabled = true;
+	float ss_shadow_thickness = 0.1f;
+	float ss_shadow_max_distance = 0.5f;
+	float ss_shadow_strength = 1.0f;
+	int ss_shadow_steps = 16;
+	float ss_shadow_light_radius = 0.05f;
+	float ss_shadow_thickness_falloff = 1.0f;
+	float ss_shadow_contact_distance = 1.0f;
+	float ss_shadow_fade_range = 10.0f;
+	float ss_shadow_history_weight = 0.4f;
 
 protected:
 	static void _bind_methods();
@@ -450,17 +455,27 @@ public:
 	void set_adjustment_color_correction(Ref<Texture> p_color_correction);
 	Ref<Texture> get_adjustment_color_correction() const;
 
-	// Contact Shadows
-	void set_cs_enabled(bool p_enabled);
-	bool is_cs_enabled() const;
-	void set_cs_thickness(float thickness);
-	float get_cs_thickness() const;
-	void set_cs_max_dist(float max_dist);
-	float get_cs_max_dist() const;
-	void set_cs_intensity(float intensity);
-	float get_cs_intensity() const;
-	void set_cs_sample_count(int p_samples);
-	int get_cs_sample_count() const;
+	// Screen-space shadow tracing
+	void set_ss_shadow_enabled(bool p_enabled);
+	bool is_ss_shadow_enabled() const;
+	void set_ss_shadow_thickness(float p_thickness);
+	float get_ss_shadow_thickness() const;
+	void set_ss_shadow_max_distance(float p_max_distance);
+	float get_ss_shadow_max_distance() const;
+	void set_ss_shadow_strength(float p_strength);
+	float get_ss_shadow_strength() const;
+	void set_ss_shadow_steps(int p_steps);
+	int get_ss_shadow_steps() const;
+	void set_ss_shadow_light_radius(float p_radius);
+	float get_ss_shadow_light_radius() const;
+	void set_ss_shadow_thickness_falloff(float p_falloff);
+	float get_ss_shadow_thickness_falloff() const;
+	void set_ss_shadow_contact_distance(float p_distance);
+	float get_ss_shadow_contact_distance() const;
+	void set_ss_shadow_fade_range(float p_range);
+	float get_ss_shadow_fade_range() const;
+	void set_ss_shadow_history_weight(float p_weight);
+	float get_ss_shadow_history_weight() const;
 
 	Environment();
 	~Environment();
