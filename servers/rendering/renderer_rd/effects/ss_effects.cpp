@@ -1868,6 +1868,10 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	bool use_normals = p_normal_roughness.is_valid();
 	RID normal_texture = use_normals ? p_normal_roughness : depth;
 	bool history_requested = (p_history_weight > 0.0f) && p_render_buffers->get_view_count() == 1;
+	RID motion_vectors = history_requested ? p_render_buffers->get_velocity_buffer(false) : RID();
+	if (!motion_vectors.is_valid()) {
+		motion_vectors = screen_space_shadows.history_dummy;
+	}
 	if (history_requested) {
 		if (screen_space_shadows.history_textures[0].is_null() || screen_space_shadows.history_size != screen_size) {
 			for (int i = 0; i < 2; i++) {
@@ -1949,7 +1953,8 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	RD::Uniform u_normalsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, normal_texture }));
 	RD::Uniform u_historysampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ default_sampler, history_read }));
 	RD::Uniform u_historywrite(RD::UNIFORM_TYPE_IMAGE, 3, Vector<RID>({ history_write }));
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_historywrite), 1);
+	RD::Uniform u_motionvectorsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ default_sampler, motion_vectors }));
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_historywrite, u_motionvectorsampler), 1);
 	RD::Uniform u_data(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, screen_space_shadows.ubo);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 2, u_data), 2);
 

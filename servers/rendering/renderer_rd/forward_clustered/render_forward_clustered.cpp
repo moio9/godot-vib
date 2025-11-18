@@ -1829,6 +1829,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		motion_vectors_required = true;
 	} else if (!is_reflection_probe && using_taa) {
 		motion_vectors_required = true;
+	} else if (ss_shadow_enabled && ss_shadow_history_weight > 0.0f && rb->get_view_count() == 1) {
+		motion_vectors_required = true;
 	} else if (!is_reflection_probe && using_upscaling) {
 		motion_vectors_required = true;
 	} else {
@@ -2423,53 +2425,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		_process_compositor_effects(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
 
-	RENDER_TIMESTAMP("Render 3D Transparent Pass");
-
-	RD::get_singleton()->draw_command_begin_label("Render 3D Transparent Pass");
-
-	rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, true);
-
-	_setup_environment(p_render_data, is_reflection_probe, screen_size, p_default_bg_color, false);
-
-	{
-		uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
-		// Motion vectors should not be overwritten by transparent objects.
-		transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
-
-		RID alpha_framebuffer = rb_data.is_valid() ? rb_data->get_color_pass_fb(transparent_color_pass_flags) : color_only_framebuffer;
-		RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
-		_render_list_with_draw_list(&render_list_params, alpha_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
-	}
-
-	RD::get_singleton()->draw_command_end_label();
-
-	RENDER_TIMESTAMP("Resolve");
-
-	RD::get_singleton()->draw_command_begin_label("Resolve");
-
-	if (rb_data.is_valid() && use_msaa) {
-		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors) && rb->has_velocity_buffer(true);
-		for (uint32_t v = 0; v < rb->get_view_count(); v++) {
-			RD::get_singleton()->texture_resolve_multisample(rb->get_color_msaa(v), rb->get_internal_texture(v));
-			resolve_effects->resolve_depth(rb->get_depth_msaa(v), rb->get_depth_texture(v), rb->get_internal_size(), texture_multisamples[msaa]);
-
-			if (resolve_velocity_buffer) {
-				RD::get_singleton()->texture_resolve_multisample(rb->get_velocity_buffer(true, v), rb->get_velocity_buffer(false, v));
-			}
-		}
-	}
-
-	RD::get_singleton()->draw_command_end_label();
-
-	{
-		RENDER_TIMESTAMP("Process Post Transparent Compositor Effects");
-		_process_compositor_effects(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
-	}
-
+	// Apply screen-space shadows before transparent pass so they only affect opaque geometry.
 	if (!p_render_data->environment.is_valid()) {
 		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
 	} else {
-
 		RID directional_light;
 		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
 			RID li = p_render_data->render_shadows[i].light;
@@ -2527,6 +2486,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			Projection correction;
 			correction.set_depth_correction(true);
 			correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
+			if (ss_shadow_history_weight > 0.0f) {
+				rb->ensure_velocity();
+			}
 			ss_effects->gen_screen_space_shadows(
 					rb,
 					normal_texture,
@@ -2546,6 +2508,49 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 					p_render_data->scene_data->cam_transform);
 			RD::get_singleton()->draw_command_end_label();
 		}
+	}
+
+	RENDER_TIMESTAMP("Render 3D Transparent Pass");
+
+	RD::get_singleton()->draw_command_begin_label("Render 3D Transparent Pass");
+
+	rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, true);
+
+	_setup_environment(p_render_data, is_reflection_probe, screen_size, p_default_bg_color, false);
+
+	{
+		uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
+		// Motion vectors should not be overwritten by transparent objects.
+		transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
+
+		RID alpha_framebuffer = rb_data.is_valid() ? rb_data->get_color_pass_fb(transparent_color_pass_flags) : color_only_framebuffer;
+		RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+		_render_list_with_draw_list(&render_list_params, alpha_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+	}
+
+	RD::get_singleton()->draw_command_end_label();
+
+	RENDER_TIMESTAMP("Resolve");
+
+	RD::get_singleton()->draw_command_begin_label("Resolve");
+
+	if (rb_data.is_valid() && use_msaa) {
+		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors) && rb->has_velocity_buffer(true);
+		for (uint32_t v = 0; v < rb->get_view_count(); v++) {
+			RD::get_singleton()->texture_resolve_multisample(rb->get_color_msaa(v), rb->get_internal_texture(v));
+			resolve_effects->resolve_depth(rb->get_depth_msaa(v), rb->get_depth_texture(v), rb->get_internal_size(), texture_multisamples[msaa]);
+
+			if (resolve_velocity_buffer) {
+				RD::get_singleton()->texture_resolve_multisample(rb->get_velocity_buffer(true, v), rb->get_velocity_buffer(false, v));
+			}
+		}
+	}
+
+	RD::get_singleton()->draw_command_end_label();
+
+	{
+		RENDER_TIMESTAMP("Process Post Transparent Compositor Effects");
+		_process_compositor_effects(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
 	}
 
 	if (rb_data.is_valid() && (using_upscaling || using_taa)) {
