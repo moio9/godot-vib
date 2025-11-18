@@ -2380,6 +2380,91 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		rb->ensure_upscaled();
 	}
 
+	// Apply screen-space shadows now so subsequent copies/post-effects include them.
+	if (!p_render_data->environment.is_valid()) {
+		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
+	} else {
+		RID directional_light;
+		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
+			RID li = p_render_data->render_shadows[i].light;
+			RID base = light_storage->light_instance_get_base_light(li);
+
+			if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
+				directional_light = li;
+				break;
+			}
+		}
+
+		if (!directional_light.is_valid() && p_render_data->lights != nullptr) {
+			const PagedArray<RID> &scene_lights = *p_render_data->lights;
+			for (int i = 0; i < (int)scene_lights.size(); i++) {
+				RID li = scene_lights[i];
+				if (!light_storage->owns_light_instance(li)) {
+					continue;
+				}
+
+				RID base = light_storage->light_instance_get_base_light(li);
+				if (base.is_null()) {
+					continue;
+				}
+
+				if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
+					directional_light = li;
+					break;
+				}
+			}
+		}
+
+		if (!directional_light.is_valid()) {
+			ERR_PRINT_ONCE("SSS: no directional light found, skipping ray marching pass.");
+		} else if (!ss_shadow_enabled) {
+			// Disabled; nothing to do.
+		} else {
+			RID normal_texture;
+			if (rb_data.is_valid() && rb_data->has_normal_roughness()) {
+				normal_texture = rb_data->get_normal_roughness();
+			}
+
+			float ss_thickness = environment_get_screen_space_shadow_thickness(p_render_data->environment);
+			float ss_max_distance = environment_get_screen_space_shadow_max_distance(p_render_data->environment);
+			float ss_intensity = environment_get_screen_space_shadow_strength(p_render_data->environment);
+			int ss_steps = environment_get_screen_space_shadow_steps(p_render_data->environment);
+			float ss_light_radius = environment_get_screen_space_shadow_light_radius(p_render_data->environment);
+			float ss_thickness_falloff = environment_get_screen_space_shadow_thickness_falloff(p_render_data->environment);
+			float ss_contact_distance = environment_get_screen_space_shadow_contact_distance(p_render_data->environment);
+			float ss_fade_range = environment_get_screen_space_shadow_fade_range(p_render_data->environment);
+			uint32_t frame_count = static_cast<uint32_t>(Engine::get_singleton()->get_frames_drawn());
+			Vector3 camera_pos = p_render_data->scene_data->cam_transform.origin;
+
+			RD::get_singleton()->draw_command_begin_label("SSS");
+			RENDER_TIMESTAMP("SSS");
+			Projection correction;
+			correction.set_depth_correction(true);
+			correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
+			if (ss_shadow_history_weight > 0.0f) {
+				rb->ensure_velocity();
+			}
+			ss_effects->gen_screen_space_shadows(
+					rb,
+					normal_texture,
+					ss_thickness,
+					ss_max_distance,
+					ss_intensity,
+					ss_steps,
+					ss_light_radius,
+					ss_thickness_falloff,
+					ss_contact_distance,
+					ss_fade_range,
+					ss_shadow_history_weight,
+					frame_count,
+					camera_pos,
+					light_storage->light_instance_get_base_transform(directional_light),
+					correction * p_render_data->scene_data->view_projection[0],
+					p_render_data->scene_data->cam_transform);
+			RD::get_singleton()->draw_command_end_label();
+		}
+	}
+
 	if (scene_state.used_screen_texture || global_surface_data.screen_texture_used) {
 		RENDER_TIMESTAMP("Copy Screen Texture");
 
