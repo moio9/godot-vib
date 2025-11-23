@@ -13,7 +13,8 @@ layout(rgba8, set = 0, binding = 0) uniform image2D color_image;
 layout(set = 1, binding = 0) uniform sampler2D depth_image;
 layout(set = 1, binding = 1) uniform sampler2D normal_image;
 layout(set = 1, binding = 2) uniform sampler2D history_image;
-layout(set = 1, binding = 3, r8) uniform writeonly image2D history_write_image;
+layout(set = 1, binding = 3) uniform sampler2D motion_image;
+layout(set = 1, binding = 4, r8) uniform writeonly image2D history_write_image;
 
 layout(set = 2, binding = 0, std140) uniform Params {
     mat4 proj;
@@ -87,7 +88,7 @@ float trace_shadow_ray(vec3 origin_ws, vec3 direction_ws, vec2 origin_uv, float 
         return 0.0;
     }
 
-    vec3 noise_seed = vec3(origin_uv * vec2(push_constant.screen_size), push_constant.frame_count * 0.001 * linear_depth);
+    vec3 noise_seed = vec3(origin_uv * vec2(push_constant.screen_size), push_constant.frame_count) * 0.001 * linear_depth;
     vec3 blue_noise = hash33(noise_seed);
     
     float base_ray_length = push_constant.max_dist > 0.0 ? push_constant.max_dist * 2.0 : 2000.0;
@@ -224,7 +225,11 @@ void main() {
 
     // ACUMULARE TEMPORALĂ OPTIMIZATĂ FINALĂ
     if (push_constant.use_history != 0u) {
-        float history_value = texelFetch(history_image, iuv, 0).r;
+        vec2 velocity = textureLod(motion_image, uv, 0.0).xy;
+        vec2 prev_uv = uv - velocity;
+        bool valid_prev = is_valid_uv(prev_uv);
+
+        float history_value = valid_prev ? textureLod(history_image, prev_uv, 0.0).r : 0.0;
         
         // STRATEGIE AVANSATĂ DE ACUMULARE
         float adaptive_blend = push_constant.history_blend;
@@ -252,6 +257,9 @@ void main() {
             history_confidence = 0.3;
         } else if (neighborhood_range > 0.15) {
             history_confidence = 0.7;
+        }
+        if (!valid_prev) {
+            history_confidence = 0.0;
         }
         
         // Ajustare blend bazată pe multiple criterii

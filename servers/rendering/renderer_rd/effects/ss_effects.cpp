@@ -1957,9 +1957,9 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	RD::Uniform u_depthsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, depth }));
 	RD::Uniform u_normalsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, normal_texture }));
 	RD::Uniform u_historysampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ default_sampler, history_read }));
-	RD::Uniform u_historywrite(RD::UNIFORM_TYPE_IMAGE, 3, Vector<RID>({ history_write }));
-	RD::Uniform u_motionvectorsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ default_sampler, motion_vectors }));
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_historywrite, u_motionvectorsampler), 1);
+	RD::Uniform u_motionvectorsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ default_sampler, motion_vectors }));
+	RD::Uniform u_historywrite(RD::UNIFORM_TYPE_IMAGE, 4, Vector<RID>({ history_write }));
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_motionvectorsampler, u_historywrite), 1);
 	RD::Uniform u_data(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, screen_space_shadows.ubo);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 2, u_data), 2);
 
