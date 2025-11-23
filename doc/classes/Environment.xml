@@ -282,7 +282,7 @@
 		<member name="ssao_sharpness" type="float" setter="set_ssao_sharpness" getter="get_ssao_sharpness" default="0.98">
 			The amount that the screen-space ambient occlusion effect is allowed to blur over the edges of objects. Setting too high will result in aliasing around the edges of objects. Setting too low will make object edges appear blurry.
 		</member>
-		<member name="ss_shadow_contact_distance" type="float" setter="set_ss_shadow_contact_distance" getter="get_ss_shadow_contact_distance" default="1.0">
+		<member name="ss_shadow_contact_distance" type="float" setter="set_ss_shadow_contact_distance" getter="get_ss_shadow_contact_distance" default="0.05">
 			Distance from the camera in meters at which the high-quality contact-shadow behavior fades out. Lower values clamp screen-space shadows to the surface where the occlusion is cast, but can cause noisy results on faraway geometry.
 		</member>
 		<member name="ss_shadow_enabled" type="bool" setter="set_ss_shadow_enabled" getter="is_ss_shadow_enabled" default="true">

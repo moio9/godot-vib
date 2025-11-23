@@ -230,7 +230,7 @@ private:
 	int ss_shadow_steps = 16;
 	float ss_shadow_light_radius = 0.05f;
 	float ss_shadow_thickness_falloff = 1.0f;
-	float ss_shadow_contact_distance = 1.0f;
+	float ss_shadow_contact_distance = 0.05f;
 	float ss_shadow_fade_range = 10.0f;
 	float ss_shadow_history_weight = 0.4f;
 

@@ -643,6 +643,16 @@ void vertex_shader(vec3 vertex_input,
 			}
 		}
 
+		if (bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSS)) {
+#ifdef USE_MULTIVIEW
+			float sss_shadow = texture(sampler2DArray(sss_buffer, SAMPLER_LINEAR_CLAMP), vec3(clip_pos, ViewIndex)).r;
+#else
+			float sss_shadow = texture(sampler2D(sss_buffer, SAMPLER_LINEAR_CLAMP), clip_pos).r;
+#endif
+			directional_diffuse *= sss_shadow;
+			directional_specular *= sss_shadow;
+		}
+
 		// Calculate the contribution from the shadowed light so we can scale the shadows accordingly.
 		float diff_avg = dot(diffuse_light_interp.rgb, vec3(0.33333));
 		float diff_dir_avg = dot(directional_diffuse, vec3(0.33333));
@@ -2546,6 +2556,15 @@ void fragment_shader(in SceneData scene_data) {
 
 			shadow = mix(1.0, shadow, directional_lights.data[i].shadow_opacity);
 #endif
+
+		if (i == 0 && bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSS)) {
+#ifdef USE_MULTIVIEW
+			float sss_shadow = texture(sampler2DArray(sss_buffer, SAMPLER_LINEAR_CLAMP), vec3(screen_uv, ViewIndex)).r;
+#else
+			float sss_shadow = texture(sampler2D(sss_buffer, SAMPLER_LINEAR_CLAMP), screen_uv).r;
+#endif
+			shadow *= sss_shadow;
+		}
 
 			blur_shadow(shadow);
 

@@ -749,6 +749,7 @@ void RenderForwardClustered::_setup_environment(const RenderDataRD *p_render_dat
 			ss_flags |= environment_get_ssao_enabled(p_render_data->environment) ? (1 << 0) : 0;
 			ss_flags |= environment_get_ssil_enabled(p_render_data->environment) ? (1 << 1) : 0;
 			ss_flags |= environment_get_ssr_enabled(p_render_data->environment) ? (1 << 2) : 0;
+			ss_flags |= environment_get_screen_space_shadow_enabled(p_render_data->environment) ? (1 << 4) : 0;
 
 			if (rd.is_valid()) {
 				Ref<RenderBufferDataForwardClustered> rb_data;
@@ -1631,8 +1632,21 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 			ss_effects->allocate_last_frame_buffer(rb, p_use_ssil, p_use_ssr);
 		}
 
-		if (p_use_ssao || p_use_ssil) {
-			RENDER_TIMESTAMP("Prepare Depth for SSAO/SSIL");
+		bool ss_shadow_enabled = false;
+		float ss_shadow_history_weight = 0.0f;
+		if (p_render_data->reflection_probe.is_null() && p_render_data->environment.is_valid()) {
+			ss_shadow_enabled = environment_get_screen_space_shadow_enabled(p_render_data->environment);
+			if (ss_shadow_enabled) {
+				ss_shadow_history_weight = environment_get_screen_space_shadow_history_weight(p_render_data->environment);
+			}
+		}
+
+		if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SSS) {
+			ss_shadow_enabled = true;
+		}
+
+		if (p_use_ssao || p_use_ssil || ss_shadow_enabled) {
+			RENDER_TIMESTAMP("Prepare Depth for SSAO/SSIL/SSS");
 			// Convert our depth buffer data to linear data in
 			for (uint32_t v = 0; v < rb->get_view_count(); v++) {
 				ss_effects->downsample_depth(rb, v, p_render_data->scene_data->view_projection[v]);
@@ -1644,6 +1658,93 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 
 			if (p_use_ssil) {
 				_process_ssil(rb, p_render_data->environment, p_normal_roughness_slices, p_render_data->scene_data->view_projection, p_render_data->scene_data->cam_transform);
+			}
+
+			if (ss_shadow_enabled) {
+				RID directional_light;
+				for (int i = 0; i < p_render_data->render_shadow_count; i++) {
+					RID li = p_render_data->render_shadows[i].light;
+					RID base = light_storage->light_instance_get_base_light(li);
+
+					if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
+						directional_light = li;
+						break;
+					}
+				}
+
+				if (!directional_light.is_valid() && p_render_data->lights != nullptr) {
+					const PagedArray<RID> &scene_lights = *p_render_data->lights;
+					for (int i = 0; i < (int)scene_lights.size(); i++) {
+						RID li = scene_lights[i];
+						if (!light_storage->owns_light_instance(li)) {
+							continue;
+						}
+
+						RID base = light_storage->light_instance_get_base_light(li);
+						if (base.is_null()) {
+							continue;
+						}
+
+						if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
+							directional_light = li;
+							break;
+						}
+					}
+				}
+
+				if (!directional_light.is_valid() && get_debug_draw_mode() != RS::VIEWPORT_DEBUG_DRAW_SSS) {
+					ERR_PRINT_ONCE("SSS: no directional light found, skipping ray marching pass.");
+				} else {
+					RID normal_texture;
+					if (p_normal_roughness_slices && p_normal_roughness_slices[0].is_valid()) {
+						normal_texture = p_normal_roughness_slices[0];
+					} else if (rb_data.is_valid() && rb_data->has_normal_roughness()) {
+						normal_texture = rb_data->get_normal_roughness();
+					}
+
+					float ss_thickness = environment_get_screen_space_shadow_thickness(p_render_data->environment);
+					float ss_max_distance = environment_get_screen_space_shadow_max_distance(p_render_data->environment);
+					float ss_intensity = environment_get_screen_space_shadow_strength(p_render_data->environment);
+					int ss_steps = environment_get_screen_space_shadow_steps(p_render_data->environment);
+					float ss_light_radius = environment_get_screen_space_shadow_light_radius(p_render_data->environment);
+					float ss_thickness_falloff = environment_get_screen_space_shadow_thickness_falloff(p_render_data->environment);
+					float ss_contact_distance = environment_get_screen_space_shadow_contact_distance(p_render_data->environment);
+					float ss_fade_range = environment_get_screen_space_shadow_fade_range(p_render_data->environment);
+					uint32_t frame_count = static_cast<uint32_t>(Engine::get_singleton()->get_frames_drawn());
+					Vector3 camera_pos = p_render_data->scene_data->cam_transform.origin;
+
+					Transform3D light_transform;
+					if (directional_light.is_valid()) {
+						light_transform = light_storage->light_instance_get_base_transform(directional_light);
+					}
+
+					RD::get_singleton()->draw_command_begin_label("SSS");
+					RENDER_TIMESTAMP("SSS");
+					Projection correction;
+					correction.set_depth_correction(true);
+					correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
+					if (ss_shadow_history_weight > 0.0f) {
+						rb->ensure_velocity();
+					}
+					ss_effects->gen_screen_space_shadows(
+							rb,
+							normal_texture,
+							ss_thickness,
+							ss_max_distance,
+							ss_intensity,
+							ss_steps,
+							ss_light_radius,
+							ss_thickness_falloff,
+							ss_contact_distance,
+							ss_fade_range,
+							ss_shadow_history_weight,
+							frame_count,
+							camera_pos,
+							light_transform,
+							correction * p_render_data->scene_data->view_projection[0],
+							p_render_data->scene_data->cam_transform);
+					RD::get_singleton()->draw_command_end_label();
+				}
 			}
 		}
 
@@ -2130,7 +2231,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool debug_voxelgis = get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VOXEL_GI_ALBEDO || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VOXEL_GI_LIGHTING || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VOXEL_GI_EMISSION;
 	bool debug_sdfgi_probes = get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SDFGI_PROBES;
-	bool force_depth_pre_pass = scene_state.used_opaque_stencil;
+	bool force_depth_pre_pass = scene_state.used_opaque_stencil || (p_render_data->environment.is_valid() && environment_get_screen_space_shadow_enabled(p_render_data->environment)) || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SSS;
 	bool depth_pre_pass = (force_depth_pre_pass || bool(GLOBAL_GET_CACHED(bool, "rendering/driver/depth_prepass/enable"))) && depth_framebuffer.is_valid();
 
 	SceneShaderForwardClustered::ShaderSpecialization base_specialization = scene_shader.default_specialization;
@@ -2380,90 +2481,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		rb->ensure_upscaled();
 	}
 
-	// Apply screen-space shadows now so subsequent copies/post-effects include them.
-	if (!p_render_data->environment.is_valid()) {
-		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
-	} else {
-		RID directional_light;
-		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
-			RID li = p_render_data->render_shadows[i].light;
-			RID base = light_storage->light_instance_get_base_light(li);
 
-			if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
-				directional_light = li;
-				break;
-			}
-		}
-
-		if (!directional_light.is_valid() && p_render_data->lights != nullptr) {
-			const PagedArray<RID> &scene_lights = *p_render_data->lights;
-			for (int i = 0; i < (int)scene_lights.size(); i++) {
-				RID li = scene_lights[i];
-				if (!light_storage->owns_light_instance(li)) {
-					continue;
-				}
-
-				RID base = light_storage->light_instance_get_base_light(li);
-				if (base.is_null()) {
-					continue;
-				}
-
-				if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
-					directional_light = li;
-					break;
-				}
-			}
-		}
-
-		if (!directional_light.is_valid()) {
-			ERR_PRINT_ONCE("SSS: no directional light found, skipping ray marching pass.");
-		} else if (!ss_shadow_enabled) {
-			// Disabled; nothing to do.
-		} else {
-			RID normal_texture;
-			if (rb_data.is_valid() && rb_data->has_normal_roughness()) {
-				normal_texture = rb_data->get_normal_roughness();
-			}
-
-			float ss_thickness = environment_get_screen_space_shadow_thickness(p_render_data->environment);
-			float ss_max_distance = environment_get_screen_space_shadow_max_distance(p_render_data->environment);
-			float ss_intensity = environment_get_screen_space_shadow_strength(p_render_data->environment);
-			int ss_steps = environment_get_screen_space_shadow_steps(p_render_data->environment);
-			float ss_light_radius = environment_get_screen_space_shadow_light_radius(p_render_data->environment);
-			float ss_thickness_falloff = environment_get_screen_space_shadow_thickness_falloff(p_render_data->environment);
-			float ss_contact_distance = environment_get_screen_space_shadow_contact_distance(p_render_data->environment);
-			float ss_fade_range = environment_get_screen_space_shadow_fade_range(p_render_data->environment);
-			uint32_t frame_count = static_cast<uint32_t>(Engine::get_singleton()->get_frames_drawn());
-			Vector3 camera_pos = p_render_data->scene_data->cam_transform.origin;
-
-			RD::get_singleton()->draw_command_begin_label("SSS");
-			RENDER_TIMESTAMP("SSS");
-			Projection correction;
-			correction.set_depth_correction(true);
-			correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
-			if (ss_shadow_history_weight > 0.0f) {
-				rb->ensure_velocity();
-			}
-			ss_effects->gen_screen_space_shadows(
-					rb,
-					normal_texture,
-					ss_thickness,
-					ss_max_distance,
-					ss_intensity,
-					ss_steps,
-					ss_light_radius,
-					ss_thickness_falloff,
-					ss_contact_distance,
-					ss_fade_range,
-					ss_shadow_history_weight,
-					frame_count,
-					camera_pos,
-					light_storage->light_instance_get_base_transform(directional_light),
-					correction * p_render_data->scene_data->view_projection[0],
-					p_render_data->scene_data->cam_transform);
-			RD::get_singleton()->draw_command_end_label();
-		}
-	}
 
 	if (scene_state.used_screen_texture || global_surface_data.screen_texture_used) {
 		RENDER_TIMESTAMP("Copy Screen Texture");
@@ -2510,90 +2528,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		_process_compositor_effects(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
 
-	// Apply screen-space shadows before transparent pass so they only affect opaque geometry.
-	if (!p_render_data->environment.is_valid()) {
-		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
-	} else {
-		RID directional_light;
-		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
-			RID li = p_render_data->render_shadows[i].light;
-			RID base = light_storage->light_instance_get_base_light(li);
 
-			if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
-				directional_light = li;
-				break;
-			}
-		}
-
-		if (!directional_light.is_valid() && p_render_data->lights != nullptr) {
-			const PagedArray<RID> &scene_lights = *p_render_data->lights;
-			for (int i = 0; i < (int)scene_lights.size(); i++) {
-				RID li = scene_lights[i];
-				if (!light_storage->owns_light_instance(li)) {
-					continue;
-				}
-
-				RID base = light_storage->light_instance_get_base_light(li);
-				if (base.is_null()) {
-					continue;
-				}
-
-				if (light_storage->light_get_type(base) == RS::LIGHT_DIRECTIONAL) {
-					directional_light = li;
-					break;
-				}
-			}
-		}
-
-		if (!directional_light.is_valid()) {
-			ERR_PRINT_ONCE("SSS: no directional light found, skipping ray marching pass.");
-		} else if (!ss_shadow_enabled) {
-			// Disabled; nothing to do.
-		} else {
-			RID normal_texture;
-			if (rb_data.is_valid() && rb_data->has_normal_roughness()) {
-				normal_texture = rb_data->get_normal_roughness();
-			}
-
-			float ss_thickness = environment_get_screen_space_shadow_thickness(p_render_data->environment);
-			float ss_max_distance = environment_get_screen_space_shadow_max_distance(p_render_data->environment);
-			float ss_intensity = environment_get_screen_space_shadow_strength(p_render_data->environment);
-			int ss_steps = environment_get_screen_space_shadow_steps(p_render_data->environment);
-			float ss_light_radius = environment_get_screen_space_shadow_light_radius(p_render_data->environment);
-			float ss_thickness_falloff = environment_get_screen_space_shadow_thickness_falloff(p_render_data->environment);
-			float ss_contact_distance = environment_get_screen_space_shadow_contact_distance(p_render_data->environment);
-			float ss_fade_range = environment_get_screen_space_shadow_fade_range(p_render_data->environment);
-			uint32_t frame_count = static_cast<uint32_t>(Engine::get_singleton()->get_frames_drawn());
-			Vector3 camera_pos = p_render_data->scene_data->cam_transform.origin;
-
-			RD::get_singleton()->draw_command_begin_label("SSS");
-			RENDER_TIMESTAMP("SSS");
-			Projection correction;
-			correction.set_depth_correction(true);
-			correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
-			if (ss_shadow_history_weight > 0.0f) {
-				rb->ensure_velocity();
-			}
-			ss_effects->gen_screen_space_shadows(
-					rb,
-					normal_texture,
-					ss_thickness,
-					ss_max_distance,
-					ss_intensity,
-					ss_steps,
-					ss_light_radius,
-					ss_thickness_falloff,
-					ss_contact_distance,
-					ss_fade_range,
-					ss_shadow_history_weight,
-					frame_count,
-					camera_pos,
-					light_storage->light_instance_get_base_transform(directional_light),
-					correction * p_render_data->scene_data->view_projection[0],
-					p_render_data->scene_data->cam_transform);
-			RD::get_singleton()->draw_command_end_label();
-		}
-	}
 
 	RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
@@ -2779,6 +2714,12 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 		RID final = rb->get_texture_slice(RB_SCOPE_SSAO, RB_FINAL, 0, 0);
 		Size2i rtsize = texture_storage->render_target_get_size(render_target);
 		copy_effects->copy_to_fb_rect(final, texture_storage->render_target_get_rd_framebuffer(render_target), Rect2(Vector2(), rtsize), false, true);
+	}
+
+	if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SSS && rb->has_texture(SNAME("SSS"), SNAME("Shadow"))) {
+		RID final = rb->get_texture_slice(SNAME("SSS"), SNAME("Shadow"), 0, 0);
+		Size2i rtsize = texture_storage->render_target_get_size(render_target);
+		copy_effects->copy_to_fb_rect(final, texture_storage->render_target_get_rd_framebuffer(render_target), Rect2(Vector2(), rtsize), false, false);
 	}
 
 	if (get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SSIL && rb->has_texture(RB_SCOPE_SSIL, RB_FINAL)) {
@@ -3859,6 +3800,16 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 
 		RID ssr_mip_level = (rb_data.is_valid() && !rb_data->ss_effects_data.ssr.half_size && rb->has_texture(RB_SCOPE_SSR, RB_MIP_LEVEL)) ? rb->get_texture(RB_SCOPE_SSR, RB_MIP_LEVEL) : RID();
 		RID texture = ssr_mip_level.is_valid() ? ssr_mip_level : texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+		u.append_id(texture);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.binding = 37;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+
+		RID sss_shadow = (rb.is_valid() && rb->has_texture(SNAME("SSS"), SNAME("Shadow"))) ? rb->get_texture(SNAME("SSS"), SNAME("Shadow")) : RID();
+		RID texture = sss_shadow.is_valid() ? sss_shadow : texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_WHITE : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
 		u.append_id(texture);
 		uniforms.push_back(u);
 	}

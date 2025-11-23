@@ -1863,7 +1863,6 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 
 	RID default_sampler = material_storage->sampler_rd_get_default(RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
 	Size2i screen_size = p_render_buffers->get_internal_size();
-	auto diffuse = p_render_buffers->get_internal_texture();
 	auto depth = p_render_buffers->get_depth_texture();
 	bool use_normals = p_normal_roughness.is_valid();
 	RID normal_texture = use_normals ? p_normal_roughness : depth;
@@ -1941,14 +1940,20 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 
 	RD::get_singleton()->buffer_update(screen_space_shadows.ubo, 0, sizeof(ScreenSpaceShadowsData), &data);
 
+	// Ensure output texture exists and is cleared to white so the shader writes a shadow factor.
+	if (!p_render_buffers->has_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW)) {
+		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT);
+	}
+	RID shadow_texture = p_render_buffers->get_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW);
+	RD::get_singleton()->texture_clear(shadow_texture, Color(1, 1, 1, 1), 0, 1, 0, 1);
 
 	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
 
 	RID shader = screen_space_shadows.shader.version_get_shader(screen_space_shadows.shader_version, 0);
 	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, screen_space_shadows.pipelines[0]);
 
-	RD::Uniform u_diffuse(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ diffuse }));
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_diffuse), 0);
+	RD::Uniform u_shadow_image(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ shadow_texture }));
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_shadow_image), 0);
 	RD::Uniform u_depthsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, depth }));
 	RD::Uniform u_normalsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, normal_texture }));
 	RD::Uniform u_historysampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ default_sampler, history_read }));
