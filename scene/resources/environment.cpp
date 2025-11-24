@@ -1738,6 +1738,18 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "adjustment_saturation", PROPERTY_HINT_RANGE, "0.0,2.0,0.01,or_less,or_greater"), "set_adjustment_saturation", "get_adjustment_saturation");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "adjustment_color_correction", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D,Texture3D"), "set_adjustment_color_correction", "get_adjustment_color_correction");
 
+	ClassDB::bind_method(D_METHOD("set_cs_thickness", "thickness"), &Environment::set_cs_thickness);
+	ClassDB::bind_method(D_METHOD("get_cs_thickness"), &Environment::get_cs_thickness);
+	ClassDB::bind_method(D_METHOD("set_cs_max_dist", "max_dist"), &Environment::set_cs_max_dist);
+	ClassDB::bind_method(D_METHOD("get_cs_max_dist"), &Environment::get_cs_max_dist);
+	ClassDB::bind_method(D_METHOD("set_cs_opacity"), &Environment::set_cs_opacity);
+	ClassDB::bind_method(D_METHOD("get_cs_opacity"), &Environment::get_cs_opacity);
+
+	ADD_GROUP("Contact Shadows", "cs_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_thickness", PROPERTY_HINT_RANGE, "0.00,1.0,0.01"), "set_cs_thickness", "get_cs_thickness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_max_dist", PROPERTY_HINT_RANGE, "0.00,1.0,0.01"), "set_cs_max_dist", "get_cs_max_dist");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cs_opacity", PROPERTY_HINT_RANGE, "0.00,1.0,0.01"), "set_cs_opacity", "get_cs_opacity");
+
 	// Constants
 
 	BIND_ENUM_CONSTANT(BG_CLEAR_COLOR);

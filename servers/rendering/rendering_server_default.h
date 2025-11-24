@@ -833,7 +833,9 @@ public:
 	FUNC4(environment_set_tonemap, RID, EnvironmentToneMapper, float, float)
 	FUNC2(environment_set_tonemap_agx_contrast, RID, float)
 
-	FUNC7(environment_set_adjustment, RID, bool, float, float, float, bool, RID)
+	FUNC9(environment_set_adjustment, RID, bool, float, float, float, bool, RID, float, float)
+
+	FUNC4(environment_set_cs, RID, float, float, float)
 
 FUNC11(environment_set_screen_space_shadows, RID, bool, float, float, float, int, float, float, float, float, float)
 

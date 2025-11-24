@@ -1361,7 +1361,7 @@ public:
 	PASS1(environment_set_sdfgi_frames_to_update_light, RS::EnvironmentSDFGIFramesToUpdateLight)
 
 	// Adjustment
-	PASS7(environment_set_adjustment, RID, bool, float, float, float, bool, RID)
+	PASS9(environment_set_adjustment, RID, bool, float, float, float, bool, RID, float, float)
 
 	PASS1RC(bool, environment_get_adjustments_enabled, RID)
 	PASS1RC(float, environment_get_adjustments_brightness, RID)
