@@ -308,7 +308,7 @@ public:
 	virtual void environment_set_sdfgi_frames_to_converge(RS::EnvironmentSDFGIFramesToConverge p_frames) = 0;
 	virtual void environment_set_sdfgi_frames_to_update_light(RS::EnvironmentSDFGIFramesToUpdateLight p_update) = 0;
 
-	virtual void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) = 0;
+	virtual void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction, float p_sharpen_strength, float p_ca_strength) = 0;
 
 	virtual bool environment_get_adjustments_enabled(RID p_env) const = 0;
 	virtual float environment_get_adjustments_brightness(RID p_env) const = 0;
@@ -316,6 +316,11 @@ public:
 	virtual float environment_get_adjustments_saturation(RID p_env) const = 0;
 	virtual bool environment_get_use_1d_color_correction(RID p_env) const = 0;
 	virtual RID environment_get_color_correction(RID p_env) const = 0;
+
+	virtual void environment_set_cs(RID p_env, float thickness, float max_dist, float opacity) = 0;
+	virtual float environment_get_cs_thickness(RID p_env) const = 0;
+	virtual float environment_get_cs_max_dist(RID p_env) const = 0;
+	virtual float environment_get_cs_opacity(RID p_env) const = 0;
 
 	virtual Ref<Image> environment_bake_panorama(RID p_env, bool p_bake_irradiance, const Size2i &p_size) = 0;
 

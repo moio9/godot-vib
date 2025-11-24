@@ -695,8 +695,8 @@ RS::EnvironmentSDFGIYScale RendererSceneRender::environment_get_sdfgi_y_scale(RI
 
 // Adjustments
 
-void RendererSceneRender::environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) {
-	environment_storage.environment_set_adjustment(p_env, p_enable, p_brightness, p_contrast, p_saturation, p_use_1d_color_correction, p_color_correction);
+void RendererSceneRender::environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction, float p_sharpen_strength, float p_ca_strength) {
+	environment_storage.environment_set_adjustment(p_env, p_enable, p_brightness, p_contrast, p_saturation, p_use_1d_color_correction, p_color_correction, p_sharpen_strength, p_ca_strength);
 }
 
 bool RendererSceneRender::environment_get_adjustments_enabled(RID p_env) const {
@@ -721,4 +721,28 @@ bool RendererSceneRender::environment_get_use_1d_color_correction(RID p_env) con
 
 RID RendererSceneRender::environment_get_color_correction(RID p_env) const {
 	return environment_storage.environment_get_color_correction(p_env);
+}
+
+float RendererSceneRender::environment_get_sharpen_strength(RID p_env) const {
+	return environment_storage.environment_get_sharpen_strength(p_env);
+}
+
+float RendererSceneRender::environment_get_ca_strength(RID p_env) const {
+	return environment_storage.environment_get_ca_strength(p_env);
+}
+
+void RendererSceneRender::environment_set_cs(RID p_env, float thickness, float max_dist, float opacity) {
+	environment_storage.environment_set_cs(p_env, thickness, max_dist, opacity);
+}
+
+float RendererSceneRender::environment_get_cs_thickness(RID p_env) const {
+	return environment_storage.environment_get_cs_thickness(p_env);
+}
+
+float RendererSceneRender::environment_get_cs_max_dist(RID p_env) const {
+	return environment_storage.environment_get_cs_max_dist(p_env);
+}
+
+float RendererSceneRender::environment_get_cs_opacity(RID p_env) const {
+	return environment_storage.environment_get_cs_opacity(p_env);
 }

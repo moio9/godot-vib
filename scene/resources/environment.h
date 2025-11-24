@@ -220,6 +220,12 @@ private:
 	bool use_1d_color_correction = true;
 	Ref<Texture> adjustment_color_correction;
 	void _update_adjustment();
+	void _update_cs();
+
+	// Contact Shadows
+	float cs_thickness = 0.1f;
+	float cs_max_dist = 0.1f;
+	float cs_opacity = 0.8f;
 
 protected:
 	static void _bind_methods();
@@ -441,6 +447,14 @@ public:
 	float get_adjustment_saturation() const;
 	void set_adjustment_color_correction(Ref<Texture> p_color_correction);
 	Ref<Texture> get_adjustment_color_correction() const;
+
+	// Contact Shadows
+	void set_cs_thickness(float thickness);
+	float get_cs_thickness() const;
+	void set_cs_max_dist(float max_dist);
+	float get_cs_max_dist() const;
+	void set_cs_opacity(float opacity);
+	float get_cs_opacity() const;
 
 	Environment();
 	~Environment();
