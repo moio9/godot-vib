@@ -1019,7 +1019,7 @@ uniform float msdf_outline_size : hint_range(0.0, 250.0, 1.0);
 
 	code += "uniform ivec2 albedo_texture_size;\n";
 	code += "uniform float point_size : hint_range(0.1, 128.0, 0.1);\n";
-	code += "uniform float mesh_blend : hint_range(0.0, 1.0);\n";
+	code += "uniform float mesh_blend : hint_range(-1.0, 1.0);\n";
 
 	if (!orm) {
 		code += vformat(R"(
@@ -3144,7 +3144,7 @@ float BaseMaterial3D::get_distance_fade_min_distance() const {
 }
 
 void BaseMaterial3D::set_mesh_blend(float p_value) {
-	mesh_blend = CLAMP(p_value, 0.0f, 1.0f);
+	mesh_blend = CLAMP(p_value, -1.0f, 1.0f);
 	_material_set_param(shader_names->mesh_blend, mesh_blend);
 }
 
@@ -3791,7 +3791,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "distance_fade_min_distance", PROPERTY_HINT_RANGE, "0,4096,0.01,suffix:m"), "set_distance_fade_min_distance", "get_distance_fade_min_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "distance_fade_max_distance", PROPERTY_HINT_RANGE, "0,4096,0.01,suffix:m"), "set_distance_fade_max_distance", "get_distance_fade_max_distance");
 	ADD_GROUP("Mesh Blend", "mesh_blend");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_blend", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_mesh_blend", "get_mesh_blend");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_blend", PROPERTY_HINT_RANGE, "-1,1,0.01"), "set_mesh_blend", "get_mesh_blend");
 
 	ADD_GROUP("Stencil", "stencil_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "stencil_mode", PROPERTY_HINT_ENUM, "Disabled,Outline,X-Ray,Custom"), "set_stencil_mode", "get_stencil_mode");

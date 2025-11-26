@@ -56,15 +56,18 @@ void main() {
 			ivec2 sample_pixel = clamp(tile_origin + ivec2(x, y), ivec2(0), resolution - ivec2(1));
 			vec2 value = vec2(0.0);
 
-			uvec4 ids = imageLoad(vb_vis, sample_pixel);
-			vec2 aux = imageLoad(vb_aux, sample_pixel).xy;
-			float depth_value = imageLoad(mesh_depth, sample_pixel).x;
+	uvec4 ids = imageLoad(vb_vis, sample_pixel);
+	vec2 aux = imageLoad(vb_aux, sample_pixel).xy;
+	float depth_value = imageLoad(mesh_depth, sample_pixel).x;
 
-			if (ids.x != 0u) {
-				float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
-				float intensity = max(aux.x, 0.0);
-				value = vec2(id_quantized, intensity);
-			}
+	if (ids.x != 0u) {
+		float raw_weight = aux.x;
+		if (raw_weight >= 0.0) {
+			float weight = min(raw_weight, 1.0);
+			float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
+			value = vec2(id_quantized, weight);
+		}
+	}
 
 			int cache_idx = coord_to_index(ivec2(x, y));
 			cached_mask[cache_idx] = value;

@@ -481,7 +481,11 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 				pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_SDF;
 			} break;
 			case PASS_MODE_VISIBILITY_BUFFER: {
-				pipeline_key.version = (p_params->view_count > 1) ? SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW : SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER;
+				if (p_params->view_count > 1) {
+					pipeline_key.version = p_params->visibility_use_aux ? SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW : SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX_MULTIVIEW;
+				} else {
+					pipeline_key.version = p_params->visibility_use_aux ? SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER : SceneShaderForwardClustered::PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX;
+				}
 			} break;
 		}
 
@@ -1243,15 +1247,27 @@ void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_rend
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	ERR_FAIL_COND(rb.is_null());
 
+	// Lazily allocate visibility buffer only when requested (debug VB or mesh blend).
+	bool use_main_depth_for_vb = RendererSceneRenderRD::get_singleton()->is_visibility_buffer_reusing_main_depth();
+	if (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {
+		use_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.
+	}
+	// If MSAA is enabled, the resolved depth lacks depth-attachment usage, so keep a dedicated VB depth.
+	if (rb->get_msaa_3d() != RS::VIEWPORT_MSAA_DISABLED) {
+		use_main_depth_for_vb = false;
+	}
+	bool need_aux = RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled();
+	rb->ensure_visibility_textures(need_aux, !use_main_depth_for_vb);
+
 	RID vb_vis = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
 	RID vb_aux = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
-	RID vb_depth = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+	RID vb_depth = use_main_depth_for_vb ? rb->get_depth_texture() : rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
 
 	if (vb_vis.is_null() || vb_depth.is_null()) {
 		return;
 	}
 
-	RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache_multiview(rb->get_view_count(), vb_vis, vb_aux, vb_depth);
+	RID framebuffer = need_aux ? FramebufferCacheRD::get_singleton()->get_cache_multiview(rb->get_view_count(), vb_vis, vb_aux, vb_depth) : FramebufferCacheRD::get_singleton()->get_cache_multiview(rb->get_view_count(), vb_vis, vb_depth);
 
 	RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, RID(), p_samplers);
 
@@ -1272,12 +1288,21 @@ void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_rend
 			p_render_data->scene_data->view_count,
 			0,
 			p_base_specialization);
+	render_list_params.visibility_use_aux = need_aux;
 
 	Vector<Color> clear_colors;
 	clear_colors.push_back(Color(0, 0, 0, 0));
-	clear_colors.push_back(Color(0, 0, 0, 0));
+	if (need_aux) {
+		clear_colors.push_back(Color(0, 0, 0, 0));
+	}
 
-	_render_list_with_draw_list(&render_list_params, framebuffer, RD::DRAW_CLEAR_ALL, clear_colors, 0.0f, 0u, p_render_data->render_region);
+	BitField<RD::DrawFlags> draw_flags;
+	if (use_main_depth_for_vb) {
+		draw_flags = need_aux ? BitField<RD::DrawFlags>(RD::DRAW_CLEAR_COLOR_0 | RD::DRAW_CLEAR_COLOR_1) : BitField<RD::DrawFlags>(RD::DRAW_CLEAR_COLOR_0);
+	} else {
+		draw_flags = BitField<RD::DrawFlags>(RD::DRAW_CLEAR_ALL);
+	}
+	_render_list_with_draw_list(&render_list_params, framebuffer, draw_flags, clear_colors, 0.0f, 0u, p_render_data->render_region);
 }
 
 /* SDFGI */

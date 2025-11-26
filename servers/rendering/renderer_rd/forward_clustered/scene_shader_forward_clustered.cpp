@@ -300,6 +300,10 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS + ubershader_base;
 		case PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW:
 			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS_MULTIVIEW + ubershader_base;
+		case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX:
+			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS_NO_AUX + ubershader_base;
+		case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX_MULTIVIEW:
+			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS_NO_AUX_MULTIVIEW + ubershader_base;
 		case PIPELINE_VERSION_COLOR_PASS: {
 			int shader_flags = 0;
 
@@ -471,6 +475,10 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			case PIPELINE_VERSION_VISIBILITY_BUFFER:
 			case PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW:
 				blend_state = RD::PipelineColorBlendState::create_disabled(2);
+				break;
+			case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX:
+			case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX_MULTIVIEW:
+				blend_state = RD::PipelineColorBlendState::create_disabled(1);
 				break;
 			case PIPELINE_VERSION_DEPTH_PASS:
 			case PIPELINE_VERSION_DEPTH_PASS_DP:
@@ -648,6 +656,8 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_SDF\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_SDF
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_BASE, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n", false)); // SHADER_VERSION_VISIBILITY_PASS
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_MULTIVIEW, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n", false)); // SHADER_VERSION_VISIBILITY_PASS_MULTIVIEW
+			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_BASE, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n#define MODE_RENDER_VISIBILITY_NO_AUX\n", false)); // SHADER_VERSION_VISIBILITY_PASS_NO_AUX
+			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_MULTIVIEW, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n#define MODE_RENDER_VISIBILITY_NO_AUX\n", false)); // SHADER_VERSION_VISIBILITY_PASS_NO_AUX_MULTIVIEW
 		}
 
 		Vector<String> color_pass_flags = {

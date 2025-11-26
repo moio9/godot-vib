@@ -196,6 +196,8 @@ private:
 	void _ensure_vb_out_storage(RenderSceneBuffersRD *rb);
 	void _ensure_vb_vis_texture(RenderSceneBuffersRD *rb);
 	void _ensure_vb_dummy_images();
+	bool vb_always_on = false;
+	bool vb_reuse_main_depth = true;
 
 	// Etapele VB (test)
 	void visibility_fill_test(RenderSceneBuffersRD *rb, const RenderDataRD *p_render_data);
@@ -204,6 +206,8 @@ private:
 
 public:
 	static RendererSceneRenderRD *get_singleton() { return singleton; }
+	bool is_visibility_buffer_reusing_main_depth() const { return vb_reuse_main_depth; }
+	bool is_mesh_blend_enabled() const { return _mesh_blend_enabled(); }
 
 	/* LIGHTING */
 

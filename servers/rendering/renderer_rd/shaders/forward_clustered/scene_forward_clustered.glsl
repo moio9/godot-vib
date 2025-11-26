@@ -1016,7 +1016,9 @@ layout(location = 4) out float depth_output_buffer;
 
 #elif defined(MODE_RENDER_VISIBILITY)
 layout(location = 0) out uvec4 visibility_id_output;
+#ifndef MODE_RENDER_VISIBILITY_NO_AUX
 layout(location = 1) out vec4 visibility_aux_output;
+#endif
 #endif // MODE_RENDER_MATERIAL
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
@@ -1190,9 +1192,12 @@ void fragment_shader(in SceneData scene_data) {
 	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
 	visibility_id_output = uvec4(packed_ids, 0u, 0u);
 
-	float material_mesh_blend = sc_get_material_mesh_blend();
-	vec2 aux = vec2(clamp(material_mesh_blend, 0.0, 1.0), sc_instance_hash(packed_ids.y));
+#ifndef MODE_RENDER_VISIBILITY_NO_AUX
+	float material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+	float blend_id = sc_instance_hash(packed_ids.y);
+	vec2 aux = vec2(material_mesh_blend, blend_id);
 	visibility_aux_output = vec4(aux, 0.0, 0.0);
+#endif
 	return;
 #endif
 

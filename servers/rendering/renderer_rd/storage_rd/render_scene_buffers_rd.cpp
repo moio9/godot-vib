@@ -195,34 +195,6 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_COLOR_MSAA, get_base_data_format(), get_color_usage_bits(false, true, can_be_storage), texture_samples, Size2i(), 0, 1, true, true);
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH_MSAA, get_depth_format(false, true, can_be_storage), get_depth_usage_bits(false, true, can_be_storage), texture_samples, Size2i(), 0, 1, true, true);
 	}
-	
-	// --- Visibility Buffer (named textures) -----------------------------------
-	//  - vb_vis   : R32G32_UINT  (object_id, tri_id)
-	//  - vb_aux   : R16G16_SFLOAT (opțional, UV/barycentrics etc.)
-	//  - vb_depth : D32_SFLOAT    (depth prepass VB)
-	{
-		// 1) VIS (R32G32_UINT)
-		{
-			const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R32G32_UINT;
-			const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
-			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
-		}
-
-		// 2) AUX (RG16F)
-		{
-			const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R16G16_SFLOAT;
-			const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
-			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
-		}
-
-		// 3) DEPTH prepass-ul VB
-		{
-			const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_D32_SFLOAT;
-			const uint32_t usage = RenderingDevice::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
-			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
-		}
-	}
-	// --------------------------------------------------------------------------
 
 	// VRS (note, our vrs object will only be set if VRS is supported)
 	RID vrs_texture;
@@ -274,6 +246,32 @@ void RenderSceneBuffersRD::set_anisotropic_filtering_level(RS::ViewportAnisotrop
 	anisotropic_filtering_level = p_anisotropic_filtering_level;
 
 	update_samplers();
+}
+
+bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_with_aux, bool p_create_depth) {
+	if (internal_size.x <= 0 || internal_size.y <= 0) {
+		return false;
+	}
+
+	if (!has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS)) {
+		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R32G32_UINT;
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+	}
+
+	if (p_with_aux && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX)) {
+		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R16G16_SFLOAT;
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+	}
+
+	if (p_create_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH)) {
+		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_D32_SFLOAT;
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+	}
+
+	return has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_create_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);
 }
 
 void RenderSceneBuffersRD::set_use_debanding(bool p_use_debanding) {

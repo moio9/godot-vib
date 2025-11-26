@@ -202,6 +202,7 @@ public:
 	void set_vrs(RendererRD::VRS *p_vrs) { vrs = p_vrs; }
 	RS::ViewportVRSMode get_vrs_mode() { return vrs_mode; }
 
+	bool ensure_visibility_textures(bool p_with_aux = true, bool p_create_depth = true);
 	void cleanup();
 	virtual void configure(const RenderSceneBuffersConfiguration *p_config) override;
 	void configure_for_reflections(const Size2i p_reflection_size);
