@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  d3d12ma.cpp                                                           */
+/*  godot_core_cursor.mm                                                  */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,41 +28,16 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-// Wrapper needed to set the required rpcndr version for MinGW compatibility.
-// Since we're compiling thirdparty code in a Godot SCons environment with
-// warnings enabled, we also need to silence them manually.
+#import "godot_core_cursor.h"
 
-#include "rendering_device_driver_d3d12.h" // For __REQUIRED_RPCNDR_H_VERSION__.
+@implementation GodotCoreCursor
+@synthesize _coreCursorType = _type;
 
-GODOT_GCC_WARNING_PUSH
-GODOT_GCC_WARNING_IGNORE("-Wduplicated-branches")
-GODOT_GCC_WARNING_IGNORE("-Wimplicit-fallthrough")
-GODOT_GCC_WARNING_IGNORE("-Wmaybe-uninitialized")
-GODOT_GCC_WARNING_IGNORE("-Wmissing-field-initializers")
-GODOT_GCC_WARNING_IGNORE("-Wnon-virtual-dtor")
-GODOT_GCC_WARNING_IGNORE("-Wnonnull-compare")
-GODOT_GCC_WARNING_IGNORE("-Wshadow")
-GODOT_GCC_WARNING_IGNORE("-Wsign-compare")
-GODOT_GCC_WARNING_IGNORE("-Wswitch")
-GODOT_GCC_WARNING_IGNORE("-Wunused-function")
-GODOT_GCC_WARNING_IGNORE("-Wunused-variable")
-GODOT_CLANG_WARNING_PUSH
-GODOT_CLANG_WARNING_IGNORE("-Wimplicit-fallthrough")
-GODOT_CLANG_WARNING_IGNORE("-Wmissing-field-initializers")
-GODOT_CLANG_WARNING_IGNORE("-Wnon-virtual-dtor")
-GODOT_CLANG_WARNING_IGNORE("-Wstring-plus-int")
-GODOT_CLANG_WARNING_IGNORE("-Wswitch")
-GODOT_CLANG_WARNING_IGNORE("-Wtautological-undefined-compare")
-GODOT_CLANG_WARNING_IGNORE("-Wunused-but-set-variable")
-GODOT_CLANG_WARNING_IGNORE("-Wunused-function")
-GODOT_CLANG_WARNING_IGNORE("-Wunused-private-field")
-GODOT_CLANG_WARNING_IGNORE("-Wunused-variable")
-GODOT_MSVC_WARNING_PUSH
-GODOT_MSVC_WARNING_IGNORE(4189) // "Local variable is initialized but not referenced".
-GODOT_MSVC_WARNING_IGNORE(4505) // "Unreferenced local function has been removed".
+- (id)initWithType:(int32_t)type {
+	if ((self = [super init])) {
+		_type = type;
+	}
+	return self;
+}
 
-#include <D3D12MemAlloc.cpp>
-
-GODOT_GCC_WARNING_POP
-GODOT_CLANG_WARNING_POP
-GODOT_MSVC_WARNING_POP
+@end

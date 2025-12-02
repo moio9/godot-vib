@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  HybridAppUtils.kt                                                     */
+/*  android_editor_gradle_runner.h                                        */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,52 +28,50 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-/**
- * Contains utility methods and constants for hybrid apps.
- */
-@file:JvmName("HybridAppUtils")
+#pragma once
 
-package org.godotengine.godot.xr
+#ifdef ANDROID_ENABLED
 
-import android.util.Log
-import org.godotengine.godot.GodotLib
+#include "core/object/object.h"
 
-private const val TAG = "HybridAppUtils"
+class ConfirmationDialog;
+class RichTextLabel;
 
-enum class HybridMode(private val nativeValue: Int) {
-	NONE( -1),
-	IMMERSIVE(0),
-	PANEL(1);
+class AndroidEditorGradleRunner : public Object {
+	GDCLASS(AndroidEditorGradleRunner, Object);
 
-	companion object {
-		fun fromNative(nativeValue: Int): HybridMode {
-			for (mode in HybridMode.entries) {
-				if (mode.nativeValue == nativeValue) {
-					return mode
-				}
-			}
-			return NONE
-		}
-	}
-}
+	RichTextLabel *output_label = nullptr;
+	ConfirmationDialog *output_dialog = nullptr;
 
-const val HYBRID_APP_FEATURE = "godot_openxr_hybrid_app"
-const val HYBRID_APP_PANEL_FEATURE = "godot_openxr_panel_app"
-const val HYBRID_APP_PANEL_CATEGORY = "org.godotengine.xr.hybrid.PANEL"
-const val HYBRID_APP_IMMERSIVE_CATEGORY = "org.godotengine.xr.hybrid.IMMERSIVE"
+	enum State {
+		STATE_IDLE,
+		STATE_BUILDING,
+		STATE_CLEANING,
+	};
+	State state = STATE_IDLE;
 
-fun isHybridAppEnabled() = GodotLib.getGlobal("xr/hybrid_app/enabled").toBoolean()
+	String project_path;
+	String build_path;
+	String output_path;
+	List<String> gradle_build_args;
+	List<String> gradle_copy_args;
+	int64_t job_id;
 
-fun getHybridAppLaunchMode(): HybridMode {
-	if (!isHybridAppEnabled()) {
-		return HybridMode.NONE
-	}
+	void _android_gradle_build_connect();
+	void _android_gradle_build_disconnect();
+	void _android_gradle_build_output(int p_type, const String &p_line);
+	void _android_gradle_build_build();
+	void _android_gradle_build_build_callback(int p_exit_code);
+	void _android_gradle_build_copy();
+	void _android_gradle_build_copy_callback(int p_exit_code);
+	void _android_gradle_build_clean_project(bool p_was_successful);
+	void _android_gradle_build_clean_project_callback();
 
-	try {
-		val launchModeValue = GodotLib.getGlobal("xr/hybrid_app/launch_mode").toInt()
-		return HybridMode.fromNative(launchModeValue)
-	} catch (e: Exception) {
-		Log.w(TAG, "Unable to retrieve 'xr/hybrid_app/launch_mode' project setting", e)
-		return HybridMode.NONE
-	}
-}
+	void _android_gradle_build_failed(const String &p_msg = String());
+	void _android_gradle_build_cancel();
+
+public:
+	void run_gradle(const String &p_project_path, const String &p_build_path, const String &p_output_path, const List<String> &p_gradle_build_args, const List<String> &p_gradle_copy_args);
+};
+
+#endif // ANDROID_ENABLED
