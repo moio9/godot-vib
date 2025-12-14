@@ -2026,3 +2026,5 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 		screen_space_shadows.history_index ^= 1;
 	}
 }
+
+} // end of SSEffects implementation guard
