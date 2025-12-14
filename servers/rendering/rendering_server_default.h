@@ -837,8 +837,6 @@ public:
 
 FUNC11(environment_set_screen_space_shadows, RID, bool, float, float, float, int, float, float, float, float, float)
 
-FUNC11(environment_set_screen_space_shadows, RID, bool, float, float, float, int, float, float, float, float, float)
-
 	FUNC11(environment_set_fog, RID, bool, const Color &, float, float, float, float, float, float, float, EnvironmentFogMode)
 
 	FUNC4(environment_set_fog_depth, RID, float, float, float)
