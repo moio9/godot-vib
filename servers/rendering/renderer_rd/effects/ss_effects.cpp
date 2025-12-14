@@ -530,12 +530,14 @@ SSEffects::~SSEffects() {
 				RD::get_singleton()->free_rid(screen_space_shadows.history_textures[i]);
 			}
 		}
-		if (screen_space_shadows.history_dummy.is_valid()) {
-			RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
+			if (screen_space_shadows.history_dummy.is_valid()) {
+				RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
+			}
+
 		}
 
-	singleton = nullptr;
-}
+		singleton = nullptr;
+	}
 
 /* SS Downsampler */
 
@@ -2026,5 +2028,3 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 		screen_space_shadows.history_index ^= 1;
 	}
 }
-
-} // end of SSEffects implementation guard
