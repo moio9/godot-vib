@@ -93,11 +93,17 @@ void main() {
 		return;
 	}
 
-	float material_scale = max(mask_value.y, 0.0);
-	float neighbor_scale = max(edge_mask.y, 0.0);
+	float material_scale = mask_value.y;
+	float neighbor_scale = edge_mask.y;
 
-	float base_scale_max = max(material_scale, neighbor_scale);
-	float base_scale_avg = 0.5 * (material_scale + neighbor_scale);
+	float base_scale_max;
+	if (material_scale < 0.0) {
+		base_scale_max = max(0.0, neighbor_scale + material_scale);
+	} else {
+		base_scale_max = max(material_scale, neighbor_scale);
+	}
+
+	float base_scale_avg = 0.5 * (max(material_scale, 0.0) + max(neighbor_scale, 0.0));
 
 	float nb = clamp(params.neighbor_blend, -1.0, 1.0);
 	float distance_scale = mix(base_scale_max, base_scale_avg, nb);

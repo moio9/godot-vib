@@ -62,11 +62,9 @@ void main() {
 
 	if (ids.x != 0u) {
 		float raw_weight = aux.x;
-		if (raw_weight >= 0.0) {
-			float weight = min(raw_weight, 1.0);
-			float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
-			value = vec2(id_quantized, weight);
-		}
+		float weight = min(raw_weight, 1.0);
+		float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
+		value = vec2(id_quantized, weight);
 	}
 
 			int cache_idx = coord_to_index(ivec2(x, y));
