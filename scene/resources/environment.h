@@ -137,6 +137,7 @@ private:
 	float ssao_sharpness = 0.98;
 	float ssao_direct_light_affect = 0.0;
 	float ssao_ao_channel_affect = 0.0;
+	RenderingServer::EnvironmentSSAOAlgorithm ssao_algorithm = RenderingServer::ENV_SSAO_ALGORITHM_STANDARD;
 	void _update_ssao();
 
 	// SSIL
@@ -145,6 +146,7 @@ private:
 	float ssil_intensity = 1.0;
 	float ssil_sharpness = 0.98;
 	float ssil_normal_rejection = 1.0;
+	RenderingServer::EnvironmentSSILAlgorithm ssil_algorithm = RenderingServer::ENV_SSIL_ALGORITHM_STANDARD;
 
 	void _update_ssil();
 
@@ -322,6 +324,8 @@ public:
 	float get_ssao_direct_light_affect() const;
 	void set_ssao_ao_channel_affect(float p_ao_channel_affect);
 	float get_ssao_ao_channel_affect() const;
+	void set_ssao_algorithm(RenderingServer::EnvironmentSSAOAlgorithm p_algorithm);
+	RenderingServer::EnvironmentSSAOAlgorithm get_ssao_algorithm() const;
 
 	// SSIL
 	void set_ssil_enabled(bool p_enabled);
@@ -334,6 +338,8 @@ public:
 	float get_ssil_sharpness() const;
 	void set_ssil_normal_rejection(float p_normal_rejection);
 	float get_ssil_normal_rejection() const;
+	void set_ssil_algorithm(RenderingServer::EnvironmentSSILAlgorithm p_algorithm);
+	RenderingServer::EnvironmentSSILAlgorithm get_ssil_algorithm() const;
 
 	// SDFGI
 	void set_sdfgi_enabled(bool p_enabled);

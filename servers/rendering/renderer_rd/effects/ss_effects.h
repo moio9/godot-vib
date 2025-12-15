@@ -113,6 +113,7 @@ public:
 		float intensity = 2.0;
 		float sharpness = 0.98;
 		float normal_rejection = 1.0;
+		bool use_visibility_bitmask = false;
 
 		Size2i full_screen_size;
 	};
@@ -138,6 +139,7 @@ public:
 		float detail = 0.5;
 		float horizon = 0.06;
 		float sharpness = 0.98;
+		bool use_visibility_bitmask = false;
 
 		Size2i full_screen_size;
 	};
@@ -259,14 +261,15 @@ private:
 		float NDC_to_view_mul[2];
 		float NDC_to_view_add[2];
 
-		float pad2[2];
+		float vb_flag; // use visibility bitmask
 		float z_near;
 		float z_far;
+		float _pad_flags; // align to 16 bytes
 
 		float radius;
 		float intensity;
 		int size_multiplier;
-		int pad;
+		int _pad0; // keep std430 alignment (pair with size_multiplier)
 
 		float fade_out_mul;
 		float fade_out_add;
@@ -359,7 +362,7 @@ private:
 		float NDC_to_view_mul[2];
 		float NDC_to_view_add[2];
 
-		float pad[2];
+		float flags[2]; // x: use visibility bitmask, y: unused
 		float half_screen_pixel_size_x025[2];
 
 		float radius;

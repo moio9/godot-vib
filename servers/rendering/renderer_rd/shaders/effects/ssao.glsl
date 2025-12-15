@@ -100,7 +100,7 @@ layout(push_constant, std430) uniform Params {
 	vec2 NDC_to_view_mul;
 	vec2 NDC_to_view_add;
 
-	vec2 pad2;
+	vec2 flags; // x: use GTAO VB visibility mask, y: unused
 	vec2 half_screen_pixel_size_x025;
 
 	float radius;
@@ -183,7 +183,7 @@ float calculate_pixel_obscurance(vec3 p_pixel_normal, vec3 p_hit_delta, float p_
 	return max(0, NdotD - params.horizon_angle_threshold) * falloff_mult;
 }
 
-void SSAO_tap_inner(const int p_quality_level, inout float r_obscurance_sum, inout float r_weight_sum, const vec2 p_sampling_uv, const float p_mip_level, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const float p_fallof_sq, const float p_weight_mod) {
+void SSAO_tap_inner(const int p_quality_level, inout float r_obscurance_sum, inout float r_weight_sum, const vec2 p_sampling_uv, const float p_mip_level, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const float p_fallof_sq, const float p_weight_mod, const bool p_use_vb, inout uint r_mask, const vec3 p_pix_center_normal) {
 	// get depth at sample
 	float viewspace_sample_z = textureLod(source_depth_mipmaps, vec3(p_sampling_uv, params.pass), p_mip_level).x;
 
@@ -202,9 +202,27 @@ void SSAO_tap_inner(const int p_quality_level, inout float r_obscurance_sum, ino
 	weight *= p_weight_mod;
 	r_obscurance_sum += obscurance * weight;
 	r_weight_sum += weight;
+
+	if (p_use_vb && obscurance > 0.0) {
+		// Approximate visibility bitmask: quantize the direction of the hit delta in view space.
+		vec2 dir2d = normalize(hit_delta.xy);
+		if (any(greaterThan(abs(dir2d), vec2(0.0)))) {
+			float ang = atan(dir2d.y, dir2d.x); // [-pi, pi]
+			float ang01 = ang * 0.15915494 + 0.5; // 1/(2*pi)
+			uint bit = uint(clamp(floor(ang01 * 32.0), 0.0, 31.0));
+			r_mask |= (1u << bit);
+
+			// If the slope is shallow relative to the surface, also mark the opposite side to reduce streaking.
+			float ndot = clamp(dot(p_pix_center_normal, normalize(hit_delta)), 0.0, 1.0);
+			if (ndot < 0.15) {
+				uint bit_opposite = (bit + 16u) & 31u;
+				r_mask |= (1u << bit_opposite);
+			}
+		}
+	}
 }
 
-void SSAOTap(const int p_quality_level, inout float r_obscurance_sum, inout float r_weight_sum, const int p_tap_index, const mat2 p_rot_scale, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const vec2 p_normalized_screen_pos, const float p_mip_offset, const float p_fallof_sq, float p_weight_mod, vec2 p_norm_xy, float p_norm_xy_length) {
+void SSAOTap(const int p_quality_level, inout float r_obscurance_sum, inout float r_weight_sum, const int p_tap_index, const mat2 p_rot_scale, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const vec2 p_normalized_screen_pos, const float p_mip_offset, const float p_fallof_sq, float p_weight_mod, vec2 p_norm_xy, float p_norm_xy_length, const bool p_use_vb, inout uint r_mask, const vec3 p_pix_center_normal) {
 	vec2 sample_offset;
 	float sample_pow_2_len;
 
@@ -225,7 +243,7 @@ void SSAOTap(const int p_quality_level, inout float r_obscurance_sum, inout floa
 
 	vec2 sampling_uv = sample_offset * params.half_screen_pixel_size + p_normalized_screen_pos;
 
-	SSAO_tap_inner(p_quality_level, r_obscurance_sum, r_weight_sum, sampling_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod);
+	SSAO_tap_inner(p_quality_level, r_obscurance_sum, r_weight_sum, sampling_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod, p_use_vb, r_mask, p_pix_center_normal);
 
 	// for the second tap, just use the mirrored offset
 	vec2 sample_offset_mirrored_uv = -sample_offset;
@@ -241,10 +259,10 @@ void SSAOTap(const int p_quality_level, inout float r_obscurance_sum, inout floa
 	// snap to pixel center (more correct obscurance math, avoids artifacts)
 	vec2 sampling_mirrored_uv = sample_offset_mirrored_uv * params.half_screen_pixel_size + p_normalized_screen_pos;
 
-	SSAO_tap_inner(p_quality_level, r_obscurance_sum, r_weight_sum, sampling_mirrored_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod);
+	SSAO_tap_inner(p_quality_level, r_obscurance_sum, r_weight_sum, sampling_mirrored_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod, p_use_vb, r_mask, p_pix_center_normal);
 }
 
-void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, out float r_weight, const vec2 p_pos, int p_quality_level, bool p_adaptive_base) {
+void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, out float r_weight, const vec2 p_pos, int p_quality_level, bool p_adaptive_base, const bool p_use_vb, out uint r_mask) {
 	vec2 pos_rounded = trunc(p_pos);
 	uvec2 upos = uvec2(pos_rounded);
 
@@ -301,6 +319,7 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 	// the main obscurance & sample weight storage
 	float obscurance_sum = 0.0;
 	float weight_sum = 0.0;
+	uint mask_bits = 0u;
 
 	// edge mask for between this and left/right/top/bottom neighbor pixels - not used in quality level 0 so initialize to "no edge" (1 is no edge, 0 is edge)
 	vec4 edgesLRTB = vec4(1.0, 1.0, 1.0, 1.0);
@@ -367,7 +386,7 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 	// standard, non-adaptive approach
 	if ((p_quality_level != 3) || p_adaptive_base) {
 		for (int i = 0; i < number_of_taps; i++) {
-			SSAOTap(p_quality_level, obscurance_sum, weight_sum, i, rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, 1.0, norm_xy, norm_xy_length);
+			SSAOTap(p_quality_level, obscurance_sum, weight_sum, i, rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, 1.0, norm_xy, norm_xy_length, p_use_vb, mask_bits, pixel_normal);
 		}
 	}
 #ifdef ADAPTIVE
@@ -404,7 +423,7 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 		for (uint i = SSAO_ADAPTIVE_TAP_BASE_COUNT; i < additional_samples_to; i++) {
 			additional_sample_count -= 1.0f;
 			float weight_mod = clamp(additional_sample_count * blend_range_inv, 0.0, 1.0);
-			SSAOTap(p_quality_level, obscurance_sum, weight_sum, int(i), rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, weight_mod, norm_xy, norm_xy_length);
+			SSAOTap(p_quality_level, obscurance_sum, weight_sum, int(i), rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, weight_mod, norm_xy, norm_xy_length, p_use_vb, mask_bits, pixel_normal);
 		}
 	}
 #endif
@@ -416,6 +435,7 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 		r_shadow_term = obscurance;
 		r_edges = vec4(0.0);
 		r_weight = weight_sum;
+		r_mask = mask_bits;
 		return;
 	}
 
@@ -454,26 +474,36 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 	r_shadow_term = occlusion; // Our final 'occlusion' term (0 means fully occluded, 1 means fully lit)
 	r_edges = edgesLRTB; // These are used to prevent blurring across edges, 1 means no edge, 0 means edge, 0.5 means half way there, etc.
 	r_weight = weight_sum;
+	r_mask = mask_bits;
 }
 
 void main() {
 	float out_shadow_term;
 	float out_weight;
 	vec4 out_edges;
+	uint out_mask = 0u;
 	ivec2 ssC = ivec2(gl_GlobalInvocationID.xy);
 	if (any(greaterThanEqual(ssC, params.screen_size))) { //too large, do nothing
 		return;
 	}
 
 	vec2 uv = vec2(gl_GlobalInvocationID) + vec2(0.5);
+	bool use_gtao_vb = params.flags.x > 0.5;
 #ifdef SSAO_BASE
-	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, true);
+	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, true, use_gtao_vb, out_mask);
 
 	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), vec4(out_shadow_term, out_weight / (float(SSAO_ADAPTIVE_TAP_BASE_COUNT) * 4.0), 0.0, 0.0));
 #else
-	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, false); // pass in quality levels
+	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, false, use_gtao_vb, out_mask); // pass in quality levels
 	if (params.quality == 0) {
 		out_edges = vec4(1.0);
+	}
+
+	if (use_gtao_vb) {
+		// Derive visibility from the quantized bitmask (32 directions); fewer set bits = more occlusion.
+		float vb_visibility = 1.0 - float(bitCount(out_mask)) * (1.0 / 32.0);
+		// Combine with the classic SSAO term to keep behavior stable.
+		out_shadow_term *= clamp(vb_visibility, 0.0, 1.0);
 	}
 
 	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), vec4(out_shadow_term, pack_edges(out_edges), 0.0, 0.0));

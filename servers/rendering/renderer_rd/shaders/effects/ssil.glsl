@@ -99,14 +99,14 @@ layout(push_constant, std430) uniform Params {
 	vec2 NDC_to_view_mul;
 	vec2 NDC_to_view_add;
 
-	vec2 pad2;
+	float vb_flag; // use visibility bitmask
 	float z_near;
 	float z_far;
+	float pad_flags;
 
 	float radius;
 	float intensity;
 	int size_multiplier;
-	int pad;
 
 	float fade_out_mul;
 	float fade_out_add;
@@ -182,7 +182,7 @@ float calculate_pixel_obscurance(vec3 p_pixel_normal, vec3 p_hit_delta, float p_
 	return max(0, NdotD - 0.05) * falloff_mult;
 }
 
-void SSIL_tap_inner(const int p_quality_level, inout vec3 r_color_sum, inout float r_obscurance_sum, inout float r_weight_sum, const vec2 p_sampling_uv, const float p_mip_level, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const float p_fallof_sq, const float p_weight_mod) {
+void SSIL_tap_inner(const int p_quality_level, inout vec3 r_color_sum, inout float r_obscurance_sum, inout float r_weight_sum, const vec2 p_sampling_uv, const float p_mip_level, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const float p_fallof_sq, const float p_weight_mod, const bool p_use_vb, inout uint r_mask, const vec3 p_pix_center_normal) {
 	// get depth at sample
 	float viewspace_sample_z = textureLod(source_depth_mipmaps, vec3(p_sampling_uv, params.pass), p_mip_level).x;
 	vec3 sample_normal = load_normal(ivec2(p_sampling_uv * vec2(params.screen_size)));
@@ -213,9 +213,25 @@ void SSIL_tap_inner(const int p_quality_level, inout vec3 r_color_sum, inout flo
 	sample_color /= (1.0 + dot(sample_color, vec3(0.299, 0.587, 0.114)));
 	r_color_sum += sample_color * obscurance * weight * mix(1.0, smoothstep(0.0, 0.1, -dot(sample_normal, normalize(hit_delta))), params.normal_rejection_amount);
 	r_weight_sum += weight;
+
+	if (p_use_vb && obscurance > 0.0) {
+		vec2 dir2d = normalize(hit_delta.xy);
+		if (any(greaterThan(abs(dir2d), vec2(0.0)))) {
+			float ang = atan(dir2d.y, dir2d.x);
+			float ang01 = ang * 0.15915494 + 0.5; // 1/(2*pi)
+			uint bit = uint(clamp(floor(ang01 * 32.0), 0.0, 31.0));
+			r_mask |= (1u << bit);
+
+			float ndot = clamp(dot(p_pix_center_normal, normalize(hit_delta)), 0.0, 1.0);
+			if (ndot < 0.15) {
+				uint bit_opposite = (bit + 16u) & 31u;
+				r_mask |= (1u << bit_opposite);
+			}
+		}
+	}
 }
 
-void SSILTap(const int p_quality_level, inout vec3 r_color_sum, inout float r_obscurance_sum, inout float r_weight_sum, const int p_tap_index, const mat2 p_rot_scale, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const vec2 p_normalized_screen_pos, const float p_mip_offset, const float p_fallof_sq, float p_weight_mod, vec2 p_norm_xy, float p_norm_xy_length) {
+void SSILTap(const int p_quality_level, inout vec3 r_color_sum, inout float r_obscurance_sum, inout float r_weight_sum, const int p_tap_index, const mat2 p_rot_scale, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const vec2 p_normalized_screen_pos, const float p_mip_offset, const float p_fallof_sq, float p_weight_mod, vec2 p_norm_xy, float p_norm_xy_length, const bool p_use_vb, inout uint r_mask, const vec3 p_pix_center_normal) {
 	vec2 sample_offset;
 	float sample_pow_2_len;
 
@@ -236,7 +252,7 @@ void SSILTap(const int p_quality_level, inout vec3 r_color_sum, inout float r_ob
 
 	vec2 sampling_uv = sample_offset * params.half_screen_pixel_size + p_normalized_screen_pos;
 
-	SSIL_tap_inner(p_quality_level, r_color_sum, r_obscurance_sum, r_weight_sum, sampling_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod);
+	SSIL_tap_inner(p_quality_level, r_color_sum, r_obscurance_sum, r_weight_sum, sampling_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod, p_use_vb, r_mask, p_pix_center_normal);
 
 	// for the second tap, just use the mirrored offset
 	vec2 sample_offset_mirrored_uv = -sample_offset;
@@ -252,7 +268,7 @@ void SSILTap(const int p_quality_level, inout vec3 r_color_sum, inout float r_ob
 	// snap to pixel center (more correct obscurance math, avoids artifacts)
 	vec2 sampling_mirrored_uv = sample_offset_mirrored_uv * params.half_screen_pixel_size + p_normalized_screen_pos;
 
-	SSIL_tap_inner(p_quality_level, r_color_sum, r_obscurance_sum, r_weight_sum, sampling_mirrored_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod);
+	SSIL_tap_inner(p_quality_level, r_color_sum, r_obscurance_sum, r_weight_sum, sampling_mirrored_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod, p_use_vb, r_mask, p_pix_center_normal);
 }
 
 void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, out float r_weight, const vec2 p_pos, int p_quality_level, bool p_adaptive_base) {
@@ -313,6 +329,7 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 	vec3 color_sum = vec3(0.0);
 	float obscurance_sum = 0.0;
 	float weight_sum = 0.0;
+	uint mask_bits = 0u;
 
 	// edge mask for between this and left/right/top/bottom neighbor pixels - not used in quality level 0 so initialize to "no edge" (1 is no edge, 0 is edge)
 	vec4 edgesLRTB = vec4(1.0, 1.0, 1.0, 1.0);
@@ -337,7 +354,7 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 	// standard, non-adaptive approach
 	if ((p_quality_level != 3) || p_adaptive_base) {
 		for (int i = 0; i < number_of_taps; i++) {
-			SSILTap(p_quality_level, color_sum, obscurance_sum, weight_sum, i, rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, 1.0, norm_xy, norm_xy_length);
+			SSILTap(p_quality_level, color_sum, obscurance_sum, weight_sum, i, rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, 1.0, norm_xy, norm_xy_length, params.vb_flag > 0.5, mask_bits, pixel_normal);
 		}
 	}
 #ifdef ADAPTIVE
@@ -373,7 +390,7 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 		for (uint i = SSIL_ADAPTIVE_TAP_BASE_COUNT; i < additional_samples_to; i++) {
 			additional_sample_count -= 1.0f;
 			float weight_mod = clamp(additional_sample_count * blend_range_inv, 0.0, 1.0);
-			SSILTap(p_quality_level, color_sum, obscurance_sum, weight_sum, int(i), rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, weight_mod, norm_xy, norm_xy_length);
+			SSILTap(p_quality_level, color_sum, obscurance_sum, weight_sum, int(i), rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, weight_mod, norm_xy, norm_xy_length, params.vb_flag > 0.5, mask_bits, pixel_normal);
 		}
 	}
 #endif
@@ -381,6 +398,13 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 	// Early out for adaptive base
 	if (p_adaptive_base) {
 		vec3 color = color_sum / weight_sum;
+
+		if (params.vb_flag > 0.5) {
+			float vb_visibility = 1.0 - float(bitCount(mask_bits)) * (1.0 / 32.0);
+			vb_visibility = clamp(vb_visibility, 0.0, 1.0);
+			color *= vb_visibility;
+			obscurance_sum *= vb_visibility;
+		}
 
 		r_color = color;
 		r_edges = vec4(0.0);
@@ -407,6 +431,14 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 	color = params.intensity * color;
 
 	color *= fade_out;
+
+	if (params.vb_flag > 0.5) {
+		float vb_visibility = 1.0 - float(bitCount(mask_bits)) * (1.0 / 32.0);
+		vb_visibility = clamp(vb_visibility, 0.0, 1.0);
+		color *= vb_visibility;
+		// Apply same visibility to obscurance to keep consistency with SSAO VB.
+		obscurance_sum *= vb_visibility;
+	}
 
 	// outputs!
 	r_color = color;

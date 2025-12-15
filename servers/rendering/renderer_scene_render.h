@@ -210,6 +210,7 @@ public:
 
 	// SSAO
 	void environment_set_ssao(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_power, float p_detail, float p_horizon, float p_sharpness, float p_light_affect, float p_ao_channel_affect);
+	void environment_set_ssao_algorithm(RID p_env, RS::EnvironmentSSAOAlgorithm p_algorithm);
 	bool environment_get_ssao_enabled(RID p_env) const;
 	float environment_get_ssao_radius(RID p_env) const;
 	float environment_get_ssao_intensity(RID p_env) const;
@@ -219,6 +220,7 @@ public:
 	float environment_get_ssao_sharpness(RID p_env) const;
 	float environment_get_ssao_direct_light_affect(RID p_env) const;
 	float environment_get_ssao_ao_channel_affect(RID p_env) const;
+	RS::EnvironmentSSAOAlgorithm environment_get_ssao_algorithm(RID p_env) const;
 
 	virtual void environment_set_ssao_quality(RS::EnvironmentSSAOQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;
 
@@ -229,6 +231,8 @@ public:
 	float environment_get_ssil_intensity(RID p_env) const;
 	float environment_get_ssil_sharpness(RID p_env) const;
 	float environment_get_ssil_normal_rejection(RID p_env) const;
+	void environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm);
+	RS::EnvironmentSSILAlgorithm environment_get_ssil_algorithm(RID p_env) const;
 
 	virtual void environment_set_ssil_quality(RS::EnvironmentSSILQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;
 
