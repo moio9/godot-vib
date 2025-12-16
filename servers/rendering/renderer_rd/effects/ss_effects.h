@@ -114,6 +114,7 @@ public:
 		float sharpness = 0.98;
 		float normal_rejection = 1.0;
 		bool use_visibility_bitmask = false;
+		int vb_mode = 0;
 
 		Size2i full_screen_size;
 	};
@@ -140,6 +141,7 @@ public:
 		float horizon = 0.06;
 		float sharpness = 0.98;
 		bool use_visibility_bitmask = false;
+		int vb_mode = 0; // 0: off, 1: VB uni, 2: VB bi
 
 		Size2i full_screen_size;
 	};
@@ -269,7 +271,6 @@ private:
 		float radius;
 		float intensity;
 		int size_multiplier;
-		int _pad0; // keep std430 alignment (pair with size_multiplier)
 
 		float fade_out_mul;
 		float fade_out_add;
@@ -280,6 +281,7 @@ private:
 		float neg_inv_radius;
 		float load_counter_avg_div;
 		float adaptive_sample_limit;
+		float _pad1; // align to 8 bytes for following ivec2
 
 		int32_t pass_coord_offset[2];
 		float pass_uv_offset[2];

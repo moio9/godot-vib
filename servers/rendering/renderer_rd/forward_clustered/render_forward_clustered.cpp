@@ -1490,7 +1490,9 @@ void RenderForwardClustered::_process_ssao(Ref<RenderSceneBuffersRD> p_render_bu
 	settings.detail = environment_get_ssao_detail(p_environment);
 	settings.horizon = environment_get_ssao_horizon(p_environment);
 	settings.sharpness = environment_get_ssao_sharpness(p_environment);
-	settings.use_visibility_bitmask = environment_get_ssao_algorithm(p_environment) == RS::ENV_SSAO_ALGORITHM_GTAO_VB;
+	RS::EnvironmentSSAOAlgorithm ssao_algo = environment_get_ssao_algorithm(p_environment);
+	settings.use_visibility_bitmask = ssao_algo == RS::ENV_SSAO_ALGORITHM_VISIBILITY_BITMASK || ssao_algo == RS::ENV_SSAO_ALGORITHM_VISIBILITY_BITMASK_BI;
+	settings.vb_mode = (ssao_algo == RS::ENV_SSAO_ALGORITHM_VISIBILITY_BITMASK_BI) ? 2 : (settings.use_visibility_bitmask ? 1 : 0);
 	settings.full_screen_size = p_render_buffers->get_internal_size();
 
 	ss_effects->ssao_allocate_buffers(p_render_buffers, rb_data->ss_effects_data.ssao, settings);
@@ -1515,7 +1517,9 @@ void RenderForwardClustered::_process_ssil(Ref<RenderSceneBuffersRD> p_render_bu
 	settings.intensity = environment_get_ssil_intensity(p_environment);
 	settings.sharpness = environment_get_ssil_sharpness(p_environment);
 	settings.normal_rejection = environment_get_ssil_normal_rejection(p_environment);
-	settings.use_visibility_bitmask = environment_get_ssil_algorithm(p_environment) == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK;
+	RS::EnvironmentSSILAlgorithm ssil_algo = environment_get_ssil_algorithm(p_environment);
+	settings.use_visibility_bitmask = ssil_algo == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK || ssil_algo == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK_BI;
+	settings.vb_mode = (ssil_algo == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK_BI) ? 2 : (settings.use_visibility_bitmask ? 1 : 0);
 	settings.full_screen_size = p_render_buffers->get_internal_size();
 
 	ss_effects->ssil_allocate_buffers(p_render_buffers, rb_data->ss_effects_data.ssil, settings);

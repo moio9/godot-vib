@@ -1314,7 +1314,8 @@ public:
 
 	enum EnvironmentSSAOAlgorithm {
 		ENV_SSAO_ALGORITHM_STANDARD,
-		ENV_SSAO_ALGORITHM_GTAO_VB,
+		ENV_SSAO_ALGORITHM_VISIBILITY_BITMASK,
+		ENV_SSAO_ALGORITHM_VISIBILITY_BITMASK_BI,
 	};
 
 	virtual void environment_set_ssao(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_power, float p_detail, float p_horizon, float p_sharpness, float p_light_affect, float p_ao_channel_affect) = 0;
@@ -1335,6 +1336,7 @@ public:
 	enum EnvironmentSSILAlgorithm {
 		ENV_SSIL_ALGORITHM_STANDARD,
 		ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK,
+		ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK_BI,
 	};
 
 	virtual void environment_set_ssil_quality(EnvironmentSSILQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;

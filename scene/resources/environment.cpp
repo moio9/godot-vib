@@ -1526,7 +1526,7 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_sharpness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssao_sharpness", "get_ssao_sharpness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_light_affect", PROPERTY_HINT_RANGE, "0.00,1,0.01"), "set_ssao_direct_light_affect", "get_ssao_direct_light_affect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_ao_channel_affect", PROPERTY_HINT_RANGE, "0.00,1,0.01"), "set_ssao_ao_channel_affect", "get_ssao_ao_channel_affect");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "ssao_algorithm", PROPERTY_HINT_ENUM, "Standard,GTAO VB"), "set_ssao_algorithm", "get_ssao_algorithm");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "ssao_algorithm", PROPERTY_HINT_ENUM, "Standard,Visibility Bitmask (Unidirectional),Visibility Bitmask (Bidirectional)"), "set_ssao_algorithm", "get_ssao_algorithm");
 
 	ADD_GROUP("SSS", "ss_shadow_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ss_shadow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_ss_shadow_enabled", "is_ss_shadow_enabled");
@@ -1560,7 +1560,7 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_intensity", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), "set_ssil_intensity", "get_ssil_intensity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_sharpness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssil_sharpness", "get_ssil_sharpness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_normal_rejection", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssil_normal_rejection", "get_ssil_normal_rejection");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "ssil_algorithm", PROPERTY_HINT_ENUM, "Standard,Visibility Bitmask"), "set_ssil_algorithm", "get_ssil_algorithm");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "ssil_algorithm", PROPERTY_HINT_ENUM, "Standard,Visibility Bitmask (Unidirectional),Visibility Bitmask (Bidirectional)"), "set_ssil_algorithm", "get_ssil_algorithm");
 
 	// SDFGI
 

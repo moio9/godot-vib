@@ -832,7 +832,7 @@ void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_rende
 		ssil.gather_push_constant.NDC_to_view_mul[1] = tan_half_fov_y * -2.0;
 		ssil.gather_push_constant.NDC_to_view_add[0] = tan_half_fov_x * -1.0;
 		ssil.gather_push_constant.NDC_to_view_add[1] = tan_half_fov_y;
-		ssil.gather_push_constant.vb_flag = p_settings.use_visibility_bitmask ? 1.0f : 0.0f;
+		ssil.gather_push_constant.vb_flag = float(p_settings.vb_mode);
 		ssil.gather_push_constant.z_near = p_projection.get_z_near();
 		ssil.gather_push_constant.z_far = p_projection.get_z_far();
 		ssil.gather_push_constant.is_orthogonal = p_projection.is_orthogonal();
@@ -1253,13 +1253,13 @@ void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORe
 		ssao.gather_push_constant.inv_radius_near_limit = 1.0f / radius_near_limit;
 		ssao.gather_push_constant.neg_inv_radius = -1.0 / ssao.gather_push_constant.radius;
 
-		ssao.gather_push_constant.load_counter_avg_div = 9.0 / float((p_ssao_buffers.half_buffer_width) * (p_ssao_buffers.half_buffer_height) * 255);
-		ssao.gather_push_constant.adaptive_sample_limit = ssao_adaptive_target;
+	ssao.gather_push_constant.load_counter_avg_div = 9.0 / float((p_ssao_buffers.half_buffer_width) * (p_ssao_buffers.half_buffer_height) * 255);
+	ssao.gather_push_constant.adaptive_sample_limit = ssao_adaptive_target;
 
-		ssao.gather_push_constant.detail_intensity = p_settings.detail;
-		ssao.gather_push_constant.quality = MAX(0, ssao_quality - 1);
-		ssao.gather_push_constant.size_multiplier = ssao_half_size ? 2 : 1;
-		ssao.gather_push_constant.flags[0] = p_settings.use_visibility_bitmask ? 1.0f : 0.0f;
+	ssao.gather_push_constant.detail_intensity = p_settings.detail;
+	ssao.gather_push_constant.quality = MAX(0, ssao_quality - 1);
+	ssao.gather_push_constant.size_multiplier = ssao_half_size ? 2 : 1;
+	ssao.gather_push_constant.flags[0] = float(p_settings.vb_mode);
 
 		// We are using our uniform cache so our uniform sets are automatically freed when our textures are freed.
 		// It also ensures that we're reusing the right cached entry in a multiview situation without us having to
