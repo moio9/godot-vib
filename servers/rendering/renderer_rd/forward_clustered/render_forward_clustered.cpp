@@ -1517,6 +1517,7 @@ void RenderForwardClustered::_process_ssil(Ref<RenderSceneBuffersRD> p_render_bu
 	settings.intensity = environment_get_ssil_intensity(p_environment);
 	settings.sharpness = environment_get_ssil_sharpness(p_environment);
 	settings.normal_rejection = environment_get_ssil_normal_rejection(p_environment);
+	settings.temporal_decay = environment_get_ssil_temporal_decay(p_environment);
 	RS::EnvironmentSSILAlgorithm ssil_algo = environment_get_ssil_algorithm(p_environment);
 	settings.use_visibility_bitmask = ssil_algo == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK || ssil_algo == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK_BI;
 	settings.vb_mode = (ssil_algo == RS::ENV_SSIL_ALGORITHM_VISIBILITY_BITMASK_BI) ? 2 : (settings.use_visibility_bitmask ? 1 : 0);
@@ -2275,7 +2276,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool debug_voxelgis = get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VOXEL_GI_ALBEDO || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VOXEL_GI_LIGHTING || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_VOXEL_GI_EMISSION;
 	bool debug_sdfgi_probes = get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SDFGI_PROBES;
-	bool force_depth_pre_pass = scene_state.used_opaque_stencil || (p_render_data->environment.is_valid() && environment_get_screen_space_shadow_enabled(p_render_data->environment)) || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SSS;
+	bool force_depth_pre_pass = scene_state.used_opaque_stencil || (p_render_data->environment.is_valid() && environment_get_screen_space_shadow_enabled(p_render_data->environment)) || using_ssil || get_debug_draw_mode() == RS::VIEWPORT_DEBUG_DRAW_SSS;
 	bool depth_pre_pass = (force_depth_pre_pass || bool(GLOBAL_GET_CACHED(bool, "rendering/driver/depth_prepass/enable"))) && depth_framebuffer.is_valid();
 
 	SceneShaderForwardClustered::ShaderSpecialization base_specialization = scene_shader.default_specialization;

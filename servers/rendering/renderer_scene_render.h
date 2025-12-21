@@ -225,12 +225,13 @@ public:
 	virtual void environment_set_ssao_quality(RS::EnvironmentSSAOQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;
 
 	// SSIL
-	void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection);
+	void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection, float p_temporal_decay);
 	bool environment_get_ssil_enabled(RID p_env) const;
 	float environment_get_ssil_radius(RID p_env) const;
 	float environment_get_ssil_intensity(RID p_env) const;
 	float environment_get_ssil_sharpness(RID p_env) const;
 	float environment_get_ssil_normal_rejection(RID p_env) const;
+	float environment_get_ssil_temporal_decay(RID p_env) const;
 	void environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm);
 	RS::EnvironmentSSILAlgorithm environment_get_ssil_algorithm(RID p_env) const;
 

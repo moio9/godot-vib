@@ -283,13 +283,14 @@ public:
 
 	// SSIL
 
-	virtual void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection) = 0;
+	virtual void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection, float p_temporal_decay) = 0;
 
 	virtual bool environment_get_ssil_enabled(RID p_env) const = 0;
 	virtual float environment_get_ssil_radius(RID p_env) const = 0;
 	virtual float environment_get_ssil_intensity(RID p_env) const = 0;
 	virtual float environment_get_ssil_sharpness(RID p_env) const = 0;
 	virtual float environment_get_ssil_normal_rejection(RID p_env) const = 0;
+	virtual float environment_get_ssil_temporal_decay(RID p_env) const = 0;
 
 	virtual void environment_set_ssil_quality(RS::EnvironmentSSILQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;
 	virtual void environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm) = 0;

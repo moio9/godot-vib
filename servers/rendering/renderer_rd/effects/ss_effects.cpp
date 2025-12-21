@@ -773,6 +773,9 @@ void SSEffects::ssil_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_EDGES, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, 4 * view_count);
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_IMPORTANCE_MAP, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size);
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_IMPORTANCE_PONG, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size);
+
+	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
 }
 
 void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_render_buffers, SSILRenderBuffers &p_ssil_buffers, uint32_t p_view, RID p_normal_buffer, const Projection &p_projection, const Projection &p_last_projection, const SSILSettings &p_settings) {
@@ -1069,9 +1072,16 @@ void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_rende
 
 		RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssil.pipelines[interleave_pipeline].get_rid());
 
+		// History Management
+		uint32_t frame = RD::get_singleton()->get_frames_drawn();
+		RID history_read = p_render_buffers->get_texture_slice(RB_SCOPE_SSIL, (frame % 2) == 0 ? RB_SSIL_HISTORY_PONG : RB_SSIL_HISTORY, p_view, 0);
+		RID history_write = p_render_buffers->get_texture_slice(RB_SCOPE_SSIL, (frame % 2) == 0 ? RB_SSIL_HISTORY : RB_SSIL_HISTORY_PONG, p_view, 0);
+
 		RID final = p_render_buffers->get_texture_slice(RB_SCOPE_SSIL, RB_FINAL, p_view, 0);
+		
 		RD::Uniform u_destination(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ final }));
-		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_destination), 0);
+		RD::Uniform u_history_dest(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ history_write }));
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_destination, u_history_dest), 0);
 
 		if (ssil_quality > RS::ENV_SSIL_QUALITY_VERY_LOW && ssil_blur_passes % 2 == 0) {
 			RD::Uniform u_ssil(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, deinterleaved }));
@@ -1083,6 +1093,22 @@ void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_rende
 
 		RD::Uniform u_edges(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ edges }));
 		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 2, u_edges), 2);
+
+		// History Read Binding (Set 3)
+		RD::Uniform u_history_source(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, history_read }));
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 3, u_history_source), 3);
+
+		// Depth Texture Binding (Set 4) for Reprojection
+		RID depth_texture = p_render_buffers->get_depth_texture(p_view);
+		RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, depth_texture }));
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 4, u_depth), 4);
+
+		// Update Push Constants
+		ssil.interleave_push_constant.temporal_decay = p_settings.temporal_decay;
+		ssil.interleave_push_constant.use_history = 1;
+		
+		Projection reproj = p_last_projection * p_projection.inverse();
+		store_camera(reproj, ssil.interleave_push_constant.reprojection);
 
 		RD::get_singleton()->compute_list_set_push_constant(compute_list, &ssil.interleave_push_constant, sizeof(SSILInterleavePushConstant));
 

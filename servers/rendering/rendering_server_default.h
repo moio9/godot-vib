@@ -826,7 +826,7 @@ public:
 	FUNC6(environment_set_ssao_quality, EnvironmentSSAOQuality, bool, float, int, float, float)
 	FUNC1RC(EnvironmentSSAOAlgorithm, environment_get_ssao_algorithm, RID)
 
-	FUNC6(environment_set_ssil, RID, bool, float, float, float, float)
+	FUNC7(environment_set_ssil, RID, bool, float, float, float, float, float)
 	FUNC6(environment_set_ssil_quality, EnvironmentSSILQuality, bool, float, int, float, float)
 	FUNC2(environment_set_ssil_algorithm, RID, EnvironmentSSILAlgorithm)
 	FUNC1RC(EnvironmentSSILAlgorithm, environment_get_ssil_algorithm, RID)

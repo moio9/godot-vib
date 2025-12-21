@@ -159,6 +159,7 @@ private:
 	float ssil_intensity = 1.0;
 	float ssil_sharpness = 0.98;
 	float ssil_normal_rejection = 1.0;
+	float ssil_temporal_decay = 0.01;
 	RS::EnvironmentSSILAlgorithm ssil_algorithm = RS::ENV_SSIL_ALGORITHM_STANDARD;
 
 		// SDFGI
@@ -319,12 +320,13 @@ public:
 		RS::EnvironmentSSAOAlgorithm environment_get_ssao_algorithm(RID p_env) const;
 
 	// SSIL
-	void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection);
+	void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection, float p_temporal_decay);
 	bool environment_get_ssil_enabled(RID p_env) const;
 	float environment_get_ssil_radius(RID p_env) const;
 	float environment_get_ssil_intensity(RID p_env) const;
 	float environment_get_ssil_sharpness(RID p_env) const;
 	float environment_get_ssil_normal_rejection(RID p_env) const;
+	float environment_get_ssil_temporal_decay(RID p_env) const;
 	void environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm);
 	RS::EnvironmentSSILAlgorithm environment_get_ssil_algorithm(RID p_env) const;
 

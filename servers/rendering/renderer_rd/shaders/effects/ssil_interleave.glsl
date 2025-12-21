@@ -27,13 +27,21 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(rgba16, set = 0, binding = 0) uniform restrict writeonly image2D dest_image;
+layout(rgba16, set = 0, binding = 1) uniform restrict writeonly image2D dest_history;
+
 layout(set = 1, binding = 0) uniform sampler2DArray source_texture;
 layout(r8, set = 2, binding = 0) uniform restrict readonly image2DArray source_edges;
+layout(set = 3, binding = 0) uniform sampler2D source_history;
+layout(set = 4, binding = 0) uniform sampler2D source_depth;
 
 layout(push_constant, std430) uniform Params {
 	float inv_sharpness;
 	uint size_modifier;
 	vec2 pixel_size;
+	float temporal_decay;
+	uint use_history;
+	vec2 pad;
+	mat4 reprojection;
 }
 params;
 
@@ -100,23 +108,61 @@ void main() {
 	color += color_diagonal * blendWeights.w;
 	color /= blendWeightsSum;
 
-	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), color);
 #else // !MODE_SMART
 
 	vec2 uv = (gl_GlobalInvocationID.xy + vec2(0.5)) * params.pixel_size;
 #ifdef MODE_HALF
 	vec4 a = textureLod(source_texture, vec3(uv, 0), 0.0);
 	vec4 d = textureLod(source_texture, vec3(uv, 3), 0.0);
-	vec4 avg = (a + d) * 0.5;
+	vec4 color = (a + d) * 0.5; // Changed avg to color for consistency
 
 #else
 	vec4 a = textureLod(source_texture, vec3(uv, 0), 0.0);
 	vec4 b = textureLod(source_texture, vec3(uv, 1), 0.0);
 	vec4 c = textureLod(source_texture, vec3(uv, 2), 0.0);
 	vec4 d = textureLod(source_texture, vec3(uv, 3), 0.0);
-	vec4 avg = (a + b + c + d) * 0.25;
+	vec4 color = (a + b + c + d) * 0.25; // Changed avg to color for consistency
 
 #endif
-	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), avg);
 #endif
+
+	// --- Temporal Accumulation Logic ---
+	if (params.use_history > 0) {
+		float depth = textureLod(source_depth, uv, 0.0).r;
+		if (depth < 1.0) { // If not skybox (Godot uses reverse-z or standard? Vulkan is usually 0..1 or 1..0 depending on setup. Godot uses 0..1 usually. Assuming < 1.0 means valid geometry)
+			// Reproject
+			vec4 clip_pos = vec4(uv * 2.0 - 1.0, depth, 1.0);
+			vec4 prev_clip = params.reprojection * clip_pos;
+			vec2 prev_uv = (prev_clip.xy / prev_clip.w) * 0.5 + 0.5;
+
+			if (all(greaterThanEqual(prev_uv, vec2(0.0))) && all(lessThanEqual(prev_uv, vec2(1.0)))) {
+				vec4 history = textureLod(source_history, prev_uv, 0.0);
+				
+				// Decay logic:
+				// If history is brighter than current, it means light disappeared. Fade it out slowly.
+				// If current is brighter, accept it quickly (responsiveness).
+				
+				float history_lum = dot(history.rgb, vec3(0.299, 0.587, 0.114));
+				float current_lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+				
+				float blend;
+				if (current_lum > history_lum) {
+					// Light turned ON: Fast reaction
+					// Modified: Depend on temporal_decay for stability. Small decay = High blend (slow update).
+					// Multiplier 20.0 ensures that at default decay (0.01) blend is ~0.8.
+					blend = clamp(1.2 - (params.temporal_decay), 0.2, 0.98);
+				} else {
+					// Light turned OFF: Slow fade (User's desired persistence)
+					// Apply decay to history first
+					history.rgb *= (1.0 - params.temporal_decay); 
+					blend = 0.999; // 98.5% history (~3s fade at 60fps)
+				}
+				
+				color = mix(color, history, blend);
+			}
+		}
+	}
+
+	imageStore(dest_image, ssC, color);
+	imageStore(dest_history, ssC, color);
 }

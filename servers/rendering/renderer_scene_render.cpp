@@ -643,8 +643,8 @@ RS::EnvironmentSSAOAlgorithm RendererSceneRender::environment_get_ssao_algorithm
 
 // SSIL
 
-void RendererSceneRender::environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection) {
-	environment_storage.environment_set_ssil(p_env, p_enable, p_radius, p_intensity, p_sharpness, p_normal_rejection);
+void RendererSceneRender::environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection, float p_temporal_decay) {
+	environment_storage.environment_set_ssil(p_env, p_enable, p_radius, p_intensity, p_sharpness, p_normal_rejection, p_temporal_decay);
 }
 
 bool RendererSceneRender::environment_get_ssil_enabled(RID p_env) const {
@@ -665,6 +665,10 @@ float RendererSceneRender::environment_get_ssil_sharpness(RID p_env) const {
 
 float RendererSceneRender::environment_get_ssil_normal_rejection(RID p_env) const {
 	return environment_storage.environment_get_ssil_normal_rejection(p_env);
+}
+
+float RendererSceneRender::environment_get_ssil_temporal_decay(RID p_env) const {
+	return environment_storage.environment_get_ssil_temporal_decay(p_env);
 }
 
 void RendererSceneRender::environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm) {

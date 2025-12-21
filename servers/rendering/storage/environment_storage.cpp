@@ -779,19 +779,16 @@ RS::EnvironmentSSAOAlgorithm RendererEnvironmentStorage::environment_get_ssao_al
 
 // SSIL
 
-void RendererEnvironmentStorage::environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection) {
+void RendererEnvironmentStorage::environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection, float p_temporal_decay) {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL(env);
-#ifdef DEBUG_ENABLED
-	if (OS::get_singleton()->get_current_rendering_method() != "forward_plus" && p_enable) {
-		WARN_PRINT_ONCE_ED("Screen-space indirect lighting (SSIL) is only available when using the Forward+ renderer.");
-	}
-#endif
+
 	env->ssil_enabled = p_enable;
 	env->ssil_radius = p_radius;
 	env->ssil_intensity = p_intensity;
 	env->ssil_sharpness = p_sharpness;
 	env->ssil_normal_rejection = p_normal_rejection;
+	env->ssil_temporal_decay = p_temporal_decay;
 }
 
 bool RendererEnvironmentStorage::environment_get_ssil_enabled(RID p_env) const {
@@ -819,9 +816,15 @@ float RendererEnvironmentStorage::environment_get_ssil_sharpness(RID p_env) cons
 }
 
 float RendererEnvironmentStorage::environment_get_ssil_normal_rejection(RID p_env) const {
-	Environment *env = environment_owner.get_or_null(p_env);
+	const Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL_V(env, 1.0);
 	return env->ssil_normal_rejection;
+}
+
+float RendererEnvironmentStorage::environment_get_ssil_temporal_decay(RID p_env) const {
+	const Environment *env = environment_owner.get_or_null(p_env);
+	ERR_FAIL_NULL_V(env, 0.01);
+	return env->ssil_temporal_decay;
 }
 
 void RendererEnvironmentStorage::environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm) {

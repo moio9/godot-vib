@@ -146,6 +146,7 @@ private:
 	float ssil_intensity = 1.0;
 	float ssil_sharpness = 0.98;
 	float ssil_normal_rejection = 1.0;
+	float ssil_temporal_decay = 0.01;
 	RenderingServer::EnvironmentSSILAlgorithm ssil_algorithm = RenderingServer::ENV_SSIL_ALGORITHM_STANDARD;
 
 	void _update_ssil();
@@ -338,6 +339,8 @@ public:
 	float get_ssil_sharpness() const;
 	void set_ssil_normal_rejection(float p_normal_rejection);
 	float get_ssil_normal_rejection() const;
+	void set_ssil_temporal_decay(float p_decay);
+	float get_ssil_temporal_decay() const;
 	void set_ssil_algorithm(RenderingServer::EnvironmentSSILAlgorithm p_algorithm);
 	RenderingServer::EnvironmentSSILAlgorithm get_ssil_algorithm() const;
 

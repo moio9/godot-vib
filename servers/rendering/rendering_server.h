@@ -1323,7 +1323,7 @@ public:
 	virtual void environment_set_ssao_algorithm(RID p_env, EnvironmentSSAOAlgorithm p_algorithm) = 0;
 	virtual EnvironmentSSAOAlgorithm environment_get_ssao_algorithm(RID p_env) const = 0;
 
-	virtual void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection) = 0;
+	virtual void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection, float p_temporal_decay) = 0;
 
 	enum EnvironmentSSILQuality {
 		ENV_SSIL_QUALITY_VERY_LOW,

@@ -66,6 +66,8 @@
 #define RB_EDGES SNAME("edges")
 #define RB_IMPORTANCE_MAP SNAME("importance_map")
 #define RB_IMPORTANCE_PONG SNAME("importance_pong")
+#define RB_SSIL_HISTORY SNAME("ssil_history")
+#define RB_SSIL_HISTORY_PONG SNAME("ssil_history_pong")
 
 #define RB_NORMAL_ROUGHNESS SNAME("normal_roughness")
 #define RB_HIZ SNAME("hiz")
@@ -113,6 +115,7 @@ public:
 		float intensity = 2.0;
 		float sharpness = 0.98;
 		float normal_rejection = 1.0;
+		float temporal_decay = 0.01;
 		bool use_visibility_bitmask = false;
 		int vb_mode = 0;
 
@@ -303,6 +306,10 @@ private:
 		float inv_sharpness;
 		uint32_t size_modifier;
 		float pixel_size[2];
+		float temporal_decay;
+		uint32_t use_history;
+		float pad[2];
+		float reprojection[16];
 	};
 
 	struct SSILProjectionUniforms {
@@ -330,6 +337,8 @@ private:
 		RID interleave_shader_version;
 
 		PipelineDeferredRD pipelines[SSIL_MAX];
+
+		uint32_t history_index = 0;
 	} ssil;
 
 	void gather_ssil(RD::ComputeListID p_compute_list, const RID *p_ssil_slices, const RID *p_edges_slices, const SSILSettings &p_settings, bool p_adaptive_base_pass, RID p_gather_uniform_set, RID p_importance_map_uniform_set, RID p_projection_uniform_set);

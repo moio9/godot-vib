@@ -181,6 +181,7 @@ void integrate_slice_ssil(vec2 direction, float viewspace_radius, vec2 screen_uv
 		vec2 reprojected_uv = (sample_pos_clip.xy / sample_pos_clip.w) * 0.5 + 0.5;
 		
 		vec3 sample_color = textureLod(last_frame, reprojected_uv, 0.0).rgb; // Level 0 for sharpness
+		sample_color *= 1.5; // Boost emissive contribution
 		sample_color /= (1.0 + dot(sample_color, vec3(0.299, 0.587, 0.114))); // Tone map
 		
 		// Weight by geometry factor

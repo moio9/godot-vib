@@ -1333,13 +1333,14 @@ public:
 	PASS6(environment_set_ssao_quality, RS::EnvironmentSSAOQuality, bool, float, int, float, float)
 
 	// SSIL
-	PASS6(environment_set_ssil, RID, bool, float, float, float, float)
+	PASS7(environment_set_ssil, RID, bool, float, float, float, float, float)
 
 	PASS1RC(bool, environment_get_ssil_enabled, RID)
 	PASS1RC(float, environment_get_ssil_radius, RID)
 	PASS1RC(float, environment_get_ssil_intensity, RID)
 	PASS1RC(float, environment_get_ssil_sharpness, RID)
 	PASS1RC(float, environment_get_ssil_normal_rejection, RID)
+	PASS1RC(float, environment_get_ssil_temporal_decay, RID)
 	PASS2(environment_set_ssil_algorithm, RID, RS::EnvironmentSSILAlgorithm)
 	PASS1RC(RS::EnvironmentSSILAlgorithm, environment_get_ssil_algorithm, RID)
 

@@ -467,6 +467,15 @@ float Environment::get_ssil_normal_rejection() const {
 	return ssil_normal_rejection;
 }
 
+void Environment::set_ssil_temporal_decay(float p_decay) {
+	ssil_temporal_decay = p_decay;
+	_update_ssil();
+}
+
+float Environment::get_ssil_temporal_decay() const {
+	return ssil_temporal_decay;
+}
+
 void Environment::set_ssil_algorithm(RenderingServer::EnvironmentSSILAlgorithm p_algorithm) {
 	if (ssil_algorithm == p_algorithm) {
 		return;
@@ -486,7 +495,8 @@ void Environment::_update_ssil() {
 			ssil_radius,
 			ssil_intensity,
 			ssil_sharpness,
-			ssil_normal_rejection);
+			ssil_normal_rejection,
+			ssil_temporal_decay);
 	RS::get_singleton()->environment_set_ssil_algorithm(environment, ssil_algorithm);
 }
 
@@ -1551,6 +1561,8 @@ void Environment::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ssil_sharpness"), &Environment::get_ssil_sharpness);
 	ClassDB::bind_method(D_METHOD("set_ssil_normal_rejection", "normal_rejection"), &Environment::set_ssil_normal_rejection);
 	ClassDB::bind_method(D_METHOD("get_ssil_normal_rejection"), &Environment::get_ssil_normal_rejection);
+	ClassDB::bind_method(D_METHOD("set_ssil_temporal_decay", "decay"), &Environment::set_ssil_temporal_decay);
+	ClassDB::bind_method(D_METHOD("get_ssil_temporal_decay"), &Environment::get_ssil_temporal_decay);
 	ClassDB::bind_method(D_METHOD("set_ssil_algorithm", "algorithm"), &Environment::set_ssil_algorithm);
 	ClassDB::bind_method(D_METHOD("get_ssil_algorithm"), &Environment::get_ssil_algorithm);
 
@@ -1560,6 +1572,7 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_intensity", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), "set_ssil_intensity", "get_ssil_intensity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_sharpness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssil_sharpness", "get_ssil_sharpness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_normal_rejection", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssil_normal_rejection", "get_ssil_normal_rejection");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssil_temporal_decay", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_ssil_temporal_decay", "get_ssil_temporal_decay");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ssil_algorithm", PROPERTY_HINT_ENUM, "Standard,Visibility Bitmask (Unidirectional),Visibility Bitmask (Bidirectional)"), "set_ssil_algorithm", "get_ssil_algorithm");
 
 	// SDFGI
