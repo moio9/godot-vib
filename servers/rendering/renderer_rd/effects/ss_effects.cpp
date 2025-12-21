@@ -774,10 +774,14 @@ void SSEffects::ssil_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_IMPORTANCE_MAP, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size);
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_IMPORTANCE_PONG, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size);
 
-	RID history = p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
-	RD::get_singleton()->texture_clear(history, Color(0, 0, 0, 0), 0, 1, 0, view_count);
-	RID history_pong = p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
-	RD::get_singleton()->texture_clear(history_pong, Color(0, 0, 0, 0), 0, 1, 0, view_count);
+	if (!p_render_buffers->has_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY)) {
+		RID history = p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RD::get_singleton()->texture_clear(history, Color(0, 0, 0, 0), 0, 1, 0, view_count);
+	}
+	if (!p_render_buffers->has_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY_PONG)) {
+		RID history_pong = p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_SSIL_HISTORY_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RD::get_singleton()->texture_clear(history_pong, Color(0, 0, 0, 0), 0, 1, 0, view_count);
+	}
 }
 
 void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_render_buffers, SSILRenderBuffers &p_ssil_buffers, uint32_t p_view, RID p_normal_buffer, const Projection &p_projection, const Projection &p_last_projection, const SSILSettings &p_settings) {

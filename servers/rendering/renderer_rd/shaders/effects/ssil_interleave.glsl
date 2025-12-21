@@ -146,7 +146,9 @@ void main() {
 				float current_lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
 				
 				float blend;
-				if (current_lum > history_lum) {
+				if (params.temporal_decay >= 0.999) {
+					blend = 0.0; // ignore history when decay is maxed
+				} else if (current_lum > history_lum) {
 					// Light turned ON: Fast reaction
 					// Modified: Depend on temporal_decay for stability. Small decay = High blend (slow update).
 					// Multiplier 20.0 ensures that at default decay (0.01) blend is ~0.8.
