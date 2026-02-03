@@ -389,9 +389,19 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 		return;
 	}
 
-	// Calculate weighted average
-	vec3 color = color_sum / weight_sum;
-	color /= 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
+	// Calculate weighted average.
+	vec3 total_color = color_sum / weight_sum;
+	float total_luma = dot(total_color, vec3(0.299, 0.587, 0.114));
+	if (total_luma > 6.0) {
+		total_color *= 6.0 / total_luma;
+	}
+	vec3 color = total_color;
+	float luma = dot(color, vec3(0.299, 0.587, 0.114));
+	if (luma > 0.95) {
+		color *= 0.95 / luma;
+		luma = 0.95;
+	}
+	color /= max(0.05, 1.0 - luma);
 
 	// Calculate fadeout (1 close, gradient, 0 far)
 	float fade_out = clamp(pix_center_pos.z * params.fade_out_mul + params.fade_out_add, 0.0, 1.0);
@@ -433,7 +443,6 @@ void main() {
 	imageStore(edges_weights_image, ssC, vec4(out_weight / (float(SSIL_ADAPTIVE_TAP_BASE_COUNT) * 4.0)));
 #else
 	generate_SSIL(out_color, out_edges, out_obscurance, out_weight, uv, params.quality, false); // pass in quality levels
-
 	imageStore(dest_image, ssC, vec4(out_color, out_obscurance));
 	imageStore(edges_weights_image, ssC, vec4(pack_edges(out_edges)));
 #endif
