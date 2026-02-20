@@ -69,6 +69,18 @@ public:
 		TONE_MAPPER_AGX,
 	};
 
+	enum SSAOAlgorithm {
+		SSAO_ALGORITHM_STANDARD,
+		SSAO_ALGORITHM_VISIBILITY_BITMASK,
+		SSAO_ALGORITHM_VISIBILITY_BITMASK_BI,
+	};
+
+	enum SSILAlgorithm {
+		SSIL_ALGORITHM_STANDARD,
+		SSIL_ALGORITHM_VISIBILITY_BITMASK,
+		SSIL_ALGORITHM_VISIBILITY_BITMASK_BI,
+	};
+
 	enum SDFGIYScale {
 		SDFGI_Y_SCALE_50_PERCENT,
 		SDFGI_Y_SCALE_75_PERCENT,
@@ -137,6 +149,7 @@ private:
 	float ssao_sharpness = 0.98;
 	float ssao_direct_light_affect = 0.0;
 	float ssao_ao_channel_affect = 0.0;
+	SSAOAlgorithm ssao_algorithm = SSAO_ALGORITHM_STANDARD;
 	void _update_ssao();
 
 	// SSIL
@@ -145,8 +158,36 @@ private:
 	float ssil_intensity = 1.0;
 	float ssil_sharpness = 0.98;
 	float ssil_normal_rejection = 1.0;
+	SSILAlgorithm ssil_algorithm = SSIL_ALGORITHM_STANDARD;
 
 	void _update_ssil();
+
+	// SSGI
+	bool ssgi_enabled = false;
+	float ssgi_intensity = 1.0;
+	int ssgi_radius = 2;
+	float ssgi_depth_threshold = 50.0;
+	float ssgi_normal_power = 8.0;
+	bool ssgi_multirez = false;
+	int ssgi_multirez_levels = 4;
+	float ssgi_multirez_dist_2 = 1.0;
+	float ssgi_multirez_dist_4 = 2.0;
+	float ssgi_multirez_dist_8 = 4.0;
+	float ssgi_multirez_dist_16 = 8.0;
+	void _update_ssgi();
+
+	// SSS (screen-space shadows)
+	bool sss_enabled = true;
+	float sss_thickness = 0.1;
+	float sss_max_distance = 0.1;
+	float sss_strength = 0.8;
+	int sss_steps = 16;
+	float sss_light_radius = 0.05;
+	float sss_thickness_falloff = 1.0;
+	float sss_contact_distance = 0.05;
+	float sss_fade_range = 10.0;
+	float sss_history_weight = 0.4;
+	void _update_sss();
 
 	// SDFGI
 	bool sdfgi_enabled = false;
@@ -309,6 +350,8 @@ public:
 	float get_ssao_direct_light_affect() const;
 	void set_ssao_ao_channel_affect(float p_ao_channel_affect);
 	float get_ssao_ao_channel_affect() const;
+	void set_ssao_algorithm(SSAOAlgorithm p_algorithm);
+	SSAOAlgorithm get_ssao_algorithm() const;
 
 	// SSIL
 	void set_ssil_enabled(bool p_enabled);
@@ -321,6 +364,54 @@ public:
 	float get_ssil_sharpness() const;
 	void set_ssil_normal_rejection(float p_normal_rejection);
 	float get_ssil_normal_rejection() const;
+	void set_ssil_algorithm(SSILAlgorithm p_algorithm);
+	SSILAlgorithm get_ssil_algorithm() const;
+
+	// SSGI
+	void set_ssgi_enabled(bool p_enabled);
+	bool is_ssgi_enabled() const;
+	void set_ssgi_intensity(float p_intensity);
+	float get_ssgi_intensity() const;
+	void set_ssgi_radius(int p_radius);
+	int get_ssgi_radius() const;
+	void set_ssgi_depth_threshold(float p_depth_threshold);
+	float get_ssgi_depth_threshold() const;
+	void set_ssgi_normal_power(float p_normal_power);
+	float get_ssgi_normal_power() const;
+	void set_ssgi_multirez(bool p_multirez);
+	bool is_ssgi_multirez() const;
+	void set_ssgi_multirez_levels(int p_levels);
+	int get_ssgi_multirez_levels() const;
+	void set_ssgi_multirez_distance_2x(float p_distance);
+	float get_ssgi_multirez_distance_2x() const;
+	void set_ssgi_multirez_distance_4x(float p_distance);
+	float get_ssgi_multirez_distance_4x() const;
+	void set_ssgi_multirez_distance_8x(float p_distance);
+	float get_ssgi_multirez_distance_8x() const;
+	void set_ssgi_multirez_distance_16x(float p_distance);
+	float get_ssgi_multirez_distance_16x() const;
+
+	// SSS (screen-space shadows)
+	void set_sss_enabled(bool p_enabled);
+	bool is_sss_enabled() const;
+	void set_sss_thickness(float p_thickness);
+	float get_sss_thickness() const;
+	void set_sss_max_distance(float p_max_distance);
+	float get_sss_max_distance() const;
+	void set_sss_strength(float p_strength);
+	float get_sss_strength() const;
+	void set_sss_steps(int p_steps);
+	int get_sss_steps() const;
+	void set_sss_light_radius(float p_light_radius);
+	float get_sss_light_radius() const;
+	void set_sss_thickness_falloff(float p_thickness_falloff);
+	float get_sss_thickness_falloff() const;
+	void set_sss_contact_distance(float p_contact_distance);
+	float get_sss_contact_distance() const;
+	void set_sss_fade_range(float p_fade_range);
+	float get_sss_fade_range() const;
+	void set_sss_history_weight(float p_history_weight);
+	float get_sss_history_weight() const;
 
 	// SDFGI
 	void set_sdfgi_enabled(bool p_enabled);
@@ -456,6 +547,8 @@ VARIANT_ENUM_CAST(Environment::BGMode)
 VARIANT_ENUM_CAST(Environment::AmbientSource)
 VARIANT_ENUM_CAST(Environment::ReflectionSource)
 VARIANT_ENUM_CAST(Environment::ToneMapper)
+VARIANT_ENUM_CAST(Environment::SSAOAlgorithm)
+VARIANT_ENUM_CAST(Environment::SSILAlgorithm)
 VARIANT_ENUM_CAST(Environment::SDFGIYScale)
 VARIANT_ENUM_CAST(Environment::GlowBlendMode)
 VARIANT_ENUM_CAST(Environment::FogMode)

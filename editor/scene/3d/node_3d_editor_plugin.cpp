@@ -2865,9 +2865,8 @@ void Node3DEditorViewport::_nav_orbit(Ref<InputEventWithModifiers> p_event, cons
 	cursor.x_rot = cursor.unsnapped_x_rot;
 	cursor.y_rot = cursor.unsnapped_y_rot;
 
-	bool snap_modifier_configured = !_is_shortcut_empty("spatial_editor/viewport_orbit_snap_modifier_1") || !_is_shortcut_empty("spatial_editor/viewport_orbit_snap_modifier_2");
-
-	if (snap_modifier_configured && _is_nav_modifier_pressed("spatial_editor/viewport_orbit_snap_modifier_1") && _is_nav_modifier_pressed("spatial_editor/viewport_orbit_snap_modifier_2")) {
+	if (_is_nav_modifier_pressed("spatial_editor/viewport_orbit_snap_modifier_1") &&
+			_is_nav_modifier_pressed("spatial_editor/viewport_orbit_snap_modifier_2")) {
 		const real_t snap_angle = Math::deg_to_rad(45.0);
 		const real_t snap_threshold = Math::deg_to_rad((real_t)EDITOR_GET("editors/3d/navigation_feel/angle_snap_threshold"));
 
@@ -4270,7 +4269,9 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_VOXEL_GI_EMISSION:
 		case VIEW_DISPLAY_DEBUG_SCENE_LUMINANCE:
 		case VIEW_DISPLAY_DEBUG_SSAO:
+		case VIEW_DISPLAY_DEBUG_SSS:
 		case VIEW_DISPLAY_DEBUG_SSIL:
+		case VIEW_DISPLAY_DEBUG_SSGI:
 		case VIEW_DISPLAY_DEBUG_PSSM_SPLITS:
 		case VIEW_DISPLAY_DEBUG_DECAL_ATLAS:
 		case VIEW_DISPLAY_DEBUG_SDFGI:
@@ -4282,6 +4283,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_CLUSTER_DECALS:
 		case VIEW_DISPLAY_DEBUG_CLUSTER_REFLECTION_PROBES:
 		case VIEW_DISPLAY_DEBUG_OCCLUDERS:
+		case VIEW_DISPLAY_DEBUG_VISIBILITY_BUFFER:
 		case VIEW_DISPLAY_MOTION_VECTORS:
 		case VIEW_DISPLAY_INTERNAL_BUFFER: {
 			static const int display_options[] = {
@@ -4298,7 +4300,9 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_VOXEL_GI_EMISSION,
 				VIEW_DISPLAY_DEBUG_SCENE_LUMINANCE,
 				VIEW_DISPLAY_DEBUG_SSAO,
+				VIEW_DISPLAY_DEBUG_SSS,
 				VIEW_DISPLAY_DEBUG_SSIL,
+				VIEW_DISPLAY_DEBUG_SSGI,
 				VIEW_DISPLAY_DEBUG_GI_BUFFER,
 				VIEW_DISPLAY_DEBUG_DISABLE_LOD,
 				VIEW_DISPLAY_DEBUG_PSSM_SPLITS,
@@ -4310,6 +4314,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_CLUSTER_DECALS,
 				VIEW_DISPLAY_DEBUG_CLUSTER_REFLECTION_PROBES,
 				VIEW_DISPLAY_DEBUG_OCCLUDERS,
+				VIEW_DISPLAY_DEBUG_VISIBILITY_BUFFER,
 				VIEW_DISPLAY_MOTION_VECTORS,
 				VIEW_DISPLAY_INTERNAL_BUFFER,
 				VIEW_MAX
@@ -4328,7 +4333,9 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_VOXEL_GI_EMISSION,
 				Viewport::DEBUG_DRAW_SCENE_LUMINANCE,
 				Viewport::DEBUG_DRAW_SSAO,
+				Viewport::DEBUG_DRAW_SSS,
 				Viewport::DEBUG_DRAW_SSIL,
+				Viewport::DEBUG_DRAW_SSGI,
 				Viewport::DEBUG_DRAW_GI_BUFFER,
 				Viewport::DEBUG_DRAW_DISABLE_LOD,
 				Viewport::DEBUG_DRAW_PSSM_SPLITS,
@@ -4340,6 +4347,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_CLUSTER_DECALS,
 				Viewport::DEBUG_DRAW_CLUSTER_REFLECTION_PROBES,
 				Viewport::DEBUG_DRAW_OCCLUDERS,
+				Viewport::DEBUG_DRAW_VISIBILITY_BUFFER,
 				Viewport::DEBUG_DRAW_MOTION_VECTORS,
 				Viewport::DEBUG_DRAW_INTERNAL_BUFFER,
 			};
@@ -6203,8 +6211,12 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 	display_submenu->add_separator();
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSAO"), VIEW_DISPLAY_DEBUG_SSAO, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Displays the screen-space ambient occlusion buffer. Requires SSAO to be enabled in Environment to have a visible effect."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSS"), VIEW_DISPLAY_DEBUG_SSS, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the screen-space subsurface scattering/shadowing buffer. Requires screen-space shadows and/or SSS to be enabled to have a visible effect."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSIL"), VIEW_DISPLAY_DEBUG_SSIL, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Displays the screen-space indirect lighting buffer. Requires SSIL to be enabled in Environment to have a visible effect."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSGI"), VIEW_DISPLAY_DEBUG_SSGI, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the screen-space global illumination buffer. Requires SSGI to be enabled in Environment to have a visible effect."));
 	display_submenu->add_separator();
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("VoxelGI/SDFGI Buffer"), VIEW_DISPLAY_DEBUG_GI_BUFFER, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Requires SDFGI or VoxelGI to be enabled to have a visible effect."));
@@ -6222,6 +6234,8 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 			TTRC("Highlights tiles of pixels that are affected by at least one ReflectionProbe."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Occlusion Culling Buffer"), VIEW_DISPLAY_DEBUG_OCCLUDERS, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
 			TTRC("Represents occluders with black pixels. Requires occlusion culling to be enabled to have a visible effect."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Visibility Buffer"), VIEW_DISPLAY_DEBUG_VISIBILITY_BUFFER, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the visibility buffer debug view."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Motion Vectors"), VIEW_DISPLAY_MOTION_VECTORS, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Represents motion vectors with colored lines in the direction of motion. Gray dots represent areas with no per-pixel motion."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Internal Buffer"), VIEW_DISPLAY_INTERNAL_BUFFER, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
@@ -6264,8 +6278,8 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 	register_shortcut_action("spatial_editor/viewport_orbit_snap_modifier_2", TTRC("Viewport Orbit Snap Modifier 2"), Key::NONE);
 	register_shortcut_action("spatial_editor/viewport_pan_modifier_1", TTRC("Viewport Pan Modifier 1"), Key::SHIFT);
 	register_shortcut_action("spatial_editor/viewport_pan_modifier_2", TTRC("Viewport Pan Modifier 2"), Key::NONE);
-	register_shortcut_action("spatial_editor/viewport_zoom_modifier_1", TTRC("Viewport Zoom Modifier 1"), Key::CTRL);
-	register_shortcut_action("spatial_editor/viewport_zoom_modifier_2", TTRC("Viewport Zoom Modifier 2"), Key::NONE);
+	register_shortcut_action("spatial_editor/viewport_zoom_modifier_1", TTRC("Viewport Zoom Modifier 1"), Key::SHIFT);
+	register_shortcut_action("spatial_editor/viewport_zoom_modifier_2", TTRC("Viewport Zoom Modifier 2"), Key::CTRL);
 
 	register_shortcut_action("spatial_editor/freelook_left", TTRC("Freelook Left"), Key::A, true);
 	register_shortcut_action("spatial_editor/freelook_right", TTRC("Freelook Right"), Key::D, true);
