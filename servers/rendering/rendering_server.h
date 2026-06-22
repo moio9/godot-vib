@@ -661,6 +661,7 @@ public:
 	virtual void environment_set_tonemap(RID p_env, RSE::EnvironmentToneMapper p_tone_mapper, float p_exposure, float p_white) = 0;
 	virtual void environment_set_tonemap_agx_contrast(RID p_env, float p_agx_contrast) = 0;
 	virtual void environment_set_adjustment(RID p_env, bool p_enable, float p_brightness, float p_contrast, float p_saturation, bool p_use_1d_color_correction, RID p_color_correction) = 0;
+	virtual void environment_set_screen_space_shadows(RID p_env, bool p_enabled, float p_thickness, float p_max_distance, float p_strength, int p_step_count, float p_light_radius, float p_thickness_falloff, float p_contact_shadow_distance, float p_shadow_fade_range, float p_history_weight) = 0;
 
 	virtual void environment_set_ssr(RID p_env, bool p_enable, int p_max_steps, float p_fade_in, float p_fade_out, float p_depth_tolerance) = 0;
 
@@ -671,12 +672,18 @@ public:
 	virtual void environment_set_ssao(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_power, float p_detail, float p_horizon, float p_sharpness, float p_light_affect, float p_ao_channel_affect) = 0;
 
 	virtual void environment_set_ssao_quality(RSE::EnvironmentSSAOQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;
+	virtual void environment_set_ssao_algorithm(RID p_env, RSE::EnvironmentSSAOAlgorithm p_algorithm) = 0;
+	virtual RSE::EnvironmentSSAOAlgorithm environment_get_ssao_algorithm(RID p_env) const = 0;
 
 	virtual void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection) = 0;
+	virtual void environment_set_ssgi(RID p_env, bool p_enable, float p_intensity, int p_radius, float p_depth_threshold, float p_normal_power, bool p_multirez, int p_multirez_levels, float p_multirez_dist_2, float p_multirez_dist_4, float p_multirez_dist_8, float p_multirez_dist_16) = 0;
 
 	virtual void environment_set_ssil_quality(RSE::EnvironmentSSILQuality p_quality, bool p_half_size, float p_adaptive_target, int p_blur_passes, float p_fadeout_from, float p_fadeout_to) = 0;
 
 	virtual void environment_set_sdfgi(RID p_env, bool p_enable, int p_cascades, float p_min_cell_size, RSE::EnvironmentSDFGIYScale p_y_scale, bool p_use_occlusion, float p_bounce_feedback, bool p_read_sky, float p_energy, float p_normal_bias, float p_probe_bias) = 0;
+
+	virtual void environment_set_ssil_algorithm(RID p_env, RSE::EnvironmentSSILAlgorithm p_algorithm) = 0;
+	virtual RSE::EnvironmentSSILAlgorithm environment_get_ssil_algorithm(RID p_env) const = 0;
 
 	virtual void environment_set_sdfgi_ray_count(RSE::EnvironmentSDFGIRayCount p_ray_count) = 0;
 
@@ -1140,32 +1147,9 @@ VARIANT_ENUM_CAST_EXT(RSE::EnvironmentFogMode, RenderingServer::EnvironmentFogMo
 VARIANT_ENUM_CAST_EXT(RSE::EnvironmentToneMapper, RenderingServer::EnvironmentToneMapper);
 VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSRRoughnessQuality, RenderingServer::EnvironmentSSRRoughnessQuality);
 VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSAOQuality, RenderingServer::EnvironmentSSAOQuality);
+VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSAOAlgorithm, RenderingServer::EnvironmentSSAOAlgorithm);
 VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSILQuality, RenderingServer::EnvironmentSSILQuality);
-VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIFramesToConverge, RenderingServer::EnvironmentSDFGIFramesToConverge);
-VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIRayCount, RenderingServer::EnvironmentSDFGIRayCount);
-VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIFramesToUpdateLight, RenderingServer::EnvironmentSDFGIFramesToUpdateLight);
-VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIYScale, RenderingServer::EnvironmentSDFGIYScale);
-VARIANT_ENUM_CAST_EXT(RSE::SubSurfaceScatteringQuality, RenderingServer::SubSurfaceScatteringQuality);
-VARIANT_ENUM_CAST_EXT(RSE::DOFBlurQuality, RenderingServer::DOFBlurQuality);
-VARIANT_ENUM_CAST_EXT(RSE::DOFBokehShape, RenderingServer::DOFBokehShape);
-VARIANT_ENUM_CAST_EXT(RSE::ShadowQuality, RenderingServer::ShadowQuality);
-VARIANT_ENUM_CAST_EXT(RSE::InstanceType, RenderingServer::InstanceType);
-VARIANT_ENUM_CAST_EXT(RSE::InstanceFlags, RenderingServer::InstanceFlags);
-VARIANT_ENUM_CAST_EXT(RSE::ShadowCastingSetting, RenderingServer::ShadowCastingSetting);
-VARIANT_ENUM_CAST_EXT(RSE::VisibilityRangeFadeMode, RenderingServer::VisibilityRangeFadeMode);
-VARIANT_ENUM_CAST_EXT(RSE::NinePatchAxisMode, RenderingServer::NinePatchAxisMode);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasItemTextureFilter, RenderingServer::CanvasItemTextureFilter);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasItemTextureRepeat, RenderingServer::CanvasItemTextureRepeat);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasGroupMode, RenderingServer::CanvasGroupMode);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasLightMode, RenderingServer::CanvasLightMode);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasLightBlendMode, RenderingServer::CanvasLightBlendMode);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasLightShadowFilter, RenderingServer::CanvasLightShadowFilter);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasOccluderPolygonCullMode, RenderingServer::CanvasOccluderPolygonCullMode);
-VARIANT_ENUM_CAST_EXT(RSE::GlobalShaderParameterType, RenderingServer::GlobalShaderParameterType);
-VARIANT_ENUM_CAST_EXT(RSE::RenderingInfo, RenderingServer::RenderingInfo);
-VARIANT_ENUM_CAST_EXT(RSE::SplashStretchMode, RenderingServer::SplashStretchMode);
-VARIANT_ENUM_CAST_EXT(RSE::CanvasTextureChannel, RenderingServer::CanvasTextureChannel);
-VARIANT_ENUM_CAST_EXT(RSE::BakeChannels, RenderingServer::BakeChannels);
+VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSILAlgorithm, RenderingServer::EnvironmentSSILAlgorithm);
 
 #ifndef DISABLE_DEPRECATED
 VARIANT_ENUM_CAST_EXT(RSE::Features, RenderingServer::Features);

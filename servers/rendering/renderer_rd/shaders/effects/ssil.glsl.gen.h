@@ -1,26 +1,46 @@
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Copyright (c) 2016, Intel Corporation
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-// documentation files (the "Software"), to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to the following conditions:
-// The above copyright notice and this permission notice shall be included in all copies or substantial portions of
-// the Software.
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
-// THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-// TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// File changes (yyyy-mm-dd)
-// 2016-09-07: filip.strugar@intel.com: first commit
-// 2020-12-05: clayjohn: convert to Vulkan and Godot
-// 2021-05-27: clayjohn: convert SSAO to SSIL
-// 2025-12-16: GT-VBAO implementation for SSIL
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/**************************************************************************/
+/*  ssil.glsl.gen.h                                                       */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
-#[compute]
+/* THIS FILE IS GENERATED. EDITS WILL BE LOST. */
 
+#pragma once
+
+#include "servers/rendering/renderer_rd/shader_rd.h"
+
+class SsilShaderRD : public ShaderRD {
+public:
+	SsilShaderRD() {
+		static const char *_vertex_code = nullptr;
+		static const char *_fragment_code = nullptr;
+		static const char _compute_code[] = {
+R"<!>(
 #version 450
 
 #VERSION_DEFINES
@@ -29,7 +49,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform sampler2DArray source_depth_mipmaps;
 layout(rgba8, set = 0, binding = 1) uniform restrict readonly image2D source_normal;
-layout(set = 0, binding = 2) uniform Constants { //get into a lower set
+layout(set = 0, binding = 2) uniform Constants { 
 	vec4 rotation_matrices[20];
 }
 constants;
@@ -63,10 +83,10 @@ layout(push_constant, std430) uniform Params {
 	vec2 NDC_to_view_mul;
 	vec2 NDC_to_view_add;
 
-	float vb_flag; // use visibility bitmask
+	float vb_flag; 
 	float z_near;
 	float z_far;
-	float pad_flags; // packed flags
+	float pad_flags; 
 
 	float radius;
 	float intensity;
@@ -107,19 +127,19 @@ vec3 load_normal(ivec2 p_pos) {
 }
 
 vec4 calculate_edges(const float p_center_z, const float p_left_z, const float p_right_z, const float p_top_z, const float p_bottom_z) {
-	// slope-sensitive depth-based edge detection
+	
 	vec4 edgesLRTB = vec4(p_left_z, p_right_z, p_top_z, p_bottom_z) - p_center_z;
 	vec4 edgesLRTB_slope_adjusted = edgesLRTB + edgesLRTB.yxwz;
 	edgesLRTB = min(abs(edgesLRTB), abs(edgesLRTB_slope_adjusted));
 	return clamp((1.3 - edgesLRTB / (p_center_z * 0.040)), 0.0, 1.0);
 }
 
-// Interleaved Gradient Noise for jitter
+
 float interleaved_gradient_noise(vec2 n) {
 	return fract(52.9829189 * fract(0.06711056 * n.x + 0.00583715 * n.y));
 }
 
-// Slice-based SSIL gather (GTAO-style for indirect light)
+
 void integrate_slice_ssil(vec2 direction, float viewspace_radius, vec2 screen_uv, vec3 view_pos, vec3 view_normal, float pixels_per_meter, int num_steps, inout vec3 total_color, inout float total_obscurance, inout uint mask_bits) {
 	vec2 dir_uv = direction * params.half_screen_pixel_size * 2.0; 
 	float pixel_radius = viewspace_radius * pixels_per_meter;
@@ -131,14 +151,14 @@ void integrate_slice_ssil(vec2 direction, float viewspace_radius, vec2 screen_uv
 
 	vec2 current_uv = screen_uv + step_vec;
 
-	float h_angle_max = -10.0; // Start unclamped to find best hit
+	float h_angle_max = -10.0; 
 	vec2 best_sample_uv = vec2(-1.0);
 	float best_sample_depth = 0.0;
 	bool found_hit = false;
 	
 	vec3 V = normalize(-view_pos);
 	
-	// Normal angle in slice plane
+	
 	float n_angle_slice = atan(view_normal.z, dot(view_normal.xy, direction)); 
 	float tangent_angle = n_angle_slice - 3.14159265359/2.0;
 
@@ -164,31 +184,31 @@ void integrate_slice_ssil(vec2 direction, float viewspace_radius, vec2 screen_uv
 		current_uv += step_vec;
 	}
 	
-	// Clamp horizon to tangent for integral calculation
+	
 	float h_angle_clamped = clamp(h_angle_max, tangent_angle, n_angle_slice + 3.14159265359/2.0);
 
-	// Calculate geometry weight (integral over [tangent, horizon])
-	// sin(h - n) - sin(tangent - n)  => sin(h - n) - (-1) => sin(h - n) + 1
+	
+	
 	float geometry_weight = 0.25 * (sin(h_angle_clamped - n_angle_slice) + 1.0);
 	float occlusion_slice = clamp(geometry_weight, 0.0, 1.0);
 	
-	// Accumulate geometry visibility (occlusion of sky)
+	
 	total_obscurance += occlusion_slice;
 	
 	if (found_hit && occlusion_slice > 0.001) {
-		// Sample color from best hit (horizon)
+		
 		vec4 sample_pos_clip = projection_constants.reprojection * vec4(best_sample_uv * 2.0 - 1.0, (best_sample_depth - params.z_near) / (params.z_far - params.z_near) * 2.0 - 1.0, 1.0);
 		vec2 reprojected_uv = (sample_pos_clip.xy / sample_pos_clip.w) * 0.5 + 0.5;
 		
-		vec3 sample_color = textureLod(last_frame, reprojected_uv, 0.0).rgb; // Level 0 for sharpness
-		sample_color /= (1.0 + dot(sample_color, vec3(0.299, 0.587, 0.114))); // Tone map
+		vec3 sample_color = textureLod(last_frame, reprojected_uv, 0.0).rgb; 
+		sample_color /= (1.0 + dot(sample_color, vec3(0.299, 0.587, 0.114))); 
 		
-		// Weight by geometry factor
+		
 		total_color += sample_color * occlusion_slice;
 	}
 	
-	// Bitmask update (using the raw horizon found)
-	// Check against surface tangent to capture slope occlusion correctly
+	
+	
 	if (h_angle_max > n_angle_slice + 0.05) {
 		float dir_ang = atan(direction.y, direction.x);
 		float ang01 = dir_ang * 0.15915494 + 0.5;
@@ -253,24 +273,24 @@ void generate_SSIL(out vec3 r_color, out vec4 r_edges, out float r_obscurance, o
 		integrate_slice_ssil(-direction, viewspace_radius, normalized_screen_pos, pix_center_pos, pixel_normal, pixels_per_meter, steps_per_slice, total_color, total_obscurance, mask_bits);
 	}
 	
-	// Normalize
-	float norm_factor = 2.0 / float(num_slices); // Logic from SSAO
-	// Actually, for color sum, we just want average color intensity?
-	// Original code: average weighted samples.
-	// Here total_color is sum of (color * weight).
-	// We need to divide by sum of weights?
-	// GTAO produces 'total_obscurance' which is sum of occlusion weights.
-	// If we divide by total_obscurance, we get average color.
-	// Then we multiply by total_obscurance (AO factor) to apply it.
-	// So effectively total_color is already what we want? 
-	// But we need to normalize for the number of slices.
+	
+	float norm_factor = 2.0 / float(num_slices); 
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 	total_color /= float(num_slices) * 2.0; 
 	total_obscurance /= float(num_slices) * 2.0;
 
-	// Untonemap?
-	// Original did: color /= 1.0 - dot(color, ...);
-	// We need to match that.
+	
+	
+	
 	float total_luma = dot(total_color, vec3(0.299, 0.587, 0.114));
 	if (total_luma > 6.0) {
 		total_color *= 6.0 / total_luma;
@@ -315,7 +335,7 @@ void main() {
 	float out_weight;
 	vec4 out_edges;
 	ivec2 ssC = ivec2(gl_GlobalInvocationID.xy);
-	if (any(greaterThanEqual(ssC, params.screen_size))) { //too large, do nothing
+	if (any(greaterThanEqual(ssC, params.screen_size))) { 
 		return;
 	}
 
@@ -324,10 +344,15 @@ void main() {
 	generate_SSIL(out_color, out_edges, out_obscurance, out_weight, uv, params.quality, true);
 
 	imageStore(dest_image, ssC, vec4(out_color, out_obscurance));
-	imageStore(edges_weights_image, ssC, vec4(1.0)); // Weight placeholder
+	imageStore(edges_weights_image, ssC, vec4(1.0)); 
 #else
 	generate_SSIL(out_color, out_edges, out_obscurance, out_weight, uv, params.quality, false); 
 	imageStore(dest_image, ssC, vec4(out_color, out_obscurance));
 	imageStore(edges_weights_image, ssC, vec4(pack_edges(out_edges)));
 #endif
 }
+)<!>"
+		};
+		setup(_vertex_code, _fragment_code, _compute_code, "SsilShaderRD");
+	}
+};
