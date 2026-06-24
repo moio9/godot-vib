@@ -1151,6 +1151,32 @@ VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSAOAlgorithm, RenderingServer::Environmen
 VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSILQuality, RenderingServer::EnvironmentSSILQuality);
 VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSSILAlgorithm, RenderingServer::EnvironmentSSILAlgorithm);
 
+VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIFramesToConverge, RenderingServer::EnvironmentSDFGIFramesToConverge);
+VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIRayCount, RenderingServer::EnvironmentSDFGIRayCount);
+VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIFramesToUpdateLight, RenderingServer::EnvironmentSDFGIFramesToUpdateLight);
+VARIANT_ENUM_CAST_EXT(RSE::EnvironmentSDFGIYScale, RenderingServer::EnvironmentSDFGIYScale);
+VARIANT_ENUM_CAST_EXT(RSE::SubSurfaceScatteringQuality, RenderingServer::SubSurfaceScatteringQuality);
+VARIANT_ENUM_CAST_EXT(RSE::DOFBlurQuality, RenderingServer::DOFBlurQuality);
+VARIANT_ENUM_CAST_EXT(RSE::DOFBokehShape, RenderingServer::DOFBokehShape);
+VARIANT_ENUM_CAST_EXT(RSE::ShadowQuality, RenderingServer::ShadowQuality);
+VARIANT_ENUM_CAST_EXT(RSE::InstanceType, RenderingServer::InstanceType);
+VARIANT_ENUM_CAST_EXT(RSE::InstanceFlags, RenderingServer::InstanceFlags);
+VARIANT_ENUM_CAST_EXT(RSE::ShadowCastingSetting, RenderingServer::ShadowCastingSetting);
+VARIANT_ENUM_CAST_EXT(RSE::VisibilityRangeFadeMode, RenderingServer::VisibilityRangeFadeMode);
+VARIANT_ENUM_CAST_EXT(RSE::NinePatchAxisMode, RenderingServer::NinePatchAxisMode);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasItemTextureFilter, RenderingServer::CanvasItemTextureFilter);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasItemTextureRepeat, RenderingServer::CanvasItemTextureRepeat);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasGroupMode, RenderingServer::CanvasGroupMode);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasLightMode, RenderingServer::CanvasLightMode);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasLightBlendMode, RenderingServer::CanvasLightBlendMode);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasLightShadowFilter, RenderingServer::CanvasLightShadowFilter);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasOccluderPolygonCullMode, RenderingServer::CanvasOccluderPolygonCullMode);
+VARIANT_ENUM_CAST_EXT(RSE::GlobalShaderParameterType, RenderingServer::GlobalShaderParameterType);
+VARIANT_ENUM_CAST_EXT(RSE::RenderingInfo, RenderingServer::RenderingInfo);
+VARIANT_ENUM_CAST_EXT(RSE::SplashStretchMode, RenderingServer::SplashStretchMode);
+VARIANT_ENUM_CAST_EXT(RSE::CanvasTextureChannel, RenderingServer::CanvasTextureChannel);
+VARIANT_ENUM_CAST_EXT(RSE::BakeChannels, RenderingServer::BakeChannels);
+
 #ifndef DISABLE_DEPRECATED
 VARIANT_ENUM_CAST_EXT(RSE::Features, RenderingServer::Features);
 #endif

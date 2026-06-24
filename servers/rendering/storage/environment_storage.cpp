@@ -765,15 +765,15 @@ float RendererEnvironmentStorage::environment_get_ssao_ao_channel_affect(RID p_e
 	return env->ssao_ao_channel_affect;
 }
 
-void RendererEnvironmentStorage::environment_set_ssao_algorithm(RID p_env, RS::EnvironmentSSAOAlgorithm p_algorithm) {
+void RendererEnvironmentStorage::environment_set_ssao_algorithm(RID p_env, RSE::EnvironmentSSAOAlgorithm p_algorithm) {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL(env);
 	env->ssao_algorithm = p_algorithm;
 }
 
-RS::EnvironmentSSAOAlgorithm RendererEnvironmentStorage::environment_get_ssao_algorithm(RID p_env) const {
+RSE::EnvironmentSSAOAlgorithm RendererEnvironmentStorage::environment_get_ssao_algorithm(RID p_env) const {
 	const Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL_V(env, RS::ENV_SSAO_ALGORITHM_STANDARD);
+	ERR_FAIL_NULL_V(env, RSE::ENV_SSAO_ALGORITHM_STANDARD);
 	return env->ssao_algorithm;
 }
 
@@ -905,15 +905,15 @@ float RendererEnvironmentStorage::environment_get_ssgi_multirez_dist_16(RID p_en
 	return env->ssgi_multirez_dist_16;
 }
 
-void RendererEnvironmentStorage::environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm) {
+void RendererEnvironmentStorage::environment_set_ssil_algorithm(RID p_env, RSE::EnvironmentSSILAlgorithm p_algorithm) {
 	Environment *env = environment_owner.get_or_null(p_env);
 	ERR_FAIL_NULL(env);
 	env->ssil_algorithm = p_algorithm;
 }
 
-RS::EnvironmentSSILAlgorithm RendererEnvironmentStorage::environment_get_ssil_algorithm(RID p_env) const {
+RSE::EnvironmentSSILAlgorithm RendererEnvironmentStorage::environment_get_ssil_algorithm(RID p_env) const {
 	const Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL_V(env, RS::ENV_SSIL_ALGORITHM_STANDARD);
+	ERR_FAIL_NULL_V(env, RSE::ENV_SSIL_ALGORITHM_STANDARD);
 	return env->ssil_algorithm;
 }
 

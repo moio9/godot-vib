@@ -270,9 +270,18 @@ bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_with_aux, bool p_cr
 	}
 
 	if (p_create_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH)) {
-		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_D32_SFLOAT;
-		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R32_SFLOAT;
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_STORAGE_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+	}
+
+	// D32_SFLOAT with DEPTH_STENCIL_ATTACHMENT for the VB pass framebuffer (depth testing).
+	if (p_create_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH)) {
+		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_D32_SFLOAT;
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT;
+		if (RD::get_singleton()->texture_is_format_supported_for_usage(fmt, usage)) {
+			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+		}
 	}
 
 	return has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_create_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);
@@ -909,9 +918,15 @@ uint32_t RenderSceneBuffersRD::get_depth_usage_bits(bool p_resolve, bool p_msaa,
 		usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
 		if (p_storage) {
 			usage_bits |= RD::TEXTURE_USAGE_STORAGE_BIT;
-		} else if (RenderingDevice::get_singleton()->has_feature(RD::SUPPORTS_FRAMEBUFFER_DEPTH_RESOLVE)) {
-			// We're able to resolve depth in (sub)passes and we make use of this in our mobile renderer.
-			usage_bits |= RD::TEXTURE_USAGE_DEPTH_RESOLVE_ATTACHMENT_BIT;
+		} else {
+			// DEPTH_STENCIL_ATTACHMENT needed for VB pass depth testing.
+			// Cannot use when p_storage is true because get_depth_format returns R32_SFLOAT
+			// (a color format) which doesn't support depth-stencil attachment.
+			usage_bits |= RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			if (RenderingDevice::get_singleton()->has_feature(RD::SUPPORTS_FRAMEBUFFER_DEPTH_RESOLVE)) {
+				// We're able to resolve depth in (sub)passes and we make use of this in our mobile renderer.
+				usage_bits |= RD::TEXTURE_USAGE_DEPTH_RESOLVE_ATTACHMENT_BIT;
+			}
 		}
 	} else {
 		usage_bits |= RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;

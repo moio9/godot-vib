@@ -398,7 +398,7 @@ float Environment::get_ssao_ao_channel_affect() const {
 	return ssao_ao_channel_affect;
 }
 
-void Environment::set_ssao_algorithm(RenderingServer::EnvironmentSSAOAlgorithm p_algorithm) {
+void Environment::set_ssao_algorithm(int p_algorithm) {
 	if (ssao_algorithm == p_algorithm) {
 		return;
 	}
@@ -406,7 +406,7 @@ void Environment::set_ssao_algorithm(RenderingServer::EnvironmentSSAOAlgorithm p
 	_update_ssao();
 }
 
-RenderingServer::EnvironmentSSAOAlgorithm Environment::get_ssao_algorithm() const {
+int Environment::get_ssao_algorithm() const {
 	return ssao_algorithm;
 }
 
@@ -422,7 +422,7 @@ void Environment::_update_ssao() {
 			ssao_sharpness,
 			ssao_direct_light_affect,
 			ssao_ao_channel_affect);
-	RS::get_singleton()->environment_set_ssao_algorithm(environment, ssao_algorithm);
+	RS::get_singleton()->environment_set_ssao_algorithm(environment, RSE::EnvironmentSSAOAlgorithm(ssao_algorithm));
 }
 
 // SSIL
@@ -472,7 +472,7 @@ float Environment::get_ssil_normal_rejection() const {
 	return ssil_normal_rejection;
 }
 
-void Environment::set_ssil_algorithm(RenderingServer::EnvironmentSSILAlgorithm p_algorithm) {
+void Environment::set_ssil_algorithm(int p_algorithm) {
 	if (ssil_algorithm == p_algorithm) {
 		return;
 	}
@@ -480,7 +480,7 @@ void Environment::set_ssil_algorithm(RenderingServer::EnvironmentSSILAlgorithm p
 	_update_ssil();
 }
 
-RenderingServer::EnvironmentSSILAlgorithm Environment::get_ssil_algorithm() const {
+int Environment::get_ssil_algorithm() const {
 	return ssil_algorithm;
 }
 
@@ -597,7 +597,7 @@ void Environment::_update_ssil() {
 			ssil_intensity,
 			ssil_sharpness,
 			ssil_normal_rejection);
-	RS::get_singleton()->environment_set_ssil_algorithm(environment, ssil_algorithm);
+	RS::get_singleton()->environment_set_ssil_algorithm(environment, RSE::EnvironmentSSILAlgorithm(ssil_algorithm));
 }
 
 void Environment::_update_ssgi() {

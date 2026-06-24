@@ -4650,6 +4650,8 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_SCENE_LUMINANCE:
 		case VIEW_DISPLAY_DEBUG_SSAO:
 		case VIEW_DISPLAY_DEBUG_SSIL:
+		case VIEW_DISPLAY_DEBUG_SSGI:
+		case VIEW_DISPLAY_DEBUG_SSS:
 		case VIEW_DISPLAY_DEBUG_PSSM_SPLITS:
 		case VIEW_DISPLAY_DEBUG_DECAL_ATLAS:
 		case VIEW_DISPLAY_DEBUG_AREA_LIGHT_ATLAS:
@@ -4664,6 +4666,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 		case VIEW_DISPLAY_DEBUG_CLUSTER_REFLECTION_PROBES:
 		case VIEW_DISPLAY_DEBUG_OCCLUDERS:
 		case VIEW_DISPLAY_MOTION_VECTORS:
+		case VIEW_DISPLAY_DEBUG_VISIBILITY_BUFFER:
 		case VIEW_DISPLAY_INTERNAL_BUFFER: {
 			static const int display_options[] = {
 				VIEW_DISPLAY_NORMAL,
@@ -4680,6 +4683,8 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_SCENE_LUMINANCE,
 				VIEW_DISPLAY_DEBUG_SSAO,
 				VIEW_DISPLAY_DEBUG_SSIL,
+				VIEW_DISPLAY_DEBUG_SSGI,
+				VIEW_DISPLAY_DEBUG_SSS,
 				VIEW_DISPLAY_DEBUG_GI_BUFFER,
 				VIEW_DISPLAY_DEBUG_DISABLE_LOD,
 				VIEW_DISPLAY_DEBUG_PSSM_SPLITS,
@@ -4694,6 +4699,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				VIEW_DISPLAY_DEBUG_CLUSTER_REFLECTION_PROBES,
 				VIEW_DISPLAY_DEBUG_OCCLUDERS,
 				VIEW_DISPLAY_MOTION_VECTORS,
+				VIEW_DISPLAY_DEBUG_VISIBILITY_BUFFER,
 				VIEW_DISPLAY_INTERNAL_BUFFER,
 				VIEW_MAX
 			};
@@ -4712,6 +4718,8 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_SCENE_LUMINANCE,
 				Viewport::DEBUG_DRAW_SSAO,
 				Viewport::DEBUG_DRAW_SSIL,
+				Viewport::DEBUG_DRAW_SSGI,
+				Viewport::DEBUG_DRAW_SSS,
 				Viewport::DEBUG_DRAW_GI_BUFFER,
 				Viewport::DEBUG_DRAW_DISABLE_LOD,
 				Viewport::DEBUG_DRAW_PSSM_SPLITS,
@@ -4726,6 +4734,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Viewport::DEBUG_DRAW_CLUSTER_REFLECTION_PROBES,
 				Viewport::DEBUG_DRAW_OCCLUDERS,
 				Viewport::DEBUG_DRAW_MOTION_VECTORS,
+				Viewport::DEBUG_DRAW_VISIBILITY_BUFFER,
 				Viewport::DEBUG_DRAW_INTERNAL_BUFFER,
 			};
 
@@ -6850,6 +6859,10 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 			TTRC("Displays the screen-space ambient occlusion buffer. Requires SSAO to be enabled in Environment to have a visible effect."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSIL"), VIEW_DISPLAY_DEBUG_SSIL, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Displays the screen-space indirect lighting buffer. Requires SSIL to be enabled in Environment to have a visible effect."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSGI"), VIEW_DISPLAY_DEBUG_SSGI, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the screen-space global illumination buffer. Requires SSGI to be enabled in Environment to have a visible effect."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("SSS"), VIEW_DISPLAY_DEBUG_SSS, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the screen-space shadows buffer. Requires Subsurf Scatter Scattering to be enabled in Environment to have a visible effect."));
 	display_submenu->add_separator();
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("VoxelGI/SDFGI Buffer"), VIEW_DISPLAY_DEBUG_GI_BUFFER, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Requires SDFGI or VoxelGI to be enabled to have a visible effect."));
@@ -6871,6 +6884,8 @@ Node3DEditorViewport::Node3DEditorViewport(Node3DEditor *p_spatial_editor, int p
 			TTRC("Represents occluders with black pixels. Requires occlusion culling to be enabled to have a visible effect."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Motion Vectors"), VIEW_DISPLAY_MOTION_VECTORS, SupportedRenderingMethods::FORWARD_PLUS,
 			TTRC("Represents motion vectors with colored lines in the direction of motion. Gray dots represent areas with no per-pixel motion."));
+	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Visibility Buffer"), VIEW_DISPLAY_DEBUG_VISIBILITY_BUFFER, SupportedRenderingMethods::FORWARD_PLUS,
+			TTRC("Displays the visibility buffer showing mesh/object and triangle IDs."));
 	_add_advanced_debug_draw_mode_item(display_submenu, TTRC("Internal Buffer"), VIEW_DISPLAY_INTERNAL_BUFFER, SupportedRenderingMethods::FORWARD_PLUS_MOBILE,
 			TTRC("Shows the scene rendered in linear colorspace before any tonemapping or post-processing."));
 	view_display_menu->get_popup()->add_submenu_node_item(TTRC("Display Advanced..."), display_submenu, VIEW_DISPLAY_ADVANCED);

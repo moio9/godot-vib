@@ -192,6 +192,11 @@ private:
 	RID vb_fill_shader;        // compute
 	RID vb_fill_pipeline;
 
+	// Depth copy (main depth → vb_depth)
+	RID depth_copy_shader;
+	RID depth_copy_pipeline;
+	RID depth_copy_sampler;
+
 	// --- VB vis texture & out ---
 	Vector<RID> vb_out_color_storage;
 	Size2i      vb_out_size = Size2i();
@@ -213,6 +218,7 @@ private:
 
 public:
 	static RendererSceneRenderRD *get_singleton() { return singleton; }
+	void copy_depth_to_vb_depth(Ref<RenderSceneBuffersRD> rb, const RenderDataRD *p_render_data);
 	bool is_visibility_buffer_reusing_main_depth() const { return vb_reuse_main_depth; }
 	bool is_mesh_blend_enabled() const { return _mesh_blend_enabled(); }
 

@@ -878,7 +878,7 @@ public:
 
 	FUNC7(environment_set_adjustment, RID, bool, float, float, float, bool, RID)
 
-	FUNC12(environment_set_screen_space_shadows, RID, bool, float, float, float, int, float, float, float, float, float)
+	FUNC11(environment_set_screen_space_shadows, RID, bool, float, float, float, int, float, float, float, float, float)
 	FUNC11(environment_set_fog, RID, bool, const Color &, float, float, float, float, float, float, float, RSE::EnvironmentFogMode)
 
 	FUNC4(environment_set_fog_depth, RID, float, float, float)

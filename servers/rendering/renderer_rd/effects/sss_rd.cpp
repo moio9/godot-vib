@@ -56,7 +56,7 @@ void SSSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buf
     MaterialStorage *material_storage = MaterialStorage::get_singleton();
     ERR_FAIL_NULL(material_storage);
 
-    RID default_sampler = material_storage->sampler_rd_get_default(RS::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RS::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+    RID default_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
     Size2i screen_size = p_render_buffers->get_internal_size();
     RID depth_texture = p_render_buffers->get_depth_texture();
 

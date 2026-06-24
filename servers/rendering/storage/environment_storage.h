@@ -152,7 +152,7 @@ private:
 		float ssao_sharpness = 0.98;
 		float ssao_direct_light_affect = 0.0;
 		float ssao_ao_channel_affect = 0.0;
-		RS::EnvironmentSSAOAlgorithm ssao_algorithm = RS::ENV_SSAO_ALGORITHM_STANDARD;
+		RSE::EnvironmentSSAOAlgorithm ssao_algorithm = RSE::ENV_SSAO_ALGORITHM_STANDARD;
 
 	// SSIL
 	bool ssil_enabled = false;
@@ -160,7 +160,7 @@ private:
 	float ssil_intensity = 1.0;
 	float ssil_sharpness = 0.98;
 	float ssil_normal_rejection = 1.0;
-	RS::EnvironmentSSILAlgorithm ssil_algorithm = RS::ENV_SSIL_ALGORITHM_STANDARD;
+	RSE::EnvironmentSSILAlgorithm ssil_algorithm = RSE::ENV_SSIL_ALGORITHM_STANDARD;
 
 	// SSGI
 	bool ssgi_enabled = false;
@@ -329,8 +329,8 @@ public:
 		float environment_get_ssao_sharpness(RID p_env) const;
 		float environment_get_ssao_direct_light_affect(RID p_env) const;
 		float environment_get_ssao_ao_channel_affect(RID p_env) const;
-		void environment_set_ssao_algorithm(RID p_env, RS::EnvironmentSSAOAlgorithm p_algorithm);
-		RS::EnvironmentSSAOAlgorithm environment_get_ssao_algorithm(RID p_env) const;
+		void environment_set_ssao_algorithm(RID p_env, RSE::EnvironmentSSAOAlgorithm p_algorithm);
+		RSE::EnvironmentSSAOAlgorithm environment_get_ssao_algorithm(RID p_env) const;
 
 	// SSIL
 	void environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection);
@@ -351,8 +351,8 @@ public:
 	float environment_get_ssgi_multirez_dist_4(RID p_env) const;
 	float environment_get_ssgi_multirez_dist_8(RID p_env) const;
 	float environment_get_ssgi_multirez_dist_16(RID p_env) const;
-	void environment_set_ssil_algorithm(RID p_env, RS::EnvironmentSSILAlgorithm p_algorithm);
-	RS::EnvironmentSSILAlgorithm environment_get_ssil_algorithm(RID p_env) const;
+	void environment_set_ssil_algorithm(RID p_env, RSE::EnvironmentSSILAlgorithm p_algorithm);
+	RSE::EnvironmentSSILAlgorithm environment_get_ssil_algorithm(RID p_env) const;
 
 	// SDFGI
 	void environment_set_sdfgi(RID p_env, bool p_enable, int p_cascades, float p_min_cell_size, RSE::EnvironmentSDFGIYScale p_y_scale, bool p_use_occlusion, float p_bounce_feedback, bool p_read_sky, float p_energy, float p_normal_bias, float p_probe_bias);
