@@ -1,0 +1,51 @@
+name: Clean Visibility Bitmask gather path
+
+on:
+  push:
+    branches:
+      - "opt/renderer-depth-meshblend"
+    paths:
+      - "misc/scripts/apply_vb_pipeline_cleanup.py"
+      - ".github/workflows/apply_vb_pipeline_cleanup.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[vb-pipeline-cleanup-applied]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-meshblend
+          fetch-depth: 0
+
+      - name: Apply guarded source transformations
+        run: python3 misc/scripts/apply_vb_pipeline_cleanup.py
+
+      - name: Validate patch
+        run: |
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+
+          expected = {
+              "servers/rendering/renderer_rd/effects/ss_effects.cpp",
+              "servers/rendering/renderer_rd/shaders/effects/ssao_vb.glsl",
+          }
+          actual = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).split())
+          if actual != expected:
+              raise SystemExit(f"Unexpected changed files: actual={sorted(actual)}, expected={sorted(expected)}")
+          PY
+
+      - name: Commit VB pipeline cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            servers/rendering/renderer_rd/effects/ss_effects.cpp \
+            servers/rendering/renderer_rd/shaders/effects/ssao_vb.glsl
+          git commit -m "Use dedicated VB gather without ASSAO adaptive passes [vb-pipeline-cleanup-applied]"
+          git push origin HEAD:opt/renderer-depth-meshblend
