@@ -1,17 +1,13 @@
 name: One-shot renderer allocator compile repair
 
 on:
-  push:
+  pull_request_target:
     branches:
       - "4.7"
-    paths:
-      - ".github/workflows/repair_renderer_batch2_allocator.yml"
-  pull_request:
-    branches:
-      - "4.7"
+    types:
+      - synchronize
     paths:
       - ".github/build-status/renderer-batch2-source.txt"
-      - ".github/workflows/renderer_batch2_compile_repair_01.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +19,7 @@ concurrency:
 
 jobs:
   repair-and-compile:
-    if: github.event_name != 'pull_request' || github.head_ref == 'opt/renderer-batch2'
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'opt/renderer-batch2')
     runs-on: ubuntu-24.04
     timeout-minutes: 240
 
