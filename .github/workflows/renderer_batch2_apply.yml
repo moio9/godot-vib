@@ -8,6 +8,7 @@ on:
       - ".github/workflows/renderer_batch2_apply.yml"
       - ".github/scripts/apply_renderer_batch2.py"
       - ".github/scripts/prepare_renderer_batch2_driver.py"
+      - ".github/scripts/fix_renderer_batch2_main_pass_cpp.py"
   workflow_dispatch:
 
 permissions:
@@ -52,7 +53,7 @@ jobs:
       - name: Prepare Godot 4.7.2 patch compatibility
         run: python3 .github/scripts/prepare_renderer_batch2_driver.py
 
-      - name: Complete the main-pass attachment adapter
+      - name: Use structural validation for the main-pass attachment
         shell: bash
         run: |
           set -euxo pipefail
@@ -61,18 +62,33 @@ jobs:
 
           path = Path(".github/scripts/apply_renderer_batch2.py")
           text = path.read_text(encoding="utf-8")
-          marker = '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
-          addition = (
+
+          branch_marker = '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
+          compatibility = (
+              '        # The historical exact-string invariant is replaced by a structural fixer.\n'
               '        body = body.replace(\n'
-              '            \'if "COLOR_PASS_FLAG_MESH_BLEND" not in fb_fn:\',\n'
-              '            \'if "RID mesh_blend_aux;" not in fb_fn:\',\n'
+              '            \'    "color, specular, velocity_buffer, mesh_blend_aux, depth",\\n\',\n'
+              '            \'\',\n'
               '        )\n'
           )
-          guard = 'if "RID mesh_blend_aux;" not in fb_fn:'
-          if guard not in text:
-              if marker not in text:
+          if "historical exact-string invariant" not in text:
+              if branch_marker not in text:
                   raise RuntimeError("Main-pass compatibility branch was not found")
-              text = text.replace(marker, marker + addition, 1)
+              text = text.replace(branch_marker, branch_marker + compatibility, 1)
+
+          run_marker = '    run(["python3", str(patch_path)])\n'
+          fixer_call = (
+              '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
+              '        run([\n'
+              '            "python3",\n'
+              '            str(ROOT / ".github/scripts/fix_renderer_batch2_main_pass_cpp.py"),\n'
+              '        ])\n'
+          )
+          if "fix_renderer_batch2_main_pass_cpp.py" not in text:
+              if run_marker not in text:
+                  raise RuntimeError("Patch execution marker was not found")
+              text = text.replace(run_marker, run_marker + fixer_call, 1)
+
           path.write_text(text, encoding="utf-8")
           PY
 
@@ -91,6 +107,7 @@ jobs:
           rm -f .github/workflows/renderer_batch2_apply_v3.yml
           rm -f .github/scripts/apply_renderer_batch2.py
           rm -f .github/scripts/prepare_renderer_batch2_driver.py
+          rm -f .github/scripts/fix_renderer_batch2_main_pass_cpp.py
 
           mkdir -p .github/build-status
           {
