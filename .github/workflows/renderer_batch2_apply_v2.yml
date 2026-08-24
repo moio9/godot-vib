@@ -105,12 +105,13 @@ jobs:
           text = text.replace(old_call, new_call, 1)
 
           write_anchor = '          Path("/tmp/source-patch.py").write_text(body, encoding="utf-8")'
-          adapter_code = '''          if sys.argv[1] == "mask-call-flex":
-              body = body.replace(
-                  r"\\s*vb_vis\\s*",
-                  r"\\s*[A-Za-z_][A-Za-z0-9_]*\\s*",
-              )
-'''
+          adapter_code = (
+              '          if sys.argv[1] == "mask-call-flex":\n'
+              '              body = body.replace(\n'
+              '                  r"\\\\s*vb_vis\\\\s*",\n'
+              '                  r"\\\\s*[A-Za-z_][A-Za-z0-9_]*\\\\s*",\n'
+              '              )\n'
+          )
           if write_anchor not in text:
               raise RuntimeError("Patch-program write anchor was not found in V3")
           text = text.replace(write_anchor, adapter_code + write_anchor, 1)
