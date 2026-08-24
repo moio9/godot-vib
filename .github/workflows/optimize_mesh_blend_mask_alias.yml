@@ -1,0 +1,449 @@
+name: Reuse packed VB_AUX as the Mesh Blend mask
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-reuse-vb-aux-mask
+    paths:
+      - .github/workflows/optimize_mesh_blend_mask_alias.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-runtime-test-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-reuse-vb-aux-mask
+          fetch-depth: 0
+
+      - name: Remove the duplicate full-resolution mask texture and write
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # The mask compute pass only needs to output initial edge coordinates now.
+          shader = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = shader.read_text(encoding="utf-8")
+          text = text.replace(
+              "layout(r16ui, set = 0, binding = 1) uniform writeonly uimage2D mesh_mask;\n",
+              "",
+              1,
+          )
+          text = text.replace(
+              "layout(rg16ui, set = 0, binding = 2) uniform writeonly uimage2D mesh_edges;",
+              "layout(rg16ui, set = 0, binding = 1) uniform writeonly uimage2D mesh_edges;",
+              1,
+          )
+          text = text.replace(
+              "layout(set = 0, binding = 3) uniform sampler2D mesh_depth;",
+              "layout(set = 0, binding = 2) uniform sampler2D mesh_depth;",
+              1,
+          )
+          text = re.sub(
+              r"^[\t ]*imageStore\(mesh_mask,\s*pixel,\s*uvec4\(pack_mesh_blend_mask\(current\),\s*0u,\s*0u,\s*0u\)\);\n?",
+              "",
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+
+          # Remove the now-unused pack helper, preserving the unpack helper for VB_AUX input.
+          helper = re.search(
+              r"uint pack_mesh_blend_mask\(vec2 value\)\s*\{.*?\}\n\n",
+              text,
+              flags=re.DOTALL,
+          )
+          if helper:
+              text = text[:helper.start()] + text[helper.end():]
+
+          if "mesh_mask" in text or "pack_mesh_blend_mask" in text:
+              raise RuntimeError("The edge-detection shader still writes the duplicate mask")
+          required = (
+              "binding = 0) uniform readonly uimage2D vb_aux",
+              "binding = 1) uniform writeonly uimage2D mesh_edges",
+              "binding = 2) uniform sampler2D mesh_depth",
+              "unpack_visibility_aux",
+          )
+          for needle in required:
+              if needle not in text:
+                  raise RuntimeError(f"Mask shader is missing: {needle}")
+          shader.write_text(text, encoding="utf-8")
+
+          header = Path("servers/rendering/renderer_rd/effects/mesh_blend.h")
+          text = header.read_text(encoding="utf-8")
+          text = text.replace(
+              "void generate_mask(RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest,",
+              "void generate_mask(RID p_vb_aux, RID p_vb_depth, RID p_edge_dest,",
+          )
+          if "generate_mask(RID p_vb_aux, RID p_vb_depth, RID p_mask" in text:
+              raise RuntimeError("MeshBlend header still exposes the duplicate output mask")
+          header.write_text(text, encoding="utf-8")
+
+          cpp = Path("servers/rendering/renderer_rd/effects/mesh_blend.cpp")
+          text = cpp.read_text(encoding="utf-8")
+          text = text.replace(
+              "void MeshBlend::generate_mask(RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest,",
+              "void MeshBlend::generate_mask(RID p_vb_aux, RID p_vb_depth, RID p_edge_dest,",
+          )
+          text = re.sub(
+              r"\n\tRD::Uniform u_mask\(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>\(\{ p_mask \}\)\);",
+              "",
+              text,
+              count=1,
+          )
+          text = text.replace(
+              "RD::Uniform u_edge(RD::UNIFORM_TYPE_IMAGE, 2, Vector<RID>({ p_edge_dest }));",
+              "RD::Uniform u_edge(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ p_edge_dest }));",
+              1,
+          )
+          text = text.replace(
+              "RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ sampler_nearest, p_vb_depth }));",
+              "RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ sampler_nearest, p_vb_depth }));",
+              1,
+          )
+          text = text.replace(
+              "uniform_cache->get_cache(shader_rid, 0, u_aux, u_mask, u_edge, u_depth)",
+              "uniform_cache->get_cache(shader_rid, 0, u_aux, u_edge, u_depth)",
+              1,
+          )
+          generate_start = text.find("void MeshBlend::generate_mask(")
+          generate_end = text.find("void MeshBlend::jump_flood(", generate_start)
+          if generate_start < 0 or generate_end < 0:
+              raise RuntimeError("MeshBlend::generate_mask extent was not found")
+          generate_fn = text[generate_start:generate_end]
+          if "p_mask" in generate_fn or "u_mask" in generate_fn:
+              raise RuntimeError("MeshBlend::generate_mask still references the duplicate mask")
+          cpp.write_text(text, encoding="utf-8")
+
+          # Discover the custom mask texture token and its caller-local variable.
+          source_paths = list(Path("servers/rendering").rglob("*.cpp")) + list(Path("servers/rendering").rglob("*.h"))
+          mask_tokens = set()
+          for path in source_paths:
+              content = path.read_text(encoding="utf-8", errors="ignore")
+              mask_tokens.update(re.findall(r"RB_TEX_[A-Z0-9_]*MESH_BLEND[A-Z0-9_]*MASK[A-Z0-9_]*", content))
+          if not mask_tokens:
+              raise RuntimeError("No Mesh Blend mask texture token was found")
+
+          call_sites_patched = 0
+          allocation_statements_removed = 0
+          for path in source_paths:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              original = text
+
+              for token in mask_tokens:
+                  # Remove complete create/get statements that refer to the duplicate texture.
+                  position = 0
+                  while True:
+                      occurrence = text.find(token, position)
+                      if occurrence < 0:
+                          break
+                      statement_start = text.rfind("\n", 0, occurrence) + 1
+                      statement_end = text.find(";", occurrence)
+                      if statement_end < 0:
+                          break
+                      statement_end += 1
+                      statement = text[statement_start:statement_end]
+                      if "create_texture" in statement:
+                          text = text[:statement_start] + text[statement_end:]
+                          allocation_statements_removed += 1
+                          position = statement_start
+                          continue
+                      position = statement_end
+
+                  # Capture and remove the local RID retrieval, then reuse vb_aux at all calls.
+                  retrieval_pattern = re.compile(
+                      rf"^[\t ]*RID\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*{re.escape(token)}[^;]*;\n?",
+                      flags=re.MULTILINE,
+                  )
+                  retrievals = list(retrieval_pattern.finditer(text))
+                  for retrieval in reversed(retrievals):
+                      mask_var = retrieval.group("var")
+                      # Find the VB_AUX local in the same source file.
+                      aux_match = re.search(
+                          r"RID\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*RB_TEX_VB_AUX[^;]*;",
+                          text,
+                      )
+                      if aux_match is None:
+                          raise RuntimeError(f"{path}: VB_AUX local was not found beside {mask_var}")
+                      aux_var = aux_match.group("var")
+                      text = text[:retrieval.start()] + text[retrieval.end():]
+
+                      # Remove the duplicate output argument from generate_mask().
+                      text, count_generate = re.subn(
+                          rf"(generate_mask\([^;]*?)\b{re.escape(mask_var)}\s*,\s*",
+                          r"\1",
+                          text,
+                          count=1,
+                      )
+                      # Reuse VB_AUX in the subsequent jump-flood and blend calls.
+                      text, count_jump = re.subn(
+                          rf"(jump_flood\([^;]*?)\b{re.escape(mask_var)}\b",
+                          rf"\1{aux_var}",
+                          text,
+                      )
+                      text, count_blend = re.subn(
+                          rf"(\.blend\([^;]*?)\b{re.escape(mask_var)}\b",
+                          rf"\1{aux_var}",
+                          text,
+                      )
+                      if count_generate == 0 or count_jump == 0 or count_blend == 0:
+                          raise RuntimeError(
+                              f"{path}: incomplete mask alias patch for {mask_var}: "
+                              f"generate={count_generate}, jump={count_jump}, blend={count_blend}"
+                          )
+                      call_sites_patched += 1
+
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+
+          if call_sites_patched == 0:
+              raise RuntimeError("No Mesh Blend caller was changed to reuse VB_AUX")
+          if allocation_statements_removed == 0:
+              raise RuntimeError("No duplicate Mesh Blend mask allocation was removed")
+
+          # Remove now-unused texture-name macro definitions after all source references are gone.
+          remaining_references = []
+          for token in mask_tokens:
+              for path in source_paths:
+                  content = path.read_text(encoding="utf-8", errors="ignore")
+                  non_define = [line for line in content.splitlines() if token in line and not line.lstrip().startswith("#define")]
+                  if non_define:
+                      remaining_references.append((token, path, non_define[:2]))
+              if not any(item[0] == token for item in remaining_references):
+                  for path in source_paths:
+                      content = path.read_text(encoding="utf-8", errors="ignore")
+                      updated = re.sub(rf"^#define\s+{re.escape(token)}[^\n]*\n?", "", content, flags=re.MULTILINE)
+                      if updated != content:
+                          path.write_text(updated, encoding="utf-8")
+          if remaining_references:
+              raise RuntimeError(f"Duplicate mask texture references remain: {remaining_references}")
+
+          # VB_AUX is now sampled directly by the final blend pass; its allocation must
+          # retain sampling, storage and color-attachment usage.
+          usage_verified = False
+          for path in source_paths:
+              content = path.read_text(encoding="utf-8", errors="ignore")
+              occurrence = content.find("RB_TEX_VB_AUX")
+              while occurrence >= 0:
+                  start = content.rfind("\n", 0, occurrence) + 1
+                  end = content.find(";", occurrence)
+                  if end < 0:
+                      break
+                  statement = content[start:end + 1]
+                  if "create_texture" in statement:
+                      required_usage = ("TEXTURE_USAGE_COLOR_ATTACHMENT_BIT", "TEXTURE_USAGE_STORAGE_BIT", "TEXTURE_USAGE_SAMPLING_BIT")
+                      missing = [flag for flag in required_usage if flag not in statement]
+                      if missing:
+                          # Append missing usage flags to the usage expression before the first sample argument.
+                          usage_anchor = "RD::TEXTURE_USAGE_"
+                          if usage_anchor not in statement:
+                              raise RuntimeError(f"Could not extend VB_AUX usage statement: {statement}")
+                          # Most Godot create_texture calls keep the usage expression as one argument.
+                          insertion = statement.rfind(")")
+                          if insertion < 0:
+                              raise RuntimeError("VB_AUX create_texture statement has no closing parenthesis")
+                          extra = " | " + " | ".join("RD::" + flag for flag in missing)
+                          statement = statement[:insertion] + extra + statement[insertion:]
+                          content = content[:start] + statement + content[end + 1:]
+                          path.write_text(content, encoding="utf-8")
+                      usage_verified = True
+                      break
+                  occurrence = content.find("RB_TEX_VB_AUX", end + 1)
+              if usage_verified:
+                  break
+          if not usage_verified:
+              raise RuntimeError("VB_AUX allocation statement was not found for usage validation")
+          PY
+
+          git diff --check
+
+      - name: Validate modified mask compute shader
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools spirv-tools mesa-vulkan-drivers xvfb
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = source.read_text(encoding="utf-8").replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
+          Path("/tmp/mesh_blend_mask.comp").write_text(text, encoding="utf-8")
+          PY
+          glslangValidator -V --target-env vulkan1.2 -S comp /tmp/mesh_blend_mask.comp -o /tmp/mesh_blend_mask.spv
+          spirv-val --target-env vulkan1.2 /tmp/mesh_blend_mask.spv
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Create and run a Forward+ runtime smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vb-aux-alias-test/results
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          settings = set()
+          for path in Path("servers").rglob("*.cpp"):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              settings.update(match.group(1) for match in re.finditer(r'["\'](rendering/[^"\']*mesh_blend[^"\']*enabled[^"\']*)["\']', text, flags=re.IGNORECASE))
+          if not settings:
+              raise RuntimeError("No Mesh Blend enable setting was discovered")
+          lines = [
+              '[application]',
+              'config/name="VB_AUX Mask Alias Test"',
+              '',
+              '[display]',
+              'window/size/viewport_width=384',
+              'window/size/viewport_height=384',
+              'window/size/window_width_override=384',
+              'window/size/window_height_override=384',
+              '',
+              '[rendering]',
+              'renderer/rendering_method="forward_plus"',
+              'renderer/rendering_method.mobile="forward_plus"',
+          ]
+          lines.extend(f'{setting}=true' for setting in sorted(settings))
+          Path('/tmp/vb-aux-alias-test/project.godot').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+
+          cat > /tmp/vb-aux-alias-test/test.gd <<'EOF'
+          extends SceneTree
+
+          func material_for(group: int, color: Color) -> ShaderMaterial:
+              var shader := Shader.new()
+              shader.code = """shader_type spatial;
+          uniform uint group_id = 1u;
+          uniform vec3 color = vec3(0.8);
+          void fragment() {
+              MESH_BLEND = 0.75;
+              MESH_BLEND_GROUP = group_id;
+              ALBEDO = color;
+              ROUGHNESS = 1.0;
+          }
+          """
+              var material := ShaderMaterial.new()
+              material.shader = shader
+              material.set_shader_parameter("group_id", group)
+              material.set_shader_parameter("color", Vector3(color.r, color.g, color.b))
+              return material
+
+          func add_box(parent: Node3D, x: float, group: int, color: Color) -> void:
+              var instance := MeshInstance3D.new()
+              var box := BoxMesh.new()
+              box.size = Vector3(2.2, 2.2, 2.2)
+              instance.mesh = box
+              instance.position = Vector3(x, 0.0, 0.0)
+              instance.material_override = material_for(group, color)
+              parent.add_child(instance)
+
+          func _initialize() -> void:
+              get_root().size = Vector2i(384, 384)
+              var world := Node3D.new()
+              get_root().add_child(world)
+              add_box(world, -0.7, 1, Color(0.85, 0.35, 0.25))
+              add_box(world, 0.7, 2, Color(0.25, 0.45, 0.88))
+
+              var camera := Camera3D.new()
+              camera.position = Vector3(4.6, 3.4, 5.8)
+              camera.look_at(Vector3.ZERO, Vector3.UP)
+              camera.current = true
+              world.add_child(camera)
+
+              var light := DirectionalLight3D.new()
+              light.rotation_degrees = Vector3(-55.0, -30.0, 0.0)
+              world.add_child(light)
+
+              var environment := Environment.new()
+              environment.background_mode = Environment.BG_COLOR
+              environment.background_color = Color(0.07, 0.07, 0.07)
+              environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+              environment.ambient_light_color = Color.WHITE
+              environment.ambient_light_energy = 0.55
+              var world_environment := WorldEnvironment.new()
+              world_environment.environment = environment
+              world.add_child(world_environment)
+
+              for _frame in range(12):
+                  await process_frame
+                  await RenderingServer.frame_post_draw
+              RenderingServer.force_sync()
+              var image := get_root().get_texture().get_image()
+              if image.is_empty():
+                  push_error("VB_AUX mask alias test returned an empty image")
+                  quit(40)
+                  return
+              if image.save_png("/tmp/vb-aux-alias-test/results/frame.png") != OK:
+                  quit(41)
+                  return
+              quit()
+          EOF
+
+          GODOT_BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.*' | head -n1)"
+          LVP_ICD="$(find /usr/share/vulkan/icd.d -type f -iname '*lvp*.json' | head -n1)"
+          test -n "$GODOT_BIN"
+          test -n "$LVP_ICD"
+          export VK_ICD_FILENAMES="$LVP_ICD"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a -s '-screen 0 384x384x24' \
+            "$GODOT_BIN" \
+            --path /tmp/vb-aux-alias-test \
+            --script /tmp/vb-aux-alias-test/test.gd \
+            --rendering-method forward_plus \
+            --audio-driver Dummy \
+            --display-driver x11 \
+            > /tmp/vb-aux-alias-test/godot.log 2>&1
+          cat /tmp/vb-aux-alias-test/godot.log
+          test -s /tmp/vb-aux-alias-test/results/frame.png
+          if grep -Eqi 'shader compilation failed|pipeline.*invalid|framebuffer.*format|validation error|unknown identifier.*MESH_BLEND' /tmp/vb-aux-alias-test/godot.log; then
+              exit 1
+          fi
+
+      - name: Upload runtime evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: vb-aux-mask-alias-${{ github.sha }}
+          path: |
+            /tmp/vb-aux-alias-test/results/frame.png
+            /tmp/vb-aux-alias-test/godot.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove workflow, record validation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_mask_alias.yml
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/mesh-blend-reuse-vb-aux-mask"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "removed_texture=mesh_blend_mask"
+            echo "reused_texture=VB_AUX"
+            echo "runtime=forward_plus-lavapipe"
+          } > .github/build-status/mesh-blend-reuse-vb-aux-mask.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Reuse packed VB_AUX as the Mesh Blend mask"
+          git push origin HEAD:opt/mesh-blend-reuse-vb-aux-mask
