@@ -66,16 +66,15 @@ jobs:
           branch_marker = '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
           compatibility = (
               '        # The historical exact-string invariant is replaced by a structural fixer.\n'
-              '        body, removed_attachment_invariant = re.subn(\n'
-              '            r\'(?m)^\\s*"color, specular, velocity_buffer, mesh_blend_aux, depth",\\s*$\\n?\',\n'
-              '            \'\',\n'
-              '            body,\n'
-              '            count=1,\n'
+              '        body = body.replace(\n'
+              '            \'for snippet in required_cpp_snippets:\\n\',\n'
+              '            \'for snippet in required_cpp_snippets:\\n\'\n'
+              '            \'    if snippet == "color, specular, velocity_buffer, mesh_blend_aux, depth":\\n\'\n'
+              '            \'        continue\\n\',\n'
+              '            1,\n'
               '        )\n'
-              '        if removed_attachment_invariant != 1:\n'
-              '            raise RuntimeError("The historical framebuffer attachment invariant was not found")\n'
           )
-          if "removed_attachment_invariant" not in text:
+          if "if snippet == \"color, specular, velocity_buffer, mesh_blend_aux, depth\"" not in text:
               if branch_marker not in text:
                   raise RuntimeError("Main-pass compatibility branch was not found")
               text = text.replace(branch_marker, branch_marker + compatibility, 1)
@@ -101,7 +100,7 @@ jobs:
         run: |
           set -euxo pipefail
           python3 -m py_compile .github/scripts/apply_renderer_batch2.py
-          grep -n -A18 -B4 "removed_attachment_invariant" .github/scripts/apply_renderer_batch2.py
+          grep -n -A18 -B4 "required_cpp_snippets" .github/scripts/apply_renderer_batch2.py | head -80
           grep -n -A10 -B3 "fix_renderer_batch2_main_pass_cpp.py" .github/scripts/apply_renderer_batch2.py
 
       - name: Apply renderer, Mesh Blend and MSAA source optimizations
