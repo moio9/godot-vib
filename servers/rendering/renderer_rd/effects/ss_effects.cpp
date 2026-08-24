@@ -31,13 +31,13 @@
 #include "ss_effects.h"
 
 #include "core/config/project_settings.h"
+#include "servers/rendering/renderer_compositor.h"
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_server_globals.h"
-#include "servers/rendering/renderer_compositor.h"
 
 using namespace RendererRD;
 
@@ -74,8 +74,8 @@ SSEffects::SSEffects() {
 			ss_effects.pipelines[i].create_compute_pipeline(ss_effects.downsample_shader.version_get_shader(ss_effects.downsample_shader_version, i));
 		}
 
-			ss_effects.gather_constants_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(SSEffectsGatherConstants));
-			SSEffectsGatherConstants gather_constants;
+		ss_effects.gather_constants_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(SSEffectsGatherConstants));
+		SSEffectsGatherConstants gather_constants;
 
 		const int sub_pass_count = 5;
 		for (int pass = 0; pass < 4; pass++) {
@@ -485,7 +485,6 @@ void SSEffects::copy_internal_texture_to_last_frame(Ref<RenderSceneBuffersRD> p_
 			}
 		}
 	}
-
 }
 
 SSEffects::~SSEffects() {
@@ -540,12 +539,12 @@ SSEffects::~SSEffects() {
 	}
 
 	{
-	// Cleanup SSGI
-	ssgi.deinterleave_pipeline.free();
-	ssgi.deinterleave_shader.version_free(ssgi.deinterleave_shader_version);
-	ssgi.downsample_pipeline.free();
-	ssgi.downsample_shader.version_free(ssgi.downsample_shader_version);
-	ssgi.pipeline.free();
+		// Cleanup SSGI
+		ssgi.deinterleave_pipeline.free();
+		ssgi.deinterleave_shader.version_free(ssgi.deinterleave_shader_version);
+		ssgi.downsample_pipeline.free();
+		ssgi.downsample_shader.version_free(ssgi.downsample_shader_version);
+		ssgi.pipeline.free();
 		ssgi.shader.version_free(ssgi.shader_version);
 		ssgi.upscale_pipeline.free();
 		ssgi.upscale_shader.version_free(ssgi.upscale_shader_version);
@@ -589,14 +588,13 @@ SSEffects::~SSEffects() {
 				RD::get_singleton()->free_rid(screen_space_shadows.history_textures[i]);
 			}
 		}
-			if (screen_space_shadows.history_dummy.is_valid()) {
-				RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
-			}
-
+		if (screen_space_shadows.history_dummy.is_valid()) {
+			RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
 		}
-
-		singleton = nullptr;
 	}
+
+	singleton = nullptr;
+}
 
 /* SS Downsampler */
 
@@ -831,7 +829,6 @@ void SSEffects::ssil_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_EDGES, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, 4 * view_count);
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_IMPORTANCE_MAP, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size);
 	p_render_buffers->create_texture(RB_SCOPE_SSIL, RB_IMPORTANCE_PONG, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size);
-
 }
 
 void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_render_buffers, SSILRenderBuffers &p_ssil_buffers, uint32_t p_view, RID p_normal_buffer, const Projection &p_projection, const Projection &p_last_projection, const SSILSettings &p_settings) {
@@ -1133,7 +1130,7 @@ void SSEffects::screen_space_indirect_lighting(Ref<RenderSceneBuffersRD> p_rende
 		RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssil.pipelines[interleave_pipeline].get_rid());
 
 		RID final = p_render_buffers->get_texture_slice(RB_SCOPE_SSIL, RB_FINAL, p_view, 0);
-		
+
 		RD::Uniform u_destination(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ final }));
 		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_destination), 0);
 
@@ -1384,44 +1381,44 @@ void SSEffects::screen_space_global_illumination(Ref<RenderSceneBuffersRD> p_ren
 		RD::get_singleton()->compute_list_dispatch_threads(compute_list, half_size.x, half_size.y, 1);
 		RD::get_singleton()->compute_list_add_barrier(compute_list);
 
-			if (p_settings.multirez && ssgi_input_2.is_valid()) {
-				RID downsample_shader = ssgi.downsample_shader.version_get_shader(ssgi.downsample_shader_version, 0);
-				RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssgi.downsample_pipeline.get_rid());
-				SSGIDeinterleavePushConstant downsample_push_constant = {};
+		if (p_settings.multirez && ssgi_input_2.is_valid()) {
+			RID downsample_shader = ssgi.downsample_shader.version_get_shader(ssgi.downsample_shader_version, 0);
+			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssgi.downsample_pipeline.get_rid());
+			SSGIDeinterleavePushConstant downsample_push_constant = {};
 
-				RD::Uniform u_down_input(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input }));
-				RD::Uniform u_down_output(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_2 }));
-				RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input, u_down_output), 0);
+			RD::Uniform u_down_input(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input }));
+			RD::Uniform u_down_output(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_2 }));
+			RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input, u_down_output), 0);
+			RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
+			RD::get_singleton()->compute_list_dispatch_threads(compute_list, (half_size.x + 1) / 2, (half_size.y + 1) / 2, 1);
+			RD::get_singleton()->compute_list_add_barrier(compute_list);
+
+			if (p_settings.multirez_levels >= 4 && ssgi_input_4.is_valid()) {
+				Size2i size_2 = Size2i((half_size.x + 1) / 2, (half_size.y + 1) / 2);
+				RD::Uniform u_down_input_2(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input_2 }));
+				RD::Uniform u_down_output_4(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_4 }));
+				RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input_2, u_down_output_4), 0);
 				RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
-				RD::get_singleton()->compute_list_dispatch_threads(compute_list, (half_size.x + 1) / 2, (half_size.y + 1) / 2, 1);
+				RD::get_singleton()->compute_list_dispatch_threads(compute_list, (size_2.x + 1) / 2, (size_2.y + 1) / 2, 1);
 				RD::get_singleton()->compute_list_add_barrier(compute_list);
-
-				if (p_settings.multirez_levels >= 4 && ssgi_input_4.is_valid()) {
-					Size2i size_2 = Size2i((half_size.x + 1) / 2, (half_size.y + 1) / 2);
-					RD::Uniform u_down_input_2(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input_2 }));
-					RD::Uniform u_down_output_4(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_4 }));
-					RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input_2, u_down_output_4), 0);
-					RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
-					RD::get_singleton()->compute_list_dispatch_threads(compute_list, (size_2.x + 1) / 2, (size_2.y + 1) / 2, 1);
-					RD::get_singleton()->compute_list_add_barrier(compute_list);
 
 				if (p_settings.multirez_levels >= 8 && ssgi_input_8.is_valid()) {
 					Size2i size_4 = Size2i((size_2.x + 1) / 2, (size_2.y + 1) / 2);
-						RD::Uniform u_down_input_4(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input_4 }));
-						RD::Uniform u_down_output_8(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_8 }));
-						RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input_4, u_down_output_8), 0);
-						RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
-						RD::get_singleton()->compute_list_dispatch_threads(compute_list, (size_4.x + 1) / 2, (size_4.y + 1) / 2, 1);
-						RD::get_singleton()->compute_list_add_barrier(compute_list);
+					RD::Uniform u_down_input_4(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input_4 }));
+					RD::Uniform u_down_output_8(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_8 }));
+					RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input_4, u_down_output_8), 0);
+					RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
+					RD::get_singleton()->compute_list_dispatch_threads(compute_list, (size_4.x + 1) / 2, (size_4.y + 1) / 2, 1);
+					RD::get_singleton()->compute_list_add_barrier(compute_list);
 
 					if (p_settings.multirez_levels >= 16 && ssgi_input_16.is_valid()) {
 						Size2i size_8 = Size2i((size_4.x + 1) / 2, (size_4.y + 1) / 2);
-							RD::Uniform u_down_input_8(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input_8 }));
-							RD::Uniform u_down_output_16(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_16 }));
-							RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input_8, u_down_output_16), 0);
-							RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
-							RD::get_singleton()->compute_list_dispatch_threads(compute_list, (size_8.x + 1) / 2, (size_8.y + 1) / 2, 1);
-							RD::get_singleton()->compute_list_add_barrier(compute_list);
+						RD::Uniform u_down_input_8(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, ssgi_input_8 }));
+						RD::Uniform u_down_output_16(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ ssgi_input_16 }));
+						RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(downsample_shader, 0, u_down_input_8, u_down_output_16), 0);
+						RD::get_singleton()->compute_list_set_push_constant(compute_list, &downsample_push_constant, sizeof(SSGIDeinterleavePushConstant));
+						RD::get_singleton()->compute_list_dispatch_threads(compute_list, (size_8.x + 1) / 2, (size_8.y + 1) / 2, 1);
+						RD::get_singleton()->compute_list_add_barrier(compute_list);
 					}
 				}
 			}
@@ -1501,34 +1498,34 @@ void SSEffects::screen_space_global_illumination(Ref<RenderSceneBuffersRD> p_ren
 		ssgi.push_constant.multirez[3] = 0.0f;
 		ssgi.push_constant.multirez_dist[0] = p_settings.multirez_dist_2;
 		ssgi.push_constant.multirez_dist[1] = p_settings.multirez_dist_4;
-			ssgi.push_constant.multirez_dist[2] = p_settings.multirez_dist_8;
-			ssgi.push_constant.multirez_dist[3] = p_settings.multirez_dist_16;
-			int quality = GLOBAL_GET("rendering/environment/ssgi/sample_quality");
-			int factor = 4;
-			if (quality <= 0) {
-				factor = 3;
-			} else if (quality == 1) {
-				factor = 4;
-			} else if (quality == 2) {
-				factor = 5;
-			} else {
-				factor = 6;
-			}
-			int sample_range = int(GLOBAL_GET("rendering/environment/ssgi/sample_range"));
-			sample_range = MAX(sample_range, 1);
-			int sample_count = MAX(sample_range * factor, 12);
-			ssgi.push_constant.sample_params[0] = sample_count;
-			if (quality <= 0) {
-				ssgi.push_constant.sample_params[1] = 48;
-			} else if (quality == 1) {
-				ssgi.push_constant.sample_params[1] = 64;
-			} else if (quality == 2) {
-				ssgi.push_constant.sample_params[1] = 80;
-			} else {
-				ssgi.push_constant.sample_params[1] = 128;
-			}
-			ssgi.push_constant.sample_params[2] = quality;
-			ssgi.push_constant.sample_params[3] = 0;
+		ssgi.push_constant.multirez_dist[2] = p_settings.multirez_dist_8;
+		ssgi.push_constant.multirez_dist[3] = p_settings.multirez_dist_16;
+		int quality = GLOBAL_GET("rendering/environment/ssgi/sample_quality");
+		int factor = 4;
+		if (quality <= 0) {
+			factor = 3;
+		} else if (quality == 1) {
+			factor = 4;
+		} else if (quality == 2) {
+			factor = 5;
+		} else {
+			factor = 6;
+		}
+		int sample_range = int(GLOBAL_GET("rendering/environment/ssgi/sample_range"));
+		sample_range = MAX(sample_range, 1);
+		int sample_count = MAX(sample_range * factor, 12);
+		ssgi.push_constant.sample_params[0] = sample_count;
+		if (quality <= 0) {
+			ssgi.push_constant.sample_params[1] = 48;
+		} else if (quality == 1) {
+			ssgi.push_constant.sample_params[1] = 64;
+		} else if (quality == 2) {
+			ssgi.push_constant.sample_params[1] = 80;
+		} else {
+			ssgi.push_constant.sample_params[1] = 128;
+		}
+		ssgi.push_constant.sample_params[2] = quality;
+		ssgi.push_constant.sample_params[3] = 0;
 		{
 			const float jitter_scale = float(GLOBAL_GET("rendering/environment/ssgi/jitter_scale")) * 0.5f;
 			static const float jitter_sequence[8][2] = {
@@ -1680,23 +1677,23 @@ void SSEffects::screen_space_global_illumination(Ref<RenderSceneBuffersRD> p_ren
 			u_temporal_history.append_id(default_sampler);
 			u_temporal_history.append_id(ssgi_history);
 
-		RD::Uniform u_temporal_depth;
-		u_temporal_depth.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-		u_temporal_depth.binding = 2;
-		u_temporal_depth.append_id(nearest_sampler);
-		u_temporal_depth.append_id(depth_texture);
+			RD::Uniform u_temporal_depth;
+			u_temporal_depth.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+			u_temporal_depth.binding = 2;
+			u_temporal_depth.append_id(nearest_sampler);
+			u_temporal_depth.append_id(depth_texture);
 
-		RD::Uniform u_temporal_normal;
-		u_temporal_normal.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-		u_temporal_normal.binding = 3;
-		u_temporal_normal.append_id(nearest_sampler);
-		u_temporal_normal.append_id(p_normal_buffer);
+			RD::Uniform u_temporal_normal;
+			u_temporal_normal.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+			u_temporal_normal.binding = 3;
+			u_temporal_normal.append_id(nearest_sampler);
+			u_temporal_normal.append_id(p_normal_buffer);
 
-		RD::Uniform u_temporal_velocity;
-		u_temporal_velocity.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-		u_temporal_velocity.binding = 4;
-		u_temporal_velocity.append_id(nearest_sampler);
-		u_temporal_velocity.append_id(velocity_texture);
+			RD::Uniform u_temporal_velocity;
+			u_temporal_velocity.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+			u_temporal_velocity.binding = 4;
+			u_temporal_velocity.append_id(nearest_sampler);
+			u_temporal_velocity.append_id(velocity_texture);
 
 			RD::Uniform u_temporal_output;
 			u_temporal_output.uniform_type = RD::UNIFORM_TYPE_IMAGE;
@@ -1903,13 +1900,13 @@ void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORe
 		ssao.gather_push_constant.inv_radius_near_limit = 1.0f / radius_near_limit;
 		ssao.gather_push_constant.neg_inv_radius = -1.0 / ssao.gather_push_constant.radius;
 
-	ssao.gather_push_constant.load_counter_avg_div = 9.0 / float((p_ssao_buffers.half_buffer_width) * (p_ssao_buffers.half_buffer_height) * 255);
-	ssao.gather_push_constant.adaptive_sample_limit = ssao_adaptive_target;
+		ssao.gather_push_constant.load_counter_avg_div = 9.0 / float((p_ssao_buffers.half_buffer_width) * (p_ssao_buffers.half_buffer_height) * 255);
+		ssao.gather_push_constant.adaptive_sample_limit = ssao_adaptive_target;
 
-	ssao.gather_push_constant.detail_intensity = p_settings.detail;
-	ssao.gather_push_constant.quality = MAX(0, ssao_quality - 1);
-	ssao.gather_push_constant.size_multiplier = ssao_half_size ? 2 : 1;
-	ssao.gather_push_constant.flags[0] = float(p_settings.vb_mode);
+		ssao.gather_push_constant.detail_intensity = p_settings.detail;
+		ssao.gather_push_constant.quality = MAX(0, ssao_quality - 1);
+		ssao.gather_push_constant.size_multiplier = ssao_half_size ? 2 : 1;
+		ssao.gather_push_constant.flags[0] = float(p_settings.vb_mode);
 
 		// We are using our uniform cache so our uniform sets are automatically freed when our textures are freed.
 		// It also ensures that we're reusing the right cached entry in a multiview situation without us having to
