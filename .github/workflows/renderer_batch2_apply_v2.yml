@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: renderer-batch2-driver
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply-build-commit:
