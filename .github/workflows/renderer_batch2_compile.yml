@@ -1,0 +1,95 @@
+name: Compile consolidated renderer optimizations
+
+on:
+  pull_request:
+    branches:
+      - "4.7"
+    paths:
+      - ".github/workflows/renderer_batch2_compile.yml"
+      - "servers/rendering/**"
+      - "drivers/gles3/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: renderer-batch2-linux-compile
+  cancel-in-progress: true
+
+jobs:
+  compile-linux-forward-plus:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'opt/renderer-batch2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v7
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+
+      - name: Verify consolidated renderer source exists
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f .github/build-status/renderer-batch2-source.txt
+          grep -q '^source_patches=applied$' .github/build-status/renderer-batch2-source.txt
+          grep -q 'p_gtid.y % 8 == depth_array_offset.y' servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -q 'p_gtid.y % 16 == depth_array_offset.y' servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -q 'const bool mesh_blend_main_pass = _mesh_blend_enabled()' servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          grep -q 'mesh_blend_requires_visibility_pass' servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          grep -q 'COLOR_PASS_FLAG_MESH_BLEND' servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h
+          grep -Eq 'frag_mesh_blend_aux|pack_mesh_blend_aux|MESH_BLEND_MAIN_PASS_OUTPUT' servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          grep -q 'MESH_BLEND_GROUP' servers/rendering/shader_types.cpp
+          if grep -R -n 'RB_TEX_MESH_BLEND_MASK\|USE_VISBUFFER_FOR_MESH_BLEND' servers/rendering; then
+            echo '::error::Deprecated Mesh Blend path remains'
+            exit 1
+          fi
+          git diff --check
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux Forward+ editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Smoke-test compiled editor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          binary="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor*' -perm -111 | head -n 1)"
+          test -n "$binary"
+          "$binary" --headless --version
+
+      - name: Mark Linux compile as passed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/build-status/renderer-batch2-source.txt')
+          text = path.read_text(encoding='utf-8')
+          if 'linux_compile=pending' in text:
+              text = text.replace('linux_compile=pending', 'linux_compile=passed', 1)
+          elif 'linux_compile=passed' not in text:
+              text += '\nlinux_compile=passed\n'
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/build-status/renderer-batch2-source.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Mark renderer optimization Linux build as passed"
+            git push origin HEAD:opt/renderer-batch2
+          fi
