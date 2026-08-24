@@ -292,7 +292,10 @@ bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_need_full_visibilit
 		}
 	}
 
-	return has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);
+	const bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
+	const bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+	const bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+	return visibility_ready && aux_ready && depth_ready;
 }
 
 void RenderSceneBuffersRD::set_use_debanding(bool p_use_debanding) {
