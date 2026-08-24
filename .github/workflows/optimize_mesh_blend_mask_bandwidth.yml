@@ -1,0 +1,217 @@
+name: Optimize Mesh Blend mask bandwidth
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-mask-bandwidth
+    paths:
+      - .github/workflows/optimize_mesh_blend_mask_bandwidth.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-mask-bandwidth
+          fetch-depth: 0
+
+      - name: Remove the unused Visibility ID fetch from the mask pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          shader = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = shader.read_text(encoding="utf-8")
+
+          text = text.replace(
+              "layout(rg32ui, set = 0, binding = 0) uniform readonly uimage2D vb_vis;\n",
+              "",
+              1,
+          )
+          replacements = {
+              "layout(rg16f, set = 0, binding = 1) uniform readonly image2D vb_aux;":
+                  "layout(rg16f, set = 0, binding = 0) uniform readonly image2D vb_aux;",
+              "layout(rg16f, set = 0, binding = 2) uniform writeonly image2D mesh_mask;":
+                  "layout(rg16f, set = 0, binding = 1) uniform writeonly image2D mesh_mask;",
+              "layout(rg32ui, set = 0, binding = 3) uniform writeonly uimage2D mesh_edges;":
+                  "layout(rg32ui, set = 0, binding = 2) uniform writeonly uimage2D mesh_edges;",
+              "layout(set = 0, binding = 4) uniform sampler2D mesh_depth;":
+                  "layout(set = 0, binding = 3) uniform sampler2D mesh_depth;",
+          }
+          for old, new in replacements.items():
+              if old in text:
+                  text = text.replace(old, new, 1)
+
+          text = re.sub(
+              r"\n[\t ]*uvec4 ids = imageLoad\(vb_vis, sample_pixel\);",
+              "",
+              text,
+              count=1,
+          )
+
+          old_block = '''\tif (ids.x != 0u) {
+\t\tfloat raw_weight = aux.x;
+\t\tfloat weight = min(raw_weight, 1.0);
+\t\tfloat id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
+\t\tvalue = vec2(id_quantized, weight);
+\t}'''
+          new_block = '''\tfloat id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
+\tif (id_quantized > 0.0) {
+\t\tfloat raw_weight = aux.x;
+\t\tfloat weight = min(raw_weight, 1.0);
+\t\tvalue = vec2(id_quantized, weight);
+\t}'''
+          if old_block in text:
+              text = text.replace(old_block, new_block, 1)
+          elif "ids.x != 0u" in text:
+              raise RuntimeError("The Visibility occupancy block changed shape and was not patched safely")
+
+          if "vb_vis" in text or "ids.x" in text:
+              raise RuntimeError("The mask shader still references the full Visibility ID buffer")
+          required_shader = (
+              "binding = 0) uniform readonly image2D vb_aux",
+              "binding = 1) uniform writeonly image2D mesh_mask",
+              "binding = 2) uniform writeonly uimage2D mesh_edges",
+              "binding = 3) uniform sampler2D mesh_depth",
+              "if (id_quantized > 0.0)",
+          )
+          for needle in required_shader:
+              if needle not in text:
+                  raise RuntimeError(f"Mask shader is missing: {needle}")
+          shader.write_text(text, encoding="utf-8")
+
+          header = Path("servers/rendering/renderer_rd/effects/mesh_blend.h")
+          text = header.read_text(encoding="utf-8")
+          text = text.replace(
+              "void generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth,",
+              "void generate_mask(RID p_vb_aux, RID p_vb_depth,",
+          )
+          if "generate_mask(RID p_vb_vis" in text:
+              raise RuntimeError("MeshBlend header still exposes p_vb_vis")
+          header.write_text(text, encoding="utf-8")
+
+          cpp = Path("servers/rendering/renderer_rd/effects/mesh_blend.cpp")
+          text = cpp.read_text(encoding="utf-8")
+          text = text.replace(
+              "void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth,",
+              "void MeshBlend::generate_mask(RID p_vb_aux, RID p_vb_depth,",
+          )
+          text = re.sub(
+              r"\n\tRD::Uniform u_vis\(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>\(\{ p_vb_vis \}\)\);",
+              "",
+              text,
+              count=1,
+          )
+          uniform_replacements = {
+              "RD::Uniform u_aux(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ p_vb_aux }));":
+                  "RD::Uniform u_aux(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ p_vb_aux }));",
+              "RD::Uniform u_mask(RD::UNIFORM_TYPE_IMAGE, 2, Vector<RID>({ p_mask }));":
+                  "RD::Uniform u_mask(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ p_mask }));",
+              "RD::Uniform u_edge(RD::UNIFORM_TYPE_IMAGE, 3, Vector<RID>({ p_edge_dest }));":
+                  "RD::Uniform u_edge(RD::UNIFORM_TYPE_IMAGE, 2, Vector<RID>({ p_edge_dest }));",
+              "RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ sampler_nearest, p_vb_depth }));":
+                  "RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ sampler_nearest, p_vb_depth }));",
+          }
+          for old, new in uniform_replacements.items():
+              if old in text:
+                  text = text.replace(old, new, 1)
+          text = text.replace(
+              "uniform_cache->get_cache(shader_rid, 0, u_vis, u_aux, u_mask, u_edge, u_depth)",
+              "uniform_cache->get_cache(shader_rid, 0, u_aux, u_mask, u_edge, u_depth)",
+              1,
+          )
+          if "p_vb_vis" in text or "u_vis" in text:
+              raise RuntimeError("MeshBlend::generate_mask still binds the full Visibility ID buffer")
+          cpp.write_text(text, encoding="utf-8")
+
+          # Remove the first Visibility texture argument from every MeshBlend::generate_mask call.
+          patched_calls = 0
+          for path in Path("servers/rendering").rglob("*.cpp"):
+              source = path.read_text(encoding="utf-8")
+              updated, count = re.subn(
+                  r"(mesh_blend(?:_effect)?->generate_mask\()\s*vb_vis\s*,\s*",
+                  r"\1",
+                  source,
+              )
+              if count:
+                  path.write_text(updated, encoding="utf-8")
+                  patched_calls += count
+          if patched_calls == 0:
+              # Accommodate a direct object call while still requiring an exact first argument.
+              for path in Path("servers/rendering").rglob("*.cpp"):
+                  source = path.read_text(encoding="utf-8")
+                  updated, count = re.subn(
+                      r"(\.generate_mask\()\s*vb_vis\s*,\s*",
+                      r"\1",
+                      source,
+                  )
+                  if count:
+                      path.write_text(updated, encoding="utf-8")
+                      patched_calls += count
+          if patched_calls == 0:
+              raise RuntimeError("No Mesh Blend generate_mask call using vb_vis was found")
+
+          # Ensure no declaration/call mismatch remains.
+          for path in (
+              Path("servers/rendering/renderer_rd/effects/mesh_blend.h"),
+              Path("servers/rendering/renderer_rd/effects/mesh_blend.cpp"),
+          ):
+              if "p_vb_vis" in path.read_text(encoding="utf-8"):
+                  raise RuntimeError(f"{path}: p_vb_vis remains")
+          PY
+
+          git diff --check
+
+      - name: Validate the modified compute shader
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = source.read_text(encoding="utf-8").replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
+          Path("/tmp/mesh_blend_mask.comp").write_text(text, encoding="utf-8")
+          PY
+          glslangValidator -V --target-env vulkan1.2 -S comp /tmp/mesh_blend_mask.comp
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove temporary workflow and record validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_mask_bandwidth.yml
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/mesh-blend-mask-bandwidth"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > .github/build-status/mesh-blend-mask-bandwidth.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Remove full Visibility ID fetch from Mesh Blend mask pass"
+          git push origin HEAD:opt/mesh-blend-mask-bandwidth
