@@ -1,0 +1,204 @@
+name: Apply renderer depth optimization v1 rescue
+
+on:
+  push:
+    branches:
+      - "opt/4.7.2-renderer-depth-v1"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply idempotent renderer patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_old_or_accept_new(path: str, old: str, new: str, label: str) -> bool:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if old in text:
+                  if text.count(old) != 1:
+                      raise RuntimeError(f"{label}: old pattern appears {text.count(old)} times")
+                  p.write_text(text.replace(old, new, 1), encoding="utf-8")
+                  print(f"patched: {label}")
+                  return True
+              if new in text:
+                  print(f"already patched: {label}")
+                  return False
+              print(f"not present in this upstream revision, skipped: {label}")
+              return False
+
+          depth_shader = "servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl"
+          replace_old_or_accept_new(
+              depth_shader,
+              "still_alive = p_gtid.x % 8 == depth_array_offset.x && depth_array_offset.y % 8 == depth_array_offset.y;",
+              "still_alive = p_gtid.x % 8 == depth_array_offset.x && p_gtid.y % 8 == depth_array_offset.y;",
+              "depth mip 8x8 lane predicate",
+          )
+          replace_old_or_accept_new(
+              depth_shader,
+              "still_alive = p_gtid.x % 16 == depth_array_offset.x && depth_array_offset.y % 16 == depth_array_offset.y;",
+              "still_alive = p_gtid.x % 16 == depth_array_offset.x && p_gtid.y % 16 == depth_array_offset.y;",
+              "depth mip 16x16 lane predicate",
+          )
+
+          mask_shader = "servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl"
+          replace_old_or_accept_new(
+              mask_shader,
+              "layout(r32f, set = 0, binding = 4) uniform readonly image2D mesh_depth;",
+              "layout(set = 0, binding = 4) uniform sampler2D mesh_depth;",
+              "Mesh Blend sampled depth declaration",
+          )
+          replace_old_or_accept_new(
+              mask_shader,
+              "float depth_value = imageLoad(mesh_depth, sample_pixel).x;",
+              "float depth_value = texelFetch(mesh_depth, sample_pixel, 0).x;",
+              "Mesh Blend sampled depth load",
+          )
+
+          mesh_path = Path("servers/rendering/renderer_rd/effects/mesh_blend.cpp")
+          mesh_text = mesh_path.read_text(encoding="utf-8")
+          begin = mesh_text.find("void MeshBlend::generate_mask(")
+          end = mesh_text.find("void MeshBlend::jump_flood(", begin)
+          if begin < 0 or end < 0:
+              raise RuntimeError("Unable to isolate MeshBlend::generate_mask")
+          prefix, function, suffix = mesh_text[:begin], mesh_text[begin:end], mesh_text[end:]
+
+          if "MaterialStorage *material_storage = MaterialStorage::get_singleton();" not in function:
+              needle = "\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n"
+              if function.count(needle) != 1:
+                  raise RuntimeError("Unable to insert MaterialStorage in generate_mask")
+              insertion = (
+                  needle
+                  + "\tMaterialStorage *material_storage = MaterialStorage::get_singleton();\n"
+                  + "\tERR_FAIL_NULL(material_storage);\n\n"
+                  + "\tRID sampler_nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);\n"
+              )
+              function = function.replace(needle, insertion, 1)
+
+          old_uniform = "\tRD::Uniform u_depth(RD::UNIFORM_TYPE_IMAGE, 4, Vector<RID>({ p_vb_depth }));"
+          new_uniform = "\tRD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ sampler_nearest, p_vb_depth }));"
+          if old_uniform in function:
+              if function.count(old_uniform) != 1:
+                  raise RuntimeError("Unexpected duplicate depth uniform in generate_mask")
+              function = function.replace(old_uniform, new_uniform, 1)
+          elif new_uniform not in function:
+              raise RuntimeError("Unable to find Mesh Blend depth uniform")
+
+          mesh_path.write_text(prefix + function + suffix, encoding="utf-8")
+
+          # Reuse the resolved main depth for the mask compute pass. This does
+          # not change MSAA depth testing: the VB raster pass keeps its separate
+          # MSAA-compatible depth attachment when MSAA is enabled.
+          forward_path = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp")
+          forward = forward_path.read_text(encoding="utf-8")
+
+          force_block = (
+              "\tif (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {\n"
+              "\t\tuse_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.\n"
+              "\t}\n"
+          )
+          if force_block in forward:
+              forward = forward.replace(force_block, "", 1)
+
+          if "RID vb_depth" in forward and "RB_TEX_VB_DEPTH" in forward:
+              slice_pattern = re.compile(
+                  r"RID vb_depth\s*=\s*(?P<rb>[A-Za-z_][A-Za-z0-9_]*)->get_texture_slice\(\s*RB_SCOPE_BUFFERS\s*,\s*RB_TEX_VB_DEPTH\s*,\s*(?P<view>[A-Za-z_][A-Za-z0-9_]*)\s*,\s*0\s*\);"
+              )
+              plain_pattern = re.compile(
+                  r"RID vb_depth\s*=\s*(?P<rb>[A-Za-z_][A-Za-z0-9_]*)->get_texture\(\s*RB_SCOPE_BUFFERS\s*,\s*RB_TEX_VB_DEPTH\s*\);"
+              )
+              match = slice_pattern.search(forward)
+              if match:
+                  replacement = f"RID vb_depth = {match.group('rb')}->get_depth_texture({match.group('view')});"
+                  forward = forward[:match.start()] + replacement + forward[match.end():]
+              else:
+                  match = plain_pattern.search(forward)
+                  if match:
+                      replacement = f"RID vb_depth = {match.group('rb')}->get_depth_texture();"
+                      forward = forward[:match.start()] + replacement + forward[match.end():]
+
+          copy_block = (
+              "\n\t// When VB depth is a separate texture, copy depth from the main depth after the pass.\n"
+              "\tif (!use_main_depth_for_vb) {\n"
+              "\t\tRendererSceneRenderRD *rsrr = RendererSceneRenderRD::get_singleton();\n"
+              "\t\trsrr->copy_depth_to_vb_depth(rb, p_render_data);\n"
+              "\t}\n"
+          )
+          if copy_block in forward and "RID vb_depth = " in forward and "get_depth_texture" in forward:
+              forward = forward.replace(copy_block, "\n", 1)
+
+          forward_path.write_text(forward, encoding="utf-8")
+
+          # Add Termux PR validation once, preserving its existing push trigger.
+          termux = Path(".github/workflows/termux_build.yml")
+          termux_text = termux.read_text(encoding="utf-8")
+          if "  pull_request:\n    branches:\n      - \"4.7\"" not in termux_text:
+              needle = "on:\n  workflow_dispatch:\n  push:\n"
+              replacement = (
+                  "on:\n"
+                  "  workflow_dispatch:\n"
+                  "  pull_request:\n"
+                  "    branches:\n"
+                  "      - \"4.7\"\n"
+                  "    paths:\n"
+                  "      - \"core/**\"\n"
+                  "      - \"drivers/**\"\n"
+                  "      - \"editor/**\"\n"
+                  "      - \"main/**\"\n"
+                  "      - \"modules/**\"\n"
+                  "      - \"platform/**\"\n"
+                  "      - \"scene/**\"\n"
+                  "      - \"servers/**\"\n"
+                  "      - \"thirdparty/**\"\n"
+                  "      - \"SConstruct\"\n"
+                  "      - \"version.py\"\n"
+                  "      - \".github/workflows/termux_build.yml\"\n"
+                  "  push:\n"
+              )
+              if needle not in termux_text:
+                  raise RuntimeError("Unable to add Termux pull_request trigger")
+              termux.write_text(termux_text.replace(needle, replacement, 1), encoding="utf-8")
+
+          for temporary in (
+              ".github/workflows/apply_renderer_depth_v1.yml",
+              ".github/workflows/apply_mesh_blend_main_depth.yml",
+              ".github/workflows/apply_renderer_depth_v1_rescue.yml",
+          ):
+              Path(temporary).unlink(missing_ok=True)
+          Path("zz_permission_probe.tmp").unlink(missing_ok=True)
+          PY
+
+      - name: Validate source edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -n "sampler2D mesh_depth" servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
+          grep -n "SAMPLER_WITH_TEXTURE, 4" servers/rendering/renderer_rd/effects/mesh_blend.cpp
+          grep -n "RID vb_depth = .*get_depth_texture" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          if grep -q "Mesh blend needs STORAGE usage" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp; then
+            exit 1
+          fi
+
+      - name: Commit final patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Optimize shared depth prep and Mesh Blend depth reuse"
+          git push origin HEAD
