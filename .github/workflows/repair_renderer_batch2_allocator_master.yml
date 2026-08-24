@@ -1,12 +1,13 @@
-# trigger: allocator-repair-2
 name: One-shot renderer allocator repair
 
 on:
-  push:
+  pull_request_target:
     branches:
-      - "master"
+      - "4.7"
+    types:
+      - synchronize
     paths:
-      - ".github/workflows/repair_renderer_batch2_allocator_master.yml"
+      - ".github/build-status/renderer-batch2-source.txt"
   workflow_dispatch:
 
 permissions:
@@ -18,6 +19,7 @@ concurrency:
 
 jobs:
   repair-and-compile:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'opt/renderer-batch2')
     runs-on: ubuntu-24.04
     timeout-minutes: 240
 
