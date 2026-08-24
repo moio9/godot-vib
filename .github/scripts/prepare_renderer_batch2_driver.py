@@ -32,7 +32,6 @@ def main() -> None:
         compact_addition,
         "grouped compact visibility allocator compatibility",
     )
-    # Add a stable guard comment after insertion so repeated runs are idempotent.
     text = text.replace(
         compact_marker + compact_addition,
         compact_marker
@@ -42,7 +41,7 @@ def main() -> None:
     )
 
     patch_marker = '    patch_path = Path("/tmp/renderer-source-patch.py")\n'
-    compatibility = r'''    # Godot 4.7.2 compatibility for validated renderer patch programs.
+    compatibility = r"""    # Godot 4.7.2 compatibility for validated renderer patch programs.
     if branch == "opt/mesh-blend-rg16-edges":
         body = body.replace(
             'if "RB_TEX_VB_VIS" in text and "RD::DATA_FORMAT_R32G32_UINT" in text:',
@@ -110,7 +109,7 @@ aux_path.write_text(aux_text, encoding="utf-8")
                 f"Expected one main-pass header discovery block, replaced {replacement_count}"
             )
 
-'''
+"""
     text = insert_once(
         text,
         patch_marker,
