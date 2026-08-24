@@ -1,0 +1,171 @@
+name: Consolidate validated renderer optimizations
+
+on:
+  pull_request:
+    branches:
+      - "4.7"
+    paths:
+      - ".github/workflows/renderer_batch2_apply.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: renderer-batch2-apply
+  cancel-in-progress: false
+
+jobs:
+  apply-build-commit:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'opt/renderer-batch2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v7
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 0
+
+      - name: Fetch every optimization branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Reapply validated renderer commits in dependency order
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          apply_by_subject() {
+            local subject="$1"
+            local sha
+            sha="$(git log --all --fixed-strings --grep="$subject" --format='%H' -n 1)"
+            if [[ -z "$sha" ]]; then
+              echo "::error::Validated commit was not found: $subject"
+              exit 1
+            fi
+
+            echo
+            echo "=== $subject ==="
+            git show --no-patch --oneline "$sha"
+            git show --stat --oneline "$sha"
+
+            # These commits are already part of the historical graph, but later
+            # sync/merge commits replaced portions of their source result.
+            # Cherry-picking reapplies the validated patch; already-present
+            # changes are dropped cleanly.
+            git cherry-pick --empty=drop "$sha"
+          }
+
+          apply_by_subject "Optimize screen-space depth prep and Mesh Blend depth sampling"
+          apply_by_subject "Reuse main resolved depth for Mesh Blend"
+          apply_by_subject "Add per-pixel Mesh Blend outputs to spatial shaders"
+          apply_by_subject "Remove full Visibility ID fetch from Mesh Blend mask pass"
+          apply_by_subject "Use R8 Visibility attachment for Mesh Blend outside debug mode"
+          apply_by_subject "Bound Mesh Blend jump flood by pixel-space radius"
+          apply_by_subject "Use RG16 edge coordinates for Mesh Blend jump flood"
+          apply_by_subject "Pack Mesh Blend mask into R16_UINT"
+          apply_by_subject "Pack rasterized Mesh Blend VB_AUX into R16_UINT"
+          apply_by_subject "Reuse packed VB_AUX as the Mesh Blend mask"
+          apply_by_subject "Write Mesh Blend metadata in the no-MSAA opaque pass"
+
+      - name: Remove accidentally tracked generated shader headers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mapfile -t generated < <(git ls-files -ci --exclude-standard | grep -E '\.gen\.' || true)
+          if (( ${#generated[@]} > 0 )); then
+            printf 'Removing tracked generated files:\n'
+            printf '  %s\n' "${generated[@]}"
+            git rm -f -- "${generated[@]}"
+          fi
+          bash ./misc/scripts/gitignore_check.sh
+
+      - name: Verify optimized source invariants
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -R 'built_ins\["MESH_BLEND"\]' -n servers/rendering/shader_types.cpp
+          grep -R 'actions.renames\["MESH_BLEND"\]' -n servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
+          grep -R 'DATA_FORMAT_R16_UINT' -n servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          grep -R 'DATA_FORMAT_R16G16_UINT' -n servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          grep -R 'frag_mesh_blend_aux' -n servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          grep -R 'p_gtid.y % 8' -n servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -R 'p_gtid.y % 16' -n servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          if grep -R 'RB_TEX_MESH_BLEND_MASK' -n servers/rendering/renderer_rd; then
+            echo "::error::Duplicate full-resolution Mesh Blend mask still exists"
+            exit 1
+          fi
+          git diff --check
+
+      - name: Install shader validation tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools spirv-tools
+
+      - name: Validate standalone Mesh Blend shaders
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for name in ("mesh_blend_mask", "mesh_blend_jump_flood"):
+              source = Path(f"servers/rendering/renderer_rd/shaders/effects/{name}.glsl")
+              text = source.read_text(encoding="utf-8")
+              text = text.replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
+              Path(f"/tmp/{name}.comp").write_text(text, encoding="utf-8")
+
+          blend = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_blend.glsl").read_text(encoding="utf-8")
+          fragment = blend.split("#[fragment]", 1)[1].replace("#VERSION_DEFINES", "", 1)
+          Path("/tmp/mesh_blend_blend.frag").write_text(fragment, encoding="utf-8")
+          PY
+
+          for shader in /tmp/mesh_blend_*.comp; do
+            glslangValidator -V --target-env vulkan1.2 -S comp "$shader" -o "${shader%.comp}.spv"
+            spirv-val --target-env vulkan1.2 "${shader%.comp}.spv"
+          done
+          glslangValidator -V --target-env vulkan1.2 -S frag /tmp/mesh_blend_blend.frag -o /tmp/mesh_blend_blend.spv
+          spirv-val --target-env vulkan1.2 /tmp/mesh_blend_blend.spv
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux Forward+ editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Record validation and push result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f .github/workflows/renderer_batch2_apply.yml
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/renderer-batch2"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "build=linux-editor"
+            echo "msaa_status=pending-runtime-batch"
+          } > .github/build-status/renderer-batch2-compile.txt
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::No renderer changes were produced"
+            exit 1
+          fi
+          git commit -m "Consolidate validated renderer and Mesh Blend optimizations"
+          git push origin HEAD:opt/renderer-batch2
