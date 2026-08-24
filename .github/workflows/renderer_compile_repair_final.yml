@@ -1,10 +1,15 @@
 name: Repair and compile renderer batch
 
-# trigger: 2
+# trigger: 3
 on:
   push:
     branches:
       - "opt/renderer-batch2"
+    paths:
+      - ".github/workflows/renderer_compile_repair_final.yml"
+  pull_request:
+    branches:
+      - "4.7"
     paths:
       - ".github/workflows/renderer_compile_repair_final.yml"
   workflow_dispatch:
@@ -18,6 +23,7 @@ concurrency:
 
 jobs:
   repair-compile-package:
+    if: github.event_name != 'pull_request' || github.head_ref == 'opt/renderer-batch2'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
 
