@@ -57,8 +57,9 @@ jobs:
 
           path = Path(".github/scripts/apply_renderer_batch2.py")
           text = path.read_text(encoding="utf-8")
-          marker = '    elif adapter == "compact-current":\n'
-          addition = (
+
+          compact_marker = '    elif adapter == "compact-current":\n'
+          compact_addition = (
               '        body = body.replace(\n'
               '            r\'r"void ([A-Za-z0-9_:]+)::ensure_visibility_textures\',\n'
               '            r\'r"bool ([A-Za-z0-9_:]+)::ensure_visibility_textures\',\n'
@@ -68,9 +69,22 @@ jobs:
               '            r\'r"bool \\1::ensure_visibility_textures\',\n'
               '        )\n'
           )
-          if marker not in text:
+          if compact_marker not in text:
               raise RuntimeError("compact-current adapter marker was not found")
-          text = text.replace(marker, marker + addition, 1)
+          text = text.replace(compact_marker, compact_marker + compact_addition, 1)
+
+          patch_marker = '    patch_path = Path("/tmp/renderer-source-patch.py")\n'
+          rg16_addition = (
+              '    if branch == "opt/mesh-blend-rg16-edges":\n'
+              '        body = body.replace(\n'
+              '            \'if "RB_TEX_VB_VIS" in text and "RD::DATA_FORMAT_R32G32_UINT" in text:\',\n'
+              '            \'if "RB_TEX_VB_VIS" in text and ("RD::DATA_FORMAT_R32G32_UINT" in text or "RenderingDevice::DATA_FORMAT_R32G32_UINT" in text):\',\n'
+              '        )\n\n'
+          )
+          if patch_marker not in text:
+              raise RuntimeError("patch program marker was not found")
+          text = text.replace(patch_marker, rg16_addition + patch_marker, 1)
+
           path.write_text(text, encoding="utf-8")
           PY
           python3 .github/scripts/apply_renderer_batch2.py
