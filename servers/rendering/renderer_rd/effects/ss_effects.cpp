@@ -249,12 +249,15 @@ SSEffects::SSEffects() {
 			ssao_modes.push_back("\n");
 			ssao_modes.push_back("\n#define SSAO_BASE\n");
 			ssao_modes.push_back("\n#define ADAPTIVE\n");
+			ssao_modes.push_back("\n#define USE_VISIBILITY_BITMASK\n");
+			ssao_modes.push_back("\n#define SSAO_BASE\n#define USE_VISIBILITY_BITMASK\n");
+			ssao_modes.push_back("\n#define ADAPTIVE\n#define USE_VISIBILITY_BITMASK\n");
 
 			ssao.gather_shader.initialize(ssao_modes);
 
 			ssao.gather_shader_version = ssao.gather_shader.version_create();
 
-			for (int i = 0; i <= SSAO_GATHER_ADAPTIVE; i++) {
+			for (int i = 0; i <= SSAO_GATHER_ADAPTIVE_VB; i++) {
 				ssao.pipelines[pipeline].create_compute_pipeline(ssao.gather_shader.version_get_shader(ssao.gather_shader_version, i));
 				pipeline++;
 			}
@@ -1834,6 +1837,8 @@ void SSEffects::ssao_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers
 }
 
 void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORenderBuffers &p_ssao_buffers, uint32_t p_view, RID p_normal_buffer, const Projection &p_projection, const SSAOSettings &p_settings) {
+
+	const int gather_mode_offset = p_settings.vb_mode != 0 ? (SSAO_GATHER_VB - SSAO_GATHER) : 0;
 	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
 	ERR_FAIL_NULL(uniform_set_cache);
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
@@ -1857,7 +1862,7 @@ void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORe
 	memset(&ssao.gather_push_constant, 0, sizeof(SSAOGatherPushConstant));
 	/* FIRST PASS */
 
-	RID shader = ssao.gather_shader.version_get_shader(ssao.gather_shader_version, SSAO_GATHER);
+	RID shader = ssao.gather_shader.version_get_shader(ssao.gather_shader_version, SSAO_GATHER + gather_mode_offset);
 	RID default_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
 
 	RD::get_singleton()->draw_command_begin_label("Process Screen-Space Ambient Occlusion");
@@ -1955,7 +1960,7 @@ void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORe
 			u_load_counter.binding = 2;
 			u_load_counter.append_id(ssao.importance_map_load_counter);
 
-			RID shader_adaptive = ssao.gather_shader.version_get_shader(ssao.gather_shader_version, SSAO_GATHER_ADAPTIVE);
+			RID shader_adaptive = ssao.gather_shader.version_get_shader(ssao.gather_shader_version, SSAO_GATHER_ADAPTIVE + gather_mode_offset);
 			importance_map_uniform_set = uniform_set_cache->get_cache(shader_adaptive, 1, u_pong, u_importance_map, u_load_counter);
 		}
 
@@ -1967,7 +1972,7 @@ void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORe
 			ssao.importance_map_push_constant.power = p_settings.power;
 
 			//base pass
-			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssao.pipelines[SSAO_GATHER_BASE].get_rid());
+			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssao.pipelines[SSAO_GATHER_BASE + gather_mode_offset].get_rid());
 			gather_ssao(compute_list, ao_pong_slices, p_settings, true, gather_uniform_set, RID());
 
 			//generate importance map
@@ -2011,10 +2016,10 @@ void SSEffects::generate_ssao(Ref<RenderSceneBuffersRD> p_render_buffers, SSAORe
 			RD::get_singleton()->compute_list_dispatch_threads(compute_list, p_ssao_buffers.half_buffer_width, p_ssao_buffers.half_buffer_height, 1);
 			RD::get_singleton()->compute_list_add_barrier(compute_list);
 
-			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssao.pipelines[SSAO_GATHER_ADAPTIVE].get_rid());
+			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssao.pipelines[SSAO_GATHER_ADAPTIVE + gather_mode_offset].get_rid());
 			RD::get_singleton()->draw_command_end_label(); // Importance Map
 		} else {
-			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssao.pipelines[SSAO_GATHER].get_rid());
+			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, ssao.pipelines[SSAO_GATHER + gather_mode_offset].get_rid());
 		}
 
 		gather_ssao(compute_list, ao_deinterleaved_slices, p_settings, false, gather_uniform_set, importance_map_uniform_set);
