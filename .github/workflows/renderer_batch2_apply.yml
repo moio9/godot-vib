@@ -36,43 +36,136 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Reapply validated renderer commits in dependency order
+      - name: Normalize 4.7.2 source contracts used by the validated patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          scene = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          text = scene.read_text(encoding="utf-8")
+          text = text.replace(
+              "layout(location = 1) out vec4 visibility_aux_output;",
+              "layout(location = 1) out vec2 frag_visibility_aux;",
+          )
+          text = text.replace(
+              "visibility_aux_output = vec4(aux, 0.0, 0.0);",
+              "frag_visibility_aux = aux;",
+          )
+          text = text.replace("visibility_aux_output", "frag_visibility_aux")
+          if "frag_visibility_aux" not in text:
+              raise RuntimeError("Could not normalize the Forward+ Visibility auxiliary output")
+          scene.write_text(text, encoding="utf-8")
+
+          for path in (
+              Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"),
+              Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp"),
+          ):
+              text = path.read_text(encoding="utf-8")
+              text = text.replace(
+                  "ensure_visibility_textures(bool p_with_aux, bool p_create_depth)",
+                  "ensure_visibility_textures(bool p_need_aux, bool p_need_depth)",
+              )
+              text = text.replace("p_with_aux", "p_need_aux")
+              text = text.replace("p_create_depth", "p_need_depth")
+              path.write_text(text, encoding="utf-8")
+          PY
+          git diff --check
+
+      - name: Apply the validated source transformations in dependency order
         shell: bash
         run: |
           set -euxo pipefail
 
-          apply_by_subject() {
-            local subject="$1"
-            local sha
-            sha="$(git log --all --fixed-strings --grep="$subject" --format='%H' -n 1)"
-            if [[ -z "$sha" ]]; then
-              echo "::error::Validated commit was not found: $subject"
-              exit 1
-            fi
+          apply_workflow_python() {
+            local branch="$1"
+            local workflow="$2"
+            local adapter="${3:-none}"
+            local source="/tmp/source-workflow.yml"
+            local script="/tmp/source-patch.py"
 
             echo
-            echo "=== $subject ==="
-            git show --no-patch --oneline "$sha"
-            git show --stat --oneline "$sha"
+            echo "=== Applying ${branch}:${workflow} ==="
+            git show "origin/${branch}:${workflow}" > "$source"
 
-            # These commits are already part of the historical graph, but later
-            # sync/merge commits replaced portions of their source result.
-            # Cherry-picking reapplies the validated patch; already-present
-            # changes are dropped cleanly.
-            git cherry-pick --empty=drop "$sha"
+            python3 - "$source" "$script" "$adapter" <<'PYEXTRACT'
+          from pathlib import Path
+          import re
+          import sys
+          import textwrap
+
+          source = Path(sys.argv[1]).read_text(encoding="utf-8")
+          destination = Path(sys.argv[2])
+          adapter = sys.argv[3]
+
+          matches = re.findall(
+              r"python3 - <<'PY'\n(?P<body>.*?)\n[ \t]+PY(?:\n|$)",
+              source,
+              flags=re.DOTALL,
+          )
+          if not matches:
+              raise RuntimeError("No Python patch heredoc was found in the source workflow")
+
+          body = textwrap.dedent(matches[0])
+          if adapter == "compact-bool":
+              body = body.replace("void ensure_visibility_textures", "bool ensure_visibility_textures")
+              body = body.replace(
+                  'r"void ([A-Za-z0-9_:]+)::ensure_visibility_textures',
+                  'r"bool ([A-Za-z0-9_:]+)::ensure_visibility_textures',
+              )
+              body = body.replace(
+                  'r"void \\1::ensure_visibility_textures',
+                  'r"bool \\1::ensure_visibility_textures',
+              )
+
+          destination.write_text(body, encoding="utf-8")
+          PYEXTRACT
+
+            python3 "$script"
+            git diff --check
           }
 
-          apply_by_subject "Optimize screen-space depth prep and Mesh Blend depth sampling"
-          apply_by_subject "Reuse main resolved depth for Mesh Blend"
-          apply_by_subject "Add per-pixel Mesh Blend outputs to spatial shaders"
-          apply_by_subject "Remove full Visibility ID fetch from Mesh Blend mask pass"
-          apply_by_subject "Use R8 Visibility attachment for Mesh Blend outside debug mode"
-          apply_by_subject "Bound Mesh Blend jump flood by pixel-space radius"
-          apply_by_subject "Use RG16 edge coordinates for Mesh Blend jump flood"
-          apply_by_subject "Pack Mesh Blend mask into R16_UINT"
-          apply_by_subject "Pack rasterized Mesh Blend VB_AUX into R16_UINT"
-          apply_by_subject "Reuse packed VB_AUX as the Mesh Blend mask"
-          apply_by_subject "Write Mesh Blend metadata in the no-MSAA opaque pass"
+          apply_workflow_python \
+            opt/renderer-depth-final \
+            .github/workflows/finalize_renderer_depth_optimizations.yml
+
+          apply_workflow_python \
+            feature/mesh-blend-per-pixel-final \
+            .github/workflows/finalize_mesh_blend_per_pixel.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-mask-bandwidth \
+            .github/workflows/optimize_mesh_blend_mask_bandwidth.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-compact-visibility-attachment \
+            .github/workflows/optimize_mesh_blend_visibility_attachment.yml \
+            compact-bool
+
+          apply_workflow_python \
+            opt/mesh-blend-bounded-jump-flood \
+            .github/workflows/optimize_mesh_blend_jump_flood.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-rg16-edges \
+            .github/workflows/optimize_mesh_blend_edge_format.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-packed-mask \
+            .github/workflows/optimize_mesh_blend_mask_format.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-packed-vb-aux \
+            .github/workflows/optimize_mesh_blend_vb_aux.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-reuse-vb-aux-mask \
+            .github/workflows/optimize_mesh_blend_mask_alias.yml
+
+          apply_workflow_python \
+            opt/mesh-blend-main-pass-metadata \
+            .github/workflows/optimize_mesh_blend_main_pass_metadata.yml
 
       - name: Remove accidentally tracked generated shader headers
         shell: bash
@@ -97,6 +190,8 @@ jobs:
           grep -R 'frag_mesh_blend_aux' -n servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
           grep -R 'p_gtid.y % 8' -n servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
           grep -R 'p_gtid.y % 16' -n servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -R 'neighbor_pixel + ivec2(1)' -n servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
+          grep -R 'get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED' -n servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
           if grep -R 'RB_TEX_MESH_BLEND_MASK' -n servers/rendering/renderer_rd; then
             echo "::error::Duplicate full-resolution Mesh Blend mask still exists"
             exit 1
