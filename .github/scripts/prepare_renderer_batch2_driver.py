@@ -109,6 +109,12 @@ aux_path.write_text(aux_text, encoding="utf-8")
                 f"Expected one main-pass header discovery block, replaced {replacement_count}"
             )
 
+        old_fb_pattern = r'''r"(?m)^(?P<indent>[\t ]*)RID\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*[^;]*get_color_pass_fb\((?P<flags>[A-Za-z_][A-Za-z0-9_]*)\)\s*;"'''
+        new_fb_pattern = r'''r"(?m)^(?P<indent>[\t ]*)(?:RID\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*[^;]*get_color_pass_fb\((?P<flags>[A-Za-z_][A-Za-z0-9_]*)\)[^;]*;"'''
+        if old_fb_pattern not in body:
+            raise RuntimeError("The old opaque framebuffer regex was not found")
+        body = body.replace(old_fb_pattern, new_fb_pattern, 1)
+
 """
     text = insert_once(
         text,
