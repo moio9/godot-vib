@@ -1,0 +1,57 @@
+name: Apply renderer optimizations
+
+on:
+  push:
+    branches:
+      - "opt/renderer-depth-meshblend"
+    paths:
+      - "misc/scripts/apply_renderer_optimizations.py"
+      - ".github/workflows/apply_renderer_optimizations.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[renderer-opt-applied]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-meshblend
+          fetch-depth: 0
+
+      - name: Apply guarded source transformations
+        run: python3 misc/scripts/apply_renderer_optimizations.py
+
+      - name: Validate patch
+        run: |
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+
+          expected = {
+              ".github/workflows/termux_build.yml",
+              "servers/rendering/renderer_rd/effects/mesh_blend.cpp",
+              "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp",
+              "servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl",
+              "servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl",
+          }
+          actual = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).split())
+          if actual != expected:
+              raise SystemExit(f"Unexpected changed files: actual={sorted(actual)}, expected={sorted(expected)}")
+          PY
+
+      - name: Commit optimized renderer sources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            .github/workflows/termux_build.yml \
+            servers/rendering/renderer_rd/effects/mesh_blend.cpp \
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp \
+            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
+            servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          git commit -m "Optimize depth preparation and Mesh Blend depth reuse [renderer-opt-applied]"
+          git push origin HEAD:opt/renderer-depth-meshblend
