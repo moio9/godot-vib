@@ -1,0 +1,90 @@
+name: Fix Mesh Blend compute edge barrier
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/mesh-blend-edge-barrier
+    paths:
+      - .github/workflows/apply_mesh_blend_barrier_fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/mesh-blend-edge-barrier
+          fetch-depth: 0
+
+      - name: Keep all workgroup invocations alive until the shared-memory barrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = path.read_text(encoding="utf-8")
+          old = '''\tivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+\tivec2 resolution = params.resolution;
+\tif (any(greaterThanEqual(pixel, resolution))) {
+\t\treturn;
+\t}
+
+\tivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * THREADCOUNT - ivec2(TILE_BORDER);'''
+          new = '''\tivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+\tivec2 resolution = params.resolution;
+\tbool pixel_in_bounds = all(lessThan(pixel, resolution));
+
+\tivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * THREADCOUNT - ivec2(TILE_BORDER);'''
+          if old not in text:
+              raise RuntimeError("The pre-barrier early-return block was not found")
+          text = text.replace(old, new, 1)
+
+          barrier = '''\tbarrier();
+
+\tivec2 local_pixel = local_id + ivec2(TILE_BORDER);'''
+          replacement = '''\tbarrier();
+
+\tif (!pixel_in_bounds) {
+\t\treturn;
+\t}
+
+\tivec2 local_pixel = local_id + ivec2(TILE_BORDER);'''
+          if barrier not in text:
+              raise RuntimeError("The shared-memory barrier marker was not found")
+          text = text.replace(barrier, replacement, 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+          git diff --check
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/apply_mesh_blend_barrier_fix.yml
+
+      - name: Commit compiled fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Mesh Blend shared-memory barrier at viewport edges"
+          git push origin HEAD:fix/mesh-blend-edge-barrier
