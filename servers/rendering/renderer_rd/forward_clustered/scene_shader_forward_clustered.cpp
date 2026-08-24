@@ -193,6 +193,10 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 		gen_code.defines.push_back(String("#define MATERIAL_HAS_MESH_BLEND\n"));
 	}
 
+	if (uses_discard) {
+		gen_code.defines.push_back(String("#define DISCARD_USED\n"));
+	}
+
 	depth_draw = DepthDraw(depth_drawi);
 	if (depth_test_disabledi) {
 		depth_test = DEPTH_TEST_DISABLED;
@@ -871,7 +875,6 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.usage_defines["ALPHA_ANTIALIASING_EDGE"] = "#define ALPHA_ANTIALIASING_EDGE_USED\n";
 		actions.usage_defines["ALPHA_TEXTURE_COORDINATE"] = "@ALPHA_ANTIALIASING_EDGE";
 		actions.usage_defines["MESH_BLEND"] = "#define MESH_BLEND_USED\n";
-		actions.usage_defines["DISCARD"] = "#define DISCARD_USED\n";
 		actions.usage_defines["PREMUL_ALPHA_FACTOR"] = "#define PREMUL_ALPHA_USED\n";
 
 		actions.usage_defines["SSS_STRENGTH"] = "#define ENABLE_SSS\n";
