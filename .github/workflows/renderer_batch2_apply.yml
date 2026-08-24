@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          git config user.name "github-actions[bot]]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           rm -f .github/workflows/renderer_batch2_apply.yml
