@@ -88,13 +88,21 @@ jobs:
               '            str(ROOT / ".github/scripts/fix_renderer_batch2_main_pass_cpp.py"),\n'
               '        ])\n'
           )
-          if "fix_renderer_batch2_main_pass_cpp.py" not in text:
+          if "str(ROOT / \".github/scripts/fix_renderer_batch2_main_pass_cpp.py\")" not in text:
               if run_marker not in text:
                   raise RuntimeError("Patch execution marker was not found")
               text = text.replace(run_marker, run_marker + fixer_call, 1)
 
           path.write_text(text, encoding="utf-8")
           PY
+
+      - name: Validate generated optimization driver
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile .github/scripts/apply_renderer_batch2.py
+          grep -n -A18 -B4 "removed_attachment_invariant" .github/scripts/apply_renderer_batch2.py
+          grep -n -A10 -B3 "fix_renderer_batch2_main_pass_cpp.py" .github/scripts/apply_renderer_batch2.py
 
       - name: Apply renderer, Mesh Blend and MSAA source optimizations
         run: python3 .github/scripts/apply_renderer_batch2.py
