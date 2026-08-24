@@ -96,6 +96,11 @@ jobs:
               '        body = body.replace(\n'
               '            \'if "mesh_blend" in content.lower() and "mask" in content.lower() and "RD::DATA_FORMAT_R16_UINT" in content:\',\n'
               '            \'if "mesh_blend" in content.lower() and "mask" in content.lower() and ("RD::DATA_FORMAT_R16_UINT" in content or "RenderingDevice::DATA_FORMAT_R16_UINT" in content):\',\n'
+              '        )\n'
+              '    if branch == "opt/mesh-blend-reuse-vb-aux-mask":\n'
+              '        body = body.replace(\n'
+              '            r"(\\.blend\\(",\n'
+              '            r"((?:\\.|->)blend\\(",\n'
               '        )\n\n'
           )
           if patch_marker not in text:
