@@ -78,6 +78,14 @@ jobs:
                   raise RuntimeError("Main-pass compatibility branch was not found")
               text = text.replace(branch_marker, branch_marker + addition, 1)
           path.write_text(text, encoding="utf-8")
+
+          v3 = Path(".github/workflows/renderer_batch2_apply_v3.yml")
+          v3_text = v3.read_text(encoding="utf-8")
+          old_check = "          grep -R 'frag_mesh_blend_aux' -n servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl"
+          new_check = "          grep -E -R 'frag_mesh_blend_aux|pack_mesh_blend_aux|MESH_BLEND_MAIN_PASS_OUTPUT' -n servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl"
+          if old_check not in v3_text:
+              raise RuntimeError("Historical main-pass shader invariant was not found")
+          v3.write_text(v3_text.replace(old_check, new_check, 1), encoding="utf-8")
           PY
           python3 -m py_compile .github/scripts/apply_renderer_batch2.py
 
