@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/renderer_batch2_apply.yml"
       - ".github/scripts/apply_renderer_batch2.py"
+      - ".github/scripts/prepare_renderer_batch2_driver.py"
   workflow_dispatch:
 
 permissions:
@@ -48,91 +49,11 @@ jobs:
               "+refs/heads/${branch}:refs/remotes/origin/${branch}"
           done
 
+      - name: Prepare Godot 4.7.2 patch compatibility
+        run: python3 .github/scripts/prepare_renderer_batch2_driver.py
+
       - name: Apply renderer, Mesh Blend and MSAA source optimizations
-        shell: bash
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path(".github/scripts/apply_renderer_batch2.py")
-          text = path.read_text(encoding="utf-8")
-
-          compact_marker = '    elif adapter == "compact-current":\n'
-          compact_addition = (
-              '        body = body.replace(\n'
-              '            r\'r"void ([A-Za-z0-9_:]+)::ensure_visibility_textures\',\n'
-              '            r\'r"bool ([A-Za-z0-9_:]+)::ensure_visibility_textures\',\n'
-              '        )\n'
-              '        body = body.replace(\n'
-              '            r\'r"void \\1::ensure_visibility_textures\',\n'
-              '            r\'r"bool \\1::ensure_visibility_textures\',\n'
-              '        )\n'
-          )
-          if compact_marker not in text:
-              raise RuntimeError("compact-current adapter marker was not found")
-          text = text.replace(compact_marker, compact_marker + compact_addition, 1)
-
-          patch_marker = '    patch_path = Path("/tmp/renderer-source-patch.py")\n'
-          compatibility_addition = (
-              '    if branch == "opt/mesh-blend-rg16-edges":\n'
-              '        body = body.replace(\n'
-              '            \'if "RB_TEX_VB_VIS" in text and "RD::DATA_FORMAT_R32G32_UINT" in text:\',\n'
-              '            \'if "RB_TEX_VB_VIS" in text and ("RD::DATA_FORMAT_R32G32_UINT" in text or "RenderingDevice::DATA_FORMAT_R32G32_UINT" in text):\',\n'
-              '        )\n'
-              '    if branch == "opt/mesh-blend-packed-vb-aux":\n'
-              '        body = body.replace(\n'
-              '            "RD::DATA_FORMAT_R16G16_SFLOAT",\n'
-              '            "RenderingDevice::DATA_FORMAT_R16G16_SFLOAT",\n'
-              '        )\n'
-              '        body = body.replace(\n'
-              '            \'new = "RD::DATA_FORMAT_R16_UINT"\',\n'
-              '            \'new = "RenderingDevice::DATA_FORMAT_R16_UINT"\',\n'
-              '        )\n'
-              '        body = body.replace(\n'
-              '            \'if "RB_TEX_VB_AUX" in content and "RD::DATA_FORMAT_R16_UINT" in content:\',\n'
-              '            \'if "RB_TEX_VB_AUX" in content and ("RD::DATA_FORMAT_R16_UINT" in content or "RenderingDevice::DATA_FORMAT_R16_UINT" in content):\',\n'
-              '        )\n'
-              '        body = body.replace(\n'
-              '            \'if "mesh_blend" in content.lower() and "mask" in content.lower() and "RD::DATA_FORMAT_R16_UINT" in content:\',\n'
-              '            \'if "mesh_blend" in content.lower() and "mask" in content.lower() and ("RD::DATA_FORMAT_R16_UINT" in content or "RenderingDevice::DATA_FORMAT_R16_UINT" in content):\',\n'
-              '        )\n'
-              '    if branch == "opt/mesh-blend-reuse-vb-aux-mask":\n'
-              '        body = body.replace(\n'
-              '            r"(\\.blend\\(",\n'
-              '            r"((?:\\.|->)blend\\(",\n'
-              '        )\n'
-              '        usage_marker = "# VB_AUX is now sampled directly by the final blend pass;"\n'
-              '        if usage_marker not in body:\n'
-              '            raise RuntimeError("VB_AUX usage validation block was not found")\n'
-              '        body = body[:body.index(usage_marker)] + (\n'
-              '            "# Ensure the local VB_AUX usage declaration includes sampling.\\n"\n'
-              '            "aux_path = Path(\\\"servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp\\\")\\n"\n'
-              '            "aux_text = aux_path.read_text(encoding=\\\"utf-8\\\")\\n"\n'
-              '            "call_token = \\\"create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX\\\"\\n"\n'
-              '            "call_index = aux_text.find(call_token)\\n"\n'
-              '            "if call_index < 0:\\n"\n'
-              '            "    raise RuntimeError(\\\"VB_AUX create_texture call was not found\\\")\\n"\n'
-              '            "usage_index = aux_text.rfind(\\\"const uint32_t usage = \\\", 0, call_index)\\n"\n'
-              '            "if usage_index < 0:\\n"\n'
-              '            "    raise RuntimeError(\\\"VB_AUX local usage declaration was not found\\\")\\n"\n'
-              '            "usage_end = aux_text.find(\\\";\\\", usage_index)\\n"\n'
-              '            "if usage_end < 0:\\n"\n'
-              '            "    raise RuntimeError(\\\"VB_AUX local usage declaration is unterminated\\\")\\n"\n'
-              '            "sampling_flag = \\\"RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT\\\"\\n"\n'
-              '            "usage_decl = aux_text[usage_index:usage_end]\\n"\n'
-              '            "if sampling_flag not in usage_decl:\\n"\n'
-              '            "    aux_text = aux_text[:usage_end] + \\\" | \\\" + sampling_flag + aux_text[usage_end:]\\n"\n'
-              '            "aux_path.write_text(aux_text, encoding=\\\"utf-8\\\")\\n"\n'
-              '        )\n\n'
-          )
-          if patch_marker not in text:
-              raise RuntimeError("patch program marker was not found")
-          text = text.replace(patch_marker, compatibility_addition + patch_marker, 1)
-
-          path.write_text(text, encoding="utf-8")
-          PY
-          python3 .github/scripts/apply_renderer_batch2.py
+        run: python3 .github/scripts/apply_renderer_batch2.py
 
       - name: Commit consolidated source result
         shell: bash
@@ -145,6 +66,7 @@ jobs:
           rm -f .github/workflows/renderer_batch2_apply_v2.yml
           rm -f .github/workflows/renderer_batch2_apply_v3.yml
           rm -f .github/scripts/apply_renderer_batch2.py
+          rm -f .github/scripts/prepare_renderer_batch2_driver.py
 
           mkdir -p .github/build-status
           {
