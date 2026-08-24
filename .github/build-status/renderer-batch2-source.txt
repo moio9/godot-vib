@@ -6,4 +6,4 @@ linux_compile=pending
 termux_compile=pending
 msaa_runtime_validation=pending
 ci_trigger=repository_owner
-allocator_repair_trigger=2
+allocator_repair_trigger=3
