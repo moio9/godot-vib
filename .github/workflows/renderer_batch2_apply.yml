@@ -74,16 +74,33 @@ jobs:
           text = text.replace(compact_marker, compact_marker + compact_addition, 1)
 
           patch_marker = '    patch_path = Path("/tmp/renderer-source-patch.py")\n'
-          rg16_addition = (
+          compatibility_addition = (
               '    if branch == "opt/mesh-blend-rg16-edges":\n'
               '        body = body.replace(\n'
               '            \'if "RB_TEX_VB_VIS" in text and "RD::DATA_FORMAT_R32G32_UINT" in text:\',\n'
               '            \'if "RB_TEX_VB_VIS" in text and ("RD::DATA_FORMAT_R32G32_UINT" in text or "RenderingDevice::DATA_FORMAT_R32G32_UINT" in text):\',\n'
+              '        )\n'
+              '    if branch == "opt/mesh-blend-packed-vb-aux":\n'
+              '        body = body.replace(\n'
+              '            "RD::DATA_FORMAT_R16G16_SFLOAT",\n'
+              '            "RenderingDevice::DATA_FORMAT_R16G16_SFLOAT",\n'
+              '        )\n'
+              '        body = body.replace(\n'
+              '            \'new = "RD::DATA_FORMAT_R16_UINT"\',\n'
+              '            \'new = "RenderingDevice::DATA_FORMAT_R16_UINT"\',\n'
+              '        )\n'
+              '        body = body.replace(\n'
+              '            \'if "RB_TEX_VB_AUX" in content and "RD::DATA_FORMAT_R16_UINT" in content:\',\n'
+              '            \'if "RB_TEX_VB_AUX" in content and ("RD::DATA_FORMAT_R16_UINT" in content or "RenderingDevice::DATA_FORMAT_R16_UINT" in content):\',\n'
+              '        )\n'
+              '        body = body.replace(\n'
+              '            \'if "mesh_blend" in content.lower() and "mask" in content.lower() and "RD::DATA_FORMAT_R16_UINT" in content:\',\n'
+              '            \'if "mesh_blend" in content.lower() and "mask" in content.lower() and ("RD::DATA_FORMAT_R16_UINT" in content or "RenderingDevice::DATA_FORMAT_R16_UINT" in content):\',\n'
               '        )\n\n'
           )
           if patch_marker not in text:
               raise RuntimeError("patch program marker was not found")
-          text = text.replace(patch_marker, rg16_addition + patch_marker, 1)
+          text = text.replace(patch_marker, compatibility_addition + patch_marker, 1)
 
           path.write_text(text, encoding="utf-8")
           PY
