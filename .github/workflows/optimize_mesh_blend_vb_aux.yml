@@ -1,0 +1,427 @@
+name: Pack Mesh Blend VB_AUX into R16_UINT
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-packed-vb-aux
+    paths:
+      - .github/workflows/optimize_mesh_blend_vb_aux.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-runtime-test-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-packed-vb-aux
+          fetch-depth: 0
+
+      - name: Pack the rasterized Mesh Blend auxiliary output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          scene_shader = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          text = scene_shader.read_text(encoding="utf-8")
+          text, declaration_count = re.subn(
+              r"layout\(location\s*=\s*1\)\s*out\s+vec2\s+frag_visibility_aux\s*;",
+              "layout(location = 1) out uint frag_visibility_aux;",
+              text,
+              count=1,
+          )
+          if declaration_count == 0 and "out uint frag_visibility_aux" not in text:
+              raise RuntimeError("The Forward+ Visibility auxiliary output declaration was not found")
+
+          if "uint pack_visibility_aux" not in text:
+              fragment_position = text.find("#[fragment]")
+              if fragment_position < 0:
+                  raise RuntimeError("Forward+ fragment stage marker was not found")
+              version_defines = text.find("#VERSION_DEFINES", fragment_position)
+              if version_defines < 0:
+                  raise RuntimeError("Forward+ fragment VERSION_DEFINES marker was not found")
+              insertion = text.find("\n", version_defines) + 1
+              helper = '''
+uint pack_visibility_aux(vec2 value) {
+\tuint group_id = uint(round(clamp(value.y, 0.0, 1.0) * 255.0));
+\tint weight_snorm = int(round(clamp(value.x, -1.0, 1.0) * 127.0));
+\tuint weight_bits = uint(weight_snorm) & 0xFFu;
+\treturn (group_id << 8u) | weight_bits;
+}
+
+'''
+              text = text[:insertion] + helper + text[insertion:]
+
+          if "vec2 mesh_blend_aux_value" not in text:
+              assignments = list(re.finditer(
+                  r"^(?P<indent>[\t ]*)frag_visibility_aux\s*=\s*(?P<rhs>[^;]+);[\t ]*$",
+                  text,
+                  flags=re.MULTILINE,
+              ))
+              if not assignments:
+                  raise RuntimeError("The Forward+ Visibility auxiliary assignment was not found")
+              assignment = assignments[-1]
+              replacement = (
+                  assignment.group("indent")
+                  + "vec2 mesh_blend_aux_value = "
+                  + assignment.group("rhs").strip()
+                  + ";"
+              )
+              text = text[:assignment.start()] + replacement + text[assignment.end():]
+
+          text = text.replace("frag_visibility_aux.x =", "mesh_blend_aux_value.x =")
+          text = text.replace("frag_visibility_aux.y =", "mesh_blend_aux_value.y =")
+
+          if "frag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);" not in text:
+              local_position = text.rfind("vec2 mesh_blend_aux_value")
+              if local_position < 0:
+                  raise RuntimeError("Mesh Blend auxiliary local was not created")
+              search_end = min(len(text), local_position + 1600)
+              segment = text[local_position:search_end]
+              group_block = re.search(
+                  r"#ifdef MESH_BLEND_GROUP_OUTPUT_USED.*?#endif",
+                  segment,
+                  flags=re.DOTALL,
+              )
+              if group_block:
+                  insertion = local_position + group_block.end()
+              else:
+                  line_end = text.find("\n", local_position)
+                  insertion = line_end if line_end >= 0 else local_position
+              indent_match = re.search(r"(?m)^(?P<indent>[\t ]*)vec2 mesh_blend_aux_value", text[local_position - 64:local_position + 128])
+              indent = indent_match.group("indent") if indent_match else "\t"
+              text = text[:insertion] + "\n" + indent + "frag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);" + text[insertion:]
+
+          if re.search(r"frag_visibility_aux\.[xyzw]", text):
+              raise RuntimeError("The packed integer Visibility output is still accessed as a vector")
+          required_scene = (
+              "out uint frag_visibility_aux;",
+              "uint pack_visibility_aux(vec2 value)",
+              "vec2 mesh_blend_aux_value",
+              "frag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);",
+          )
+          for needle in required_scene:
+              if needle not in text:
+                  raise RuntimeError(f"Forward+ scene shader is missing: {needle}")
+          scene_shader.write_text(text, encoding="utf-8")
+
+          mask_shader = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = mask_shader.read_text(encoding="utf-8")
+          text = text.replace(
+              "layout(rg16f, set = 0, binding = 0) uniform readonly image2D vb_aux;",
+              "layout(r16ui, set = 0, binding = 0) uniform readonly uimage2D vb_aux;",
+              1,
+          )
+          if "vec2 unpack_visibility_aux" not in text:
+              main_position = text.find("void main()")
+              if main_position < 0:
+                  raise RuntimeError("Mesh Blend mask main() was not found")
+              helper = '''vec2 unpack_visibility_aux(uint packed_value) {
+\tuint group_id = (packed_value >> 8u) & 0xFFu;
+\tuint weight_bits = packed_value & 0xFFu;
+\tint weight_snorm = weight_bits >= 128u ? int(weight_bits) - 256 : int(weight_bits);
+\tfloat weight = clamp(float(weight_snorm) / 127.0, -1.0, 1.0);
+\treturn vec2(float(group_id) / 255.0, weight);
+}
+
+'''
+              text = text[:main_position] + helper + text[main_position:]
+
+          text = text.replace(
+              "vec2 aux = imageLoad(vb_aux, sample_pixel).xy;",
+              "vec2 aux = unpack_visibility_aux(imageLoad(vb_aux, sample_pixel).x);",
+              1,
+          )
+          text = text.replace(
+              "float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;",
+              "float id_quantized = aux.x;",
+              1,
+          )
+          text = text.replace("float raw_weight = aux.x;", "float raw_weight = aux.y;", 1)
+          required_mask = (
+              "layout(r16ui, set = 0, binding = 0) uniform readonly uimage2D vb_aux;",
+              "vec2 unpack_visibility_aux(uint packed_value)",
+              "float id_quantized = aux.x;",
+              "float raw_weight = aux.y;",
+          )
+          for needle in required_mask:
+              if needle not in text:
+                  raise RuntimeError(f"Mesh Blend mask shader is missing: {needle}")
+          mask_shader.write_text(text, encoding="utf-8")
+
+          # Change only the rasterized VB auxiliary allocation.
+          source_paths = list(Path("servers/rendering").rglob("*.cpp")) + list(Path("servers/rendering").rglob("*.h"))
+          allocation_replacements = 0
+          for path in source_paths:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              positions = [match.start() for match in re.finditer("RD::DATA_FORMAT_R16G16_SFLOAT", text)]
+              if not positions:
+                  continue
+              updated = text
+              offset = 0
+              changed_here = 0
+              for position in positions:
+                  adjusted = position + offset
+                  window = updated[max(0, adjusted - 600):min(len(updated), adjusted + 600)]
+                  if "RB_TEX_VB_AUX" not in window:
+                      continue
+                  old = "RD::DATA_FORMAT_R16G16_SFLOAT"
+                  new = "RD::DATA_FORMAT_R16_UINT"
+                  updated = updated[:adjusted] + new + updated[adjusted + len(old):]
+                  offset += len(new) - len(old)
+                  allocation_replacements += 1
+                  changed_here += 1
+              if changed_here:
+                  path.write_text(updated, encoding="utf-8")
+          if allocation_replacements < 1:
+              raise RuntimeError("No VB_AUX allocation was converted to R16_UINT")
+
+          # The already-packed intermediate mask must also remain R16_UINT.
+          packed_mask_found = False
+          packed_aux_found = False
+          for path in source_paths:
+              content = path.read_text(encoding="utf-8", errors="ignore")
+              if "RB_TEX_VB_AUX" in content and "RD::DATA_FORMAT_R16_UINT" in content:
+                  packed_aux_found = True
+              if "mesh_blend" in content.lower() and "mask" in content.lower() and "RD::DATA_FORMAT_R16_UINT" in content:
+                  packed_mask_found = True
+          if not packed_aux_found or not packed_mask_found:
+              raise RuntimeError(f"Packed allocation checks failed: aux={packed_aux_found}, mask={packed_mask_found}")
+          PY
+
+          git diff --check
+
+      - name: Validate pack/unpack math and mask compute shader
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools spirv-tools mesa-vulkan-drivers xvfb python3-pil
+          python3 - <<'PY'
+          from pathlib import Path
+
+          max_error = 0.0
+          for group in range(256):
+              for index in range(-1000, 1001):
+                  strength = index / 1000.0
+                  quantized = round(max(-1.0, min(1.0, strength)) * 127.0)
+                  packed = ((group & 0xFF) << 8) | (quantized & 0xFF)
+                  decoded_group = (packed >> 8) & 0xFF
+                  bits = packed & 0xFF
+                  signed = bits - 256 if bits >= 128 else bits
+                  decoded = max(-1.0, min(1.0, signed / 127.0))
+                  if decoded_group != group:
+                      raise RuntimeError("VB_AUX group did not round-trip")
+                  max_error = max(max_error, abs(decoded - strength))
+          if max_error > 1.0 / 127.0 + 1e-9:
+              raise RuntimeError(f"Unexpected VB_AUX quantization error: {max_error}")
+          Path("/tmp/vb_aux_precision.txt").write_text(f"max_abs_error={max_error:.9f}\n", encoding="utf-8")
+
+          source = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = source.read_text(encoding="utf-8").replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
+          Path("/tmp/mesh_blend_mask.comp").write_text(text, encoding="utf-8")
+          PY
+          glslangValidator -V --target-env vulkan1.2 -S comp /tmp/mesh_blend_mask.comp -o /tmp/mesh_blend_mask.spv
+          spirv-val --target-env vulkan1.2 /tmp/mesh_blend_mask.spv
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Discover Mesh Blend project settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          settings = set()
+          for path in Path("servers").rglob("*.cpp"):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              for match in re.finditer(r'["\'](rendering/[^"\']*mesh_blend[^"\']*)["\']', text, flags=re.IGNORECASE):
+                  settings.add(match.group(1))
+          enabled = sorted(setting for setting in settings if "enabled" in setting.lower())
+          Path("/tmp/mesh_blend_enabled_settings.txt").write_text("\n".join(enabled), encoding="utf-8")
+          print("Discovered Mesh Blend enabled settings:", enabled)
+          if not enabled:
+              raise RuntimeError("No Mesh Blend enabled ProjectSetting was discovered")
+          PY
+
+      - name: Create a Forward+ runtime shader test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/packed-vb-aux-test/results
+          python3 - <<'PY'
+          from pathlib import Path
+          settings = [line.strip() for line in Path("/tmp/mesh_blend_enabled_settings.txt").read_text().splitlines() if line.strip()]
+          lines = [
+              '[application]',
+              'config/name="Packed VB_AUX Runtime Test"',
+              '',
+              '[display]',
+              'window/size/viewport_width=384',
+              'window/size/viewport_height=384',
+              'window/size/window_width_override=384',
+              'window/size/window_height_override=384',
+              '',
+              '[rendering]',
+              'renderer/rendering_method="forward_plus"',
+              'renderer/rendering_method.mobile="forward_plus"',
+          ]
+          for setting in settings:
+              lines.append(f'{setting}=true')
+          Path('/tmp/packed-vb-aux-test/project.godot').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+
+          cat > /tmp/packed-vb-aux-test/test.gd <<'EOF'
+          extends SceneTree
+
+          func make_material(group_id: int, color: Color, phase: float) -> ShaderMaterial:
+              var shader := Shader.new()
+              shader.code = """shader_type spatial;
+          uniform vec3 base_color = vec3(0.8);
+          uniform float phase = 0.0;
+          uniform uint group_id = 1u;
+          void fragment() {
+              float procedural = sin((WORLD_MATRIX[3].x + VERTEX.x + phase) * 5.0) * 0.25 + 0.65;
+              MESH_BLEND = procedural;
+              MESH_BLEND_GROUP = group_id;
+              ALBEDO = base_color;
+              ROUGHNESS = 1.0;
+          }
+          """
+              var material := ShaderMaterial.new()
+              material.shader = shader
+              material.set_shader_parameter("base_color", Vector3(color.r, color.g, color.b))
+              material.set_shader_parameter("phase", phase)
+              material.set_shader_parameter("group_id", group_id)
+              return material
+
+          func add_box(parent: Node3D, position: Vector3, size: Vector3, material: Material) -> void:
+              var instance := MeshInstance3D.new()
+              var mesh := BoxMesh.new()
+              mesh.size = size
+              instance.mesh = mesh
+              instance.position = position
+              instance.material_override = material
+              parent.add_child(instance)
+
+          func _initialize() -> void:
+              get_root().size = Vector2i(384, 384)
+              var world := Node3D.new()
+              get_root().add_child(world)
+
+              add_box(world, Vector3(-0.65, 0.0, 0.0), Vector3(2.0, 2.0, 2.0), make_material(1, Color(0.8, 0.35, 0.25), 0.0))
+              add_box(world, Vector3(0.65, 0.0, 0.0), Vector3(2.0, 2.0, 2.0), make_material(2, Color(0.25, 0.45, 0.85), 0.7))
+
+              var camera := Camera3D.new()
+              camera.position = Vector3(4.2, 3.0, 5.2)
+              camera.look_at(Vector3.ZERO, Vector3.UP)
+              camera.current = true
+              world.add_child(camera)
+
+              var light := DirectionalLight3D.new()
+              light.rotation_degrees = Vector3(-50.0, -35.0, 0.0)
+              light.light_energy = 1.0
+              world.add_child(light)
+
+              var environment := Environment.new()
+              environment.background_mode = Environment.BG_COLOR
+              environment.background_color = Color(0.08, 0.08, 0.08)
+              environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+              environment.ambient_light_color = Color.WHITE
+              environment.ambient_light_energy = 0.5
+              var world_environment := WorldEnvironment.new()
+              world_environment.environment = environment
+              world.add_child(world_environment)
+
+              for _frame in range(12):
+                  await process_frame
+                  await RenderingServer.frame_post_draw
+              RenderingServer.force_sync()
+              var image := get_root().get_texture().get_image()
+              if image.is_empty():
+                  push_error("Packed VB_AUX test produced an empty image")
+                  quit(30)
+                  return
+              var error := image.save_png("/tmp/packed-vb-aux-test/results/frame.png")
+              if error != OK:
+                  push_error("Could not save runtime frame")
+                  quit(31)
+                  return
+              quit()
+          EOF
+
+      - name: Run the packed VB_AUX path through Lavapipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          GODOT_BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.*' | head -n1)"
+          test -n "$GODOT_BIN"
+          LVP_ICD="$(find /usr/share/vulkan/icd.d -type f -iname '*lvp*.json' | head -n1)"
+          test -n "$LVP_ICD"
+          export VK_ICD_FILENAMES="$LVP_ICD"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a -s '-screen 0 384x384x24' \
+            "$GODOT_BIN" \
+            --path /tmp/packed-vb-aux-test \
+            --script /tmp/packed-vb-aux-test/test.gd \
+            --rendering-method forward_plus \
+            --audio-driver Dummy \
+            --display-driver x11 \
+            > /tmp/packed-vb-aux-test/godot.log 2>&1
+          cat /tmp/packed-vb-aux-test/godot.log
+          test -s /tmp/packed-vb-aux-test/results/frame.png
+          if grep -Eqi 'shader compilation failed|framebuffer.*format|pipeline.*invalid|validation error|unknown identifier.*MESH_BLEND' /tmp/packed-vb-aux-test/godot.log; then
+              exit 1
+          fi
+
+      - name: Upload runtime frame and log
+        uses: actions/upload-artifact@v6
+        with:
+          name: packed-vb-aux-runtime-${{ github.sha }}
+          path: |
+            /tmp/packed-vb-aux-test/results/frame.png
+            /tmp/packed-vb-aux-test/godot.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove workflow, record validation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_vb_aux.yml
+          mkdir -p .github/build-status
+          cp /tmp/vb_aux_precision.txt .github/build-status/mesh-blend-packed-vb-aux-precision.txt
+          {
+            echo "branch=opt/mesh-blend-packed-vb-aux"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "format=R16_UINT"
+            echo "layout=group_u8,weight_snorm8"
+            echo "runtime=forward_plus-lavapipe"
+          } > .github/build-status/mesh-blend-packed-vb-aux.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Pack rasterized Mesh Blend VB_AUX into R16_UINT"
+          git push origin HEAD:opt/mesh-blend-packed-vb-aux
