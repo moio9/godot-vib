@@ -6,6 +6,12 @@ on:
       - "4.7"
     paths:
       - ".github/workflows/repair_renderer_batch2_allocator.yml"
+  pull_request:
+    branches:
+      - "4.7"
+    paths:
+      - ".github/build-status/renderer-batch2-source.txt"
+      - ".github/workflows/renderer_batch2_compile_repair_01.yml"
   workflow_dispatch:
 
 permissions:
@@ -17,6 +23,7 @@ concurrency:
 
 jobs:
   repair-and-compile:
+    if: github.event_name != 'pull_request' || github.head_ref == 'opt/renderer-batch2'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
 
