@@ -1,4 +1,4 @@
-name: Cancel obsolete renderer optimization run
+name: Apply renderer optimization source batch
 
 on:
   pull_request:
@@ -6,17 +6,79 @@ on:
       - "4.7"
     paths:
       - ".github/workflows/renderer_batch2_apply.yml"
+      - ".github/scripts/apply_renderer_batch2.py"
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: write
 
 concurrency:
   group: renderer-batch2-apply
   cancel-in-progress: true
 
 jobs:
-  cancel-stale-run:
-    runs-on: ubuntu-latest
+  apply-source-batch:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'opt/renderer-batch2'
+    runs-on: ubuntu-slim
+    timeout-minutes: 60
+
     steps:
-      - name: Confirm stale renderer run replacement
-        run: echo "Obsolete renderer optimization run replaced."
+      - name: Checkout optimization branch
+        uses: actions/checkout@v7
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+
+      - name: Fetch validated patch branches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          branches=(
+            opt/renderer-depth-final
+            opt/mesh-blend-mask-bandwidth
+            opt/mesh-blend-compact-visibility-attachment
+            opt/mesh-blend-rg16-edges
+            opt/mesh-blend-packed-mask
+            opt/mesh-blend-packed-vb-aux
+            opt/mesh-blend-reuse-vb-aux-mask
+            opt/mesh-blend-main-pass-metadata
+          )
+          for branch in "${branches[@]}"; do
+            git fetch --depth=1 origin \
+              "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+          done
+
+      - name: Apply renderer, Mesh Blend and MSAA source optimizations
+        run: python3 .github/scripts/apply_renderer_batch2.py
+
+      - name: Commit consolidated source result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          rm -f .github/workflows/renderer_batch2_apply.yml
+          rm -f .github/workflows/renderer_batch2_apply_v2.yml
+          rm -f .github/workflows/renderer_batch2_apply_v3.yml
+          rm -f .github/scripts/apply_renderer_batch2.py
+
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/renderer-batch2"
+            echo "source_patches=applied"
+            echo "applied_by_run=${{ github.run_id }}"
+            echo "applied_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "linux_compile=pending"
+            echo "msaa_runtime_validation=pending"
+          } > .github/build-status/renderer-batch2-source.txt
+
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "::error::No renderer source changes were produced"
+            exit 1
+          fi
+
+          git commit -m "Apply renderer, Mesh Blend and MSAA optimizations"
+          git push origin HEAD:opt/renderer-batch2
