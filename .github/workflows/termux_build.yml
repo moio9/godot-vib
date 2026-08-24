@@ -2,12 +2,26 @@ name: 📱 Termux Build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - "4.7"
+    paths:
+      - "core/**"
+      - "drivers/**"
+      - "editor/**"
+      - "main/**"
+      - "modules/**"
+      - "platform/**"
+      - "scene/**"
+      - "servers/**"
+      - "thirdparty/**"
+      - "SConstruct"
+      - "version.py"
+      - ".github/workflows/termux_build.yml"
   push:
     branches:
       - "4.7"
       - "sync/4.7.2"
-      # Validate renderer work before it reaches the stable fork branch.
-      - "work/renderer-optimizations"
     paths:
       - "core/**"
       - "drivers/**"
