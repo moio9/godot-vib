@@ -1,0 +1,134 @@
+name: Apply visibility depth prepass reuse
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  apply:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'work/renderer-optimizations'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout renderer branch
+        uses: actions/checkout@v7
+        with:
+          ref: work/renderer-optimizations
+          fetch-depth: 0
+
+      - name: Reuse loaded main depth in the visibility pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file_path = Path(path)
+              text = file_path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one match, found {count}")
+              file_path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          scene_cpp = "servers/rendering/renderer_rd/renderer_scene_render_rd.cpp"
+          replace_once(
+              scene_cpp,
+              '''\tif (vb_always_on) {
+          \t\tbool need_aux = _mesh_blend_enabled();
+          \t\tbool use_main_depth_for_vb = vb_reuse_main_depth;
+          \t\tif (_mesh_blend_enabled()) {
+          \t\t\tuse_main_depth_for_vb = false; // mesh blend needs storage-capable depth
+          \t\t}
+          \t\tif (rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
+          \t\t\tuse_main_depth_for_vb = false;
+          \t\t}
+          \t\trb->ensure_visibility_textures(need_aux, !use_main_depth_for_vb);
+          \t}
+          ''',
+              '''\tif (vb_always_on) {
+          \t\tbool need_aux = _mesh_blend_enabled();
+          \t\tbool use_main_depth_for_vb = vb_reuse_main_depth;
+          \t\tif (rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
+          \t\t\tuse_main_depth_for_vb = false;
+          \t\t}
+          \t\trb->ensure_visibility_textures(need_aux, !use_main_depth_for_vb);
+          \t}
+          ''',
+          )
+
+          forward_cpp = "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp"
+          replace_once(
+              forward_cpp,
+              '''\tRID vb_fbo_depth = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH);
+          \tRID main_depth = rb->get_depth_texture();
+          \tRID depth_attachment;
+          \tif (vb_fbo_depth.is_valid()) {
+          \t\tdepth_attachment = vb_fbo_depth;
+          \t} else if (main_depth.is_valid() && (RD::get_singleton()->texture_get_format(main_depth).usage_bits & RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+          \t\tdepth_attachment = main_depth;
+          \t}
+          ''',
+              '''\tRID vb_fbo_depth = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH);
+          \tRID main_depth = rb->get_depth_texture();
+          \tRID depth_attachment;
+          \tif (use_main_depth_for_vb && main_depth.is_valid() && (RD::get_singleton()->texture_get_format(main_depth).usage_bits & RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+          \t\t// Load the opaque pass depth and let the regular greater-or-equal
+          \t\t// depth test reject hidden visibility fragments before fragment().
+          \t\tdepth_attachment = main_depth;
+          \t} else if (vb_fbo_depth.is_valid()) {
+          \t\tdepth_attachment = vb_fbo_depth;
+          \t} else if (main_depth.is_valid() && (RD::get_singleton()->texture_get_format(main_depth).usage_bits & RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+          \t\tdepth_attachment = main_depth;
+          \t}
+          ''',
+          )
+          replace_once(
+              forward_cpp,
+              '''\tif (depth_attachment.is_valid()) {
+          \t\tdraw_flags = draw_flags | BitField<RD::DrawFlags>(RD::DRAW_CLEAR_DEPTH);
+          \t}
+          ''',
+              '''\tif (depth_attachment.is_valid() && !use_main_depth_for_vb) {
+          \t\t// Dedicated VB depth starts empty. Main depth is intentionally
+          \t\t// loaded so it acts as an early-Z prepass for this raster pass.
+          \t\tdraw_flags = draw_flags | BitField<RD::DrawFlags>(RD::DRAW_CLEAR_DEPTH);
+          \t}
+          ''',
+          )
+          PY
+
+      - name: Format patched sources
+        continue-on-error: true
+        uses: j178/prek-action@v2
+        with:
+          extra-args: >-
+            --files
+            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+
+      - name: Validate and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -n "use_main_depth_for_vb && main_depth.is_valid" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          grep -n "early-Z prepass" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          if sed -n '/if (vb_always_on)/,/return rb;/p' servers/rendering/renderer_rd/renderer_scene_render_rd.cpp | grep -q 'mesh blend needs storage-capable depth'; then
+            echo "Stale always-on Mesh Blend depth override remains" >&2
+            exit 1
+          fi
+
+          rm -f .github/workflows/apply_vb_depth_prepass_reuse.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Use main depth as the visibility early-Z prepass"
+          git push origin HEAD:work/renderer-optimizations
