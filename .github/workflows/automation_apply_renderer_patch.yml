@@ -1,0 +1,62 @@
+name: Temporary renderer patch automation
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.number == 5
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-vb-depth
+          fetch-depth: 0
+
+      - name: Apply renderer patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/apply_mesh_blend_depth_v1.py
+
+          # Godot's static check rejects generated files tracked despite
+          # matching .gitignore. Remove only ignored generated files; abort on
+          # any unexpected ignored tracked path.
+          mapfile -t ignored < <(git ls-files -ci --exclude-standard)
+          for path in "${ignored[@]}"; do
+            case "$path" in
+              *.gen.*)
+                rm -f -- "$path"
+                ;;
+              *)
+                echo "Unexpected tracked ignored file: $path" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          git diff --check
+          grep -n "p_gtid.y % 8" servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -n "p_gtid.y % 16" servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -n "sampler2D mesh_depth" servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
+          grep -n "SAMPLER_WITH_TEXTURE, 4" servers/rendering/renderer_rd/effects/mesh_blend.cpp
+          grep -n "scene_depth = rb->get_depth_texture" servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          if grep -n "create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH" servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp; then
+            echo "VB_DEPTH is still allocated" >&2
+            exit 1
+          fi
+
+      - name: Commit and push optimized branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Reuse main depth for Mesh Blend and fix depth mip lanes"
+          git push origin HEAD:opt/mesh-blend-vb-depth
