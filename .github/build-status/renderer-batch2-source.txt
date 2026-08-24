@@ -5,3 +5,4 @@ applied_at=2026-08-24T16:56:02Z
 linux_compile=pending
 termux_compile=pending
 msaa_runtime_validation=pending
+ci_trigger=repository_owner
