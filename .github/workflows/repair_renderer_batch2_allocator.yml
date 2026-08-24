@@ -6,6 +6,7 @@ on:
       - "4.7"
     types:
       - synchronize
+      - reopened
   workflow_dispatch:
 
 permissions:
