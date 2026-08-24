@@ -115,6 +115,12 @@ aux_path.write_text(aux_text, encoding="utf-8")
             raise RuntimeError("The old opaque framebuffer regex was not found")
         body = body.replace(old_fb_pattern, new_fb_pattern, 1)
 
+        old_output_check = 'if location_three_outputs != [("uint", "frag_mesh_blend_aux")]:'
+        new_output_check = 'if location_three_outputs.count(("uint", "frag_mesh_blend_aux")) != 1:'
+        if old_output_check not in body:
+            raise RuntimeError("The old location-three output validation was not found")
+        body = body.replace(old_output_check, new_output_check, 1)
+
 """
     text = insert_once(
         text,
