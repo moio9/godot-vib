@@ -1,3 +1,4 @@
+# trigger: allocator-repair-2
 name: One-shot renderer allocator repair
 
 on:
