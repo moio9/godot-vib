@@ -108,8 +108,8 @@ jobs:
           adapter_code = (
               '          if sys.argv[1] == "mask-call-flex":\n'
               '              body = body.replace(\n'
-              '                  r"\\\\s*vb_vis\\\\s*",\n'
-              '                  r"\\\\s*[A-Za-z_][A-Za-z0-9_]*\\\\s*",\n'
+              '                  r"\\s*vb_vis\\s*",\n'
+              '                  r"\\s*[A-Za-z_][A-Za-z0-9_]*\\s*",\n'
               '              )\n'
           )
           if write_anchor not in text:
