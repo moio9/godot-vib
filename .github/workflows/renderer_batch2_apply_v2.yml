@@ -1,4 +1,4 @@
-name: Consolidate validated renderer optimizations v2
+name: Consolidate renderer optimizations driver
 
 on:
   pull_request:
@@ -6,13 +6,14 @@ on:
       - "4.7"
     paths:
       - ".github/workflows/renderer_batch2_apply_v2.yml"
+      - ".github/workflows/renderer_batch2_apply_v3.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: renderer-batch2-apply-v2
+  group: renderer-batch2-driver
   cancel-in-progress: false
 
 jobs:
@@ -28,188 +29,60 @@ jobs:
           ref: opt/renderer-batch2
           fetch-depth: 0
 
-      - name: Fetch optimization sources
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Normalize current 4.7.2 contracts
+      - name: Execute V3 patch and validation stages
         shell: bash
         run: |
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import subprocess
 
-          scene = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
-          text = scene.read_text(encoding="utf-8")
-          text = text.replace(
-              "layout(location = 1) out vec4 visibility_aux_output;",
-              "layout(location = 1) out vec2 frag_visibility_aux;",
-          )
-          text = text.replace(
-              "visibility_aux_output = vec4(aux, 0.0, 0.0);",
-              "frag_visibility_aux = aux;",
-          )
-          text = text.replace("visibility_aux_output", "frag_visibility_aux")
-          if "frag_visibility_aux" not in text:
-              raise RuntimeError("Could not normalize Visibility auxiliary output")
-          scene.write_text(text, encoding="utf-8")
+          workflow = Path(".github/workflows/renderer_batch2_apply_v3.yml")
+          lines = workflow.read_text(encoding="utf-8").splitlines()
 
-          for path in (
-              Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"),
-              Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp"),
-          ):
-              text = path.read_text(encoding="utf-8")
-              text = text.replace(
-                  "ensure_visibility_textures(bool p_with_aux, bool p_create_depth)",
-                  "ensure_visibility_textures(bool p_need_aux, bool p_need_depth)",
+          def extract_step(name: str) -> str:
+              start = next((i for i, line in enumerate(lines) if line.strip() == f"- name: {name}"), None)
+              if start is None:
+                  raise RuntimeError(f"Step not found in V3 workflow: {name}")
+
+              run_index = next((i for i in range(start + 1, len(lines)) if lines[i].strip() == "run: |"), None)
+              if run_index is None:
+                  raise RuntimeError(f"Run block not found for V3 step: {name}")
+
+              run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
+              block = []
+              for line in lines[run_index + 1:]:
+                  if line.strip():
+                      indent = len(line) - len(line.lstrip())
+                      if indent <= run_indent:
+                          break
+                  block.append(line)
+
+              nonempty = [line for line in block if line.strip()]
+              if not nonempty:
+                  raise RuntimeError(f"Empty run block for V3 step: {name}")
+              prefix = min(len(line) - len(line.lstrip()) for line in nonempty)
+              return "\n".join(line[prefix:] if line.strip() else "" for line in block) + "\n"
+
+          stages = [
+              "Fetch source branches",
+              "Normalize current source names",
+              "Apply validated shared-depth and edge-correctness patch",
+              "Add functional per-pixel Mesh Blend shader API",
+              "Apply validated Mesh Blend bandwidth passes",
+              "Remove tracked generated files",
+              "Verify optimized source invariants",
+              "Install shader validation tools",
+              "Validate standalone Mesh Blend shaders",
+          ]
+
+          for stage in stages:
+              print(f"\n===== {stage} =====", flush=True)
+              subprocess.run(
+                  ["bash", "-c", "set -euo pipefail\n" + extract_step(stage)],
+                  check=True,
               )
-              text = text.replace("p_with_aux", "p_need_aux")
-              text = text.replace("p_create_depth", "p_need_depth")
-              path.write_text(text, encoding="utf-8")
           PY
-          git diff --check
-
-      - name: Execute validated patch programs
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          apply_workflow_python() {
-            local branch="$1"
-            local workflow="$2"
-            local adapter="${3:-none}"
-            local source="/tmp/source-workflow.yml"
-            local script="/tmp/source-patch.py"
-
-            echo
-            echo "=== Applying ${branch}:${workflow} ==="
-            git show "origin/${branch}:${workflow}" > "$source"
-
-            python3 - "$source" "$script" "$adapter" <<'PYEXTRACT'
-          from pathlib import Path
-          import re
-          import sys
-
-          source = Path(sys.argv[1]).read_text(encoding="utf-8")
-          destination = Path(sys.argv[2])
-          adapter = sys.argv[3]
-
-          matches = re.findall(
-              r"python3 - <<'PY'\n(?P<body>.*?)\n[ \t]+PY(?:\n|$)",
-              source,
-              flags=re.DOTALL,
-          )
-          if not matches:
-              raise RuntimeError("No Python patch heredoc was found")
-
-          lines = matches[0].splitlines()
-          first = next((line for line in lines if line.strip()), "")
-          prefix = re.match(r"^[ \t]*", first).group(0)
-          body = "\n".join(
-              line[len(prefix):] if prefix and line.startswith(prefix) else line
-              for line in lines
-          ) + "\n"
-
-          if adapter == "compact-bool":
-              body = body.replace("void ensure_visibility_textures", "bool ensure_visibility_textures")
-              body = body.replace(
-                  'r"void ([A-Za-z0-9_:]+)::ensure_visibility_textures',
-                  'r"bool ([A-Za-z0-9_:]+)::ensure_visibility_textures',
-              )
-              body = body.replace(
-                  'r"void \\1::ensure_visibility_textures',
-                  'r"bool \\1::ensure_visibility_textures',
-              )
-
-          destination.write_text(body, encoding="utf-8")
-          PYEXTRACT
-
-            python3 "$script"
-            git diff --check
-          }
-
-          apply_workflow_python opt/renderer-depth-final \
-            .github/workflows/finalize_renderer_depth_optimizations.yml
-          apply_workflow_python feature/mesh-blend-per-pixel-final \
-            .github/workflows/finalize_mesh_blend_per_pixel.yml
-          apply_workflow_python opt/mesh-blend-mask-bandwidth \
-            .github/workflows/optimize_mesh_blend_mask_bandwidth.yml
-          apply_workflow_python opt/mesh-blend-compact-visibility-attachment \
-            .github/workflows/optimize_mesh_blend_visibility_attachment.yml compact-bool
-          apply_workflow_python opt/mesh-blend-bounded-jump-flood \
-            .github/workflows/optimize_mesh_blend_jump_flood.yml
-          apply_workflow_python opt/mesh-blend-rg16-edges \
-            .github/workflows/optimize_mesh_blend_edge_format.yml
-          apply_workflow_python opt/mesh-blend-packed-mask \
-            .github/workflows/optimize_mesh_blend_mask_format.yml
-          apply_workflow_python opt/mesh-blend-packed-vb-aux \
-            .github/workflows/optimize_mesh_blend_vb_aux.yml
-          apply_workflow_python opt/mesh-blend-reuse-vb-aux-mask \
-            .github/workflows/optimize_mesh_blend_mask_alias.yml
-          apply_workflow_python opt/mesh-blend-main-pass-metadata \
-            .github/workflows/optimize_mesh_blend_main_pass_metadata.yml
-
-      - name: Remove tracked generated files
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mapfile -t generated < <(git ls-files -ci --exclude-standard | grep -E '\.gen\.' || true)
-          if (( ${#generated[@]} > 0 )); then
-            git rm -f -- "${generated[@]}"
-          fi
-          bash ./misc/scripts/gitignore_check.sh
-
-      - name: Verify optimized source
-        shell: bash
-        run: |
-          set -euxo pipefail
-          grep -R 'built_ins\["MESH_BLEND"\]' -n servers/rendering/shader_types.cpp
-          grep -R 'actions.renames\["MESH_BLEND"\]' -n servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
-          grep -R 'DATA_FORMAT_R16_UINT' -n servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
-          grep -R 'DATA_FORMAT_R16G16_UINT' -n servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
-          grep -R 'frag_mesh_blend_aux' -n servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
-          grep -R 'p_gtid.y % 8' -n servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
-          grep -R 'p_gtid.y % 16' -n servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
-          grep -R 'neighbor_pixel + ivec2(1)' -n servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
-          grep -R 'get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED' -n servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
-          if grep -R 'RB_TEX_MESH_BLEND_MASK' -n servers/rendering/renderer_rd; then
-            echo "::error::Duplicate Mesh Blend mask remains"
-            exit 1
-          fi
-          git diff --check
-
-      - name: Install shader tools
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq glslang-tools spirv-tools
-
-      - name: Validate modified standalone shaders
-        shell: bash
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          for name in ("mesh_blend_mask", "mesh_blend_jump_flood"):
-              source = Path(f"servers/rendering/renderer_rd/shaders/effects/{name}.glsl")
-              text = source.read_text(encoding="utf-8")
-              text = text.replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
-              Path(f"/tmp/{name}.comp").write_text(text, encoding="utf-8")
-          blend = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_blend.glsl").read_text(encoding="utf-8")
-          fragment = blend.split("#[fragment]", 1)[1].replace("#VERSION_DEFINES", "", 1)
-          Path("/tmp/mesh_blend_blend.frag").write_text(fragment, encoding="utf-8")
-          PY
-          for shader in /tmp/mesh_blend_*.comp; do
-            glslangValidator -V --target-env vulkan1.2 -S comp "$shader" -o "${shader%.comp}.spv"
-            spirv-val --target-env vulkan1.2 "${shader%.comp}.spv"
-          done
-          glslangValidator -V --target-env vulkan1.2 -S frag /tmp/mesh_blend_blend.frag -o /tmp/mesh_blend_blend.spv
-          spirv-val --target-env vulkan1.2 /tmp/mesh_blend_blend.spv
 
       - name: Set up Godot build dependencies
         uses: ./.github/actions/godot-deps
@@ -224,20 +97,26 @@ jobs:
             module_text_server_fb_enabled=yes
             tests=no
 
-      - name: Commit validated source result
+      - name: Commit validated V3 result
         shell: bash
         run: |
           set -euxo pipefail
-          rm -f .github/workflows/renderer_batch2_apply.yml
-          rm -f .github/workflows/renderer_batch2_apply_v2.yml
-          mkdir -p .github/build-status
-          {
-            echo "branch=opt/renderer-batch2"
-            echo "validated_by_run=${{ github.run_id }}"
-            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "build=linux-editor"
-            echo "msaa_status=pending-runtime-batch"
-          } > .github/build-status/renderer-batch2-compile.txt
-          git add -A
-          git commit -m "Consolidate validated renderer and Mesh Blend optimizations"
-          git push origin HEAD:opt/renderer-batch2
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          lines = Path(".github/workflows/renderer_batch2_apply_v3.yml").read_text(encoding="utf-8").splitlines()
+          name = "Commit validated source result"
+          start = next(i for i, line in enumerate(lines) if line.strip() == f"- name: {name}")
+          run_index = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "run: |")
+          run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
+          block = []
+          for line in lines[run_index + 1:]:
+              if line.strip() and len(line) - len(line.lstrip()) <= run_indent:
+                  break
+              block.append(line)
+          nonempty = [line for line in block if line.strip()]
+          prefix = min(len(line) - len(line.lstrip()) for line in nonempty)
+          script = "\n".join(line[prefix:] if line.strip() else "" for line in block) + "\n"
+          subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], check=True)
+          PY
