@@ -63,15 +63,14 @@
 #define RB_TEX_BACK_COLOR SNAME("back_color")
 #define RB_TEX_BACK_DEPTH SNAME("back_depth")
 
-#define RB_TEX_VB_VIS      SNAME("vb_vis")      // R32G32_UINT: (object_id, tri_id)
+#define RB_TEX_VB_VIS SNAME("vb_vis") // R32G32_UINT: (object_id, tri_id)
 #define RB_TEX_VB_COMPACT SNAME("visibility_compact")
-#define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F
-#define RB_TEX_VB_DEPTH    SNAME("vb_depth")    // R32_SFLOAT: storage for compute
+#define RB_TEX_VB_AUX SNAME("vb_aux") // R16_UINT: packed group and strength
+#define RB_TEX_VB_DEPTH SNAME("vb_depth") // R32_SFLOAT: storage for compute
 #define RB_TEX_VB_FBO_DEPTH SNAME("vb_fbo_depth") // D32_SFLOAT: depth attachment for VB pass FBO
-#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords
-#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong
-#define RB_TEX_MESH_BLEND_SOURCE SNAME("mesh_blend_source")   // source color copy
-
+#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0") // R16G16_UINT: edge coords
+#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1") // R16G16_UINT: ping/pong
+#define RB_TEX_MESH_BLEND_SOURCE SNAME("mesh_blend_source") // source color copy
 
 class RenderSceneBuffersRD : public RenderSceneBuffers {
 	GDCLASS(RenderSceneBuffersRD, RenderSceneBuffers);
@@ -119,7 +118,7 @@ private:
 		}
 
 		static uint32_t hash(const NTKey &p_val) {
-			uint32_t h = p_val.context.hash();
+			uint32_t h = hash_murmur3_one_32(p_val.layer);
 			h = hash_murmur3_one_32(p_val.buffer_name.hash(), h);
 			return hash_fmix32(h);
 		}
@@ -176,7 +175,7 @@ private:
 		Vector<Size2i> sizes;
 	};
 
-	mutable HashMap<NTKey, NamedTexture, NTKey> named_textures;
+	mutable HashMap<NTKey, NamedTexture> named_textures;
 	void update_sizes(NamedTexture &p_named_texture) const;
 	void free_named_texture(NamedTexture &p_named_texture);
 
@@ -207,7 +206,7 @@ public:
 	void set_vrs(RendererRD::VRS *p_vrs) { vrs = p_vrs; }
 	RSE::ViewportVRSMode get_vrs_mode() { return vrs_mode; }
 
-	bool ensure_visibility_textures(true, bool p_need_aux = true, bool p_need_depth = true);
+	bool ensure_visibility_textures(bool p_need_full_visibility = true, bool p_need_aux = true, bool p_need_depth = true);
 	void cleanup();
 	virtual void configure(const RenderSceneBuffersConfiguration *p_config) override;
 	void configure_for_reflections(const Size2i p_reflection_size);
@@ -230,6 +229,7 @@ public:
 	RID get_texture(const StringName &p_context, const StringName &p_texture_name) const;
 	const RD::TextureFormat get_texture_format(const StringName &p_context, const StringName &p_texture_name) const;
 	RID get_texture_slice(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_layer, const uint32_t p_mipmap, const uint32_t p_layers = 1, const uint32_t p_mipmaps = 1);
+	RID get_texture_slice_view(const StringName &p_context, const StringName &p_texture_name, const StringName &p_view_name, RD::TextureView p_view = RD::TextureView());
 	RID get_texture_slice_view(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_layer, const uint32_t p_mipmap, const uint32_t p_layers = 1, const uint32_t p_mipmaps = 1, RD::TextureView p_view = RD::TextureView());
 	Size2i get_texture_slice_size(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_mipmap);
 
@@ -256,9 +256,9 @@ public:
 	_FORCE_INLINE_ RSE::ViewportScreenSpaceAA get_screen_space_aa() const { return screen_space_aa; }
 	_FORCE_INLINE_ bool get_use_taa() const { return use_taa; }
 	_FORCE_INLINE_ bool get_use_debanding() const { return use_debanding; }
-	
+
 	_FORCE_INLINE_ RID get_vb_vis_texture() const {
-	return get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
+		return get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
 	}
 	_FORCE_INLINE_ RID get_vb_aux_texture() const {
 		return get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
@@ -381,7 +381,7 @@ private:
 	// Our classDB doesn't support calling our normal exposed functions
 
 	RID _create_texture_from_format(const StringName &p_context, const StringName &p_texture_name, const Ref<RDTextureFormat> &p_texture_format, const Ref<RDTextureView> &p_view = Ref<RDTextureView>(), bool p_unique = true);
-	RID _create_texture_view(const StringName &p_context, const StringName &p_texture_name, const StringName &p_view_name, const Ref<RDTextureView> p_view = Ref<RDTextureView>());
+	RID _create_texture_view(const StringName &p_context, const StringName &p_texture_name, const StringName &p_view_name, const Ref<RDTextureView> p_view = Ref<RDTextureView>(), bool p_unique = true);
 	Ref<RDTextureFormat> _get_texture_format(const StringName &p_context, const StringName &p_texture_name) const;
 	RID _get_texture_slice_view(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_layer, const uint32_t p_mipmap, const uint32_t p_layers = 1, const uint32_t p_mipmaps = 1, const Ref<RDTextureView> p_view = Ref<RDTextureView>());
 
