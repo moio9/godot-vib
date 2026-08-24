@@ -263,7 +263,7 @@ Ref<RenderSceneBuffers> RendererSceneRenderRD::render_buffers_create() {
 		if (rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
 			use_main_depth_for_vb = false;
 		}
-		rb->ensure_visibility_textures(need_aux, !use_main_depth_for_vb);
+		rb->ensure_visibility_textures(true, need_aux, !use_main_depth_for_vb);
 	}
 
 	return rb;
@@ -474,7 +474,7 @@ void RendererSceneRenderRD::visibility_resolve(RenderSceneBuffersRD *rb, const R
 	ERR_FAIL_NULL(uniform_set_cache);
 	_ensure_vb_dummy_images();
 	bool need_aux = _mesh_blend_enabled();
-	rb->ensure_visibility_textures(need_aux, true);
+	rb->ensure_visibility_textures(true, need_aux, true);
 
 	if (vb_resolve_shader_rd == nullptr) {
 		vb_resolve_shader_rd = memnew(VbResolveShaderRD);
@@ -654,9 +654,9 @@ void RendererSceneRenderRD::_ensure_mesh_blend_textures(RenderSceneBuffersRD *p_
 	}
 
 	uint32_t usage = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
-	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_MASK, RD::DATA_FORMAT_R16G16_SFLOAT, usage);
-	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE0, RD::DATA_FORMAT_R32G32_UINT, usage);
-	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE1, RD::DATA_FORMAT_R32G32_UINT, usage);
+
+	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE0, RD::DATA_FORMAT_R16G16_UINT, usage);
+	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE1, RD::DATA_FORMAT_R16G16_UINT, usage);
 	p_render_buffers->create_texture(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_SOURCE, p_render_buffers->get_base_data_format(), usage);
 }
 
@@ -671,7 +671,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 
 	bool need_aux = _mesh_blend_enabled();
 	// Mesh blend requires storage-capable depth; always use VB depth.
-	rb->ensure_visibility_textures(need_aux, true);
+	rb->ensure_visibility_textures(true, need_aux, true);
 
 	RID vb_vis = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
 	RID vb_aux = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
@@ -713,7 +713,6 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		RID vb_vis_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, v, 0);
 		RID vb_aux_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, v, 0);
 		RID vb_depth_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, v, 0);
-		RID mask_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_MASK, v, 0);
 		RID edge_ping = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE0, v, 0);
 		RID edge_pong = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_EDGE1, v, 0);
 		RID color_source = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_SOURCE, v, 0);
@@ -727,7 +726,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 			}
 			continue;
 		}
-		mesh_blend->generate_mask(vb_vis_slice, vb_aux_slice, vb_depth_slice, mask_slice, edge_ping, size, depth_tolerance, neighbor_blend);
+		mesh_blend->generate_mask(vb_aux_slice, vb_depth_slice, edge_ping, size, depth_tolerance, neighbor_blend);
 
 	int spread = 1;
 	while (spread < int(edge_radius_pixels)) {
@@ -740,7 +739,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		RID current_edge = edge_ping;
 		RID next_edge = edge_pong;
 		while (spread >= 1) {
-			mesh_blend->jump_flood(current_edge, next_edge, mask_slice, size, spread);
+			mesh_blend->jump_flood(current_edge, next_edge, tex_aux, size, spread);
 			SWAP(current_edge, next_edge);
 			spread >>= 1;
 		}
@@ -753,7 +752,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		if (blend_depth.is_null() || framebuffer.is_null()) {
 			continue;
 		}
-		mesh_blend->blend(color_source, blend_depth, mask_slice, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);
+		mesh_blend->blend(color_source, blend_depth, tex_aux, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);
 	}
 
 	RD::get_singleton()->draw_command_end_label();
@@ -761,7 +760,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 // ——— VISIBILITY FILL (runtime test) ————————————————————————————————
 void RendererSceneRenderRD::_ensure_vb_vis_texture(RenderSceneBuffersRD *rb) {
 	// Lazily allocate the VB textures only when a VB consumer is active.
-	rb->ensure_visibility_textures(false, true);
+	rb->ensure_visibility_textures(true, false, true);
 }
 
 void RendererSceneRenderRD::visibility_fill_test(RenderSceneBuffersRD *rb, const RenderDataRD *p_render_data) {

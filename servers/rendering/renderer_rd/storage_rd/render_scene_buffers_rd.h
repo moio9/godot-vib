@@ -64,10 +64,10 @@
 #define RB_TEX_BACK_DEPTH SNAME("back_depth")
 
 #define RB_TEX_VB_VIS      SNAME("vb_vis")      // R32G32_UINT: (object_id, tri_id)
+#define RB_TEX_VB_COMPACT SNAME("visibility_compact")
 #define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F
 #define RB_TEX_VB_DEPTH    SNAME("vb_depth")    // R32_SFLOAT: storage for compute
 #define RB_TEX_VB_FBO_DEPTH SNAME("vb_fbo_depth") // D32_SFLOAT: depth attachment for VB pass FBO
-#define RB_TEX_MESH_BLEND_MASK SNAME("mesh_blend_mask")       // RG16F: (id, normalized distance)
 #define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords
 #define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong
 #define RB_TEX_MESH_BLEND_SOURCE SNAME("mesh_blend_source")   // source color copy
@@ -207,7 +207,7 @@ public:
 	void set_vrs(RendererRD::VRS *p_vrs) { vrs = p_vrs; }
 	RSE::ViewportVRSMode get_vrs_mode() { return vrs_mode; }
 
-	bool ensure_visibility_textures(bool p_with_aux = true, bool p_create_depth = true);
+	bool ensure_visibility_textures(true, bool p_need_aux = true, bool p_need_depth = true);
 	void cleanup();
 	virtual void configure(const RenderSceneBuffersConfiguration *p_config) override;
 	void configure_for_reflections(const Size2i p_reflection_size);

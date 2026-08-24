@@ -792,7 +792,10 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["AO"] = "ao";
 		actions.renames["AO_LIGHT_AFFECT"] = "ao_light_affect";
 		actions.renames["MICRO_SHADOWS"] = "micro_shadows";
-		actions.renames["MESH_BLEND"] = "mesh_blend_value";
+		actions.renames["MESH_BLEND"] = "mesh_blend_output";
+		actions.renames["MESH_BLEND_GROUP"] = "mesh_blend_group_output";
+		actions.usage_defines["MESH_BLEND"] = "#define MESH_BLEND_OUTPUT_USED\n";
+		actions.usage_defines["MESH_BLEND_GROUP"] = "#define MESH_BLEND_GROUP_OUTPUT_USED\n";
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["POINT_COORD"] = "point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";

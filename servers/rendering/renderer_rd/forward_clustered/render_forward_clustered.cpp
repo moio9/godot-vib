@@ -195,13 +195,19 @@ RID RenderForwardClustered::RenderBufferDataForwardClustered::get_color_pass_fb(
 		velocity_buffer = render_buffers->get_velocity_buffer(use_msaa);
 	}
 
+	RID mesh_blend_aux;
+	if (p_color_pass_flags & COLOR_PASS_FLAG_MESH_BLEND) {
+		render_buffers->ensure_visibility_textures(false, true, false);
+		mesh_blend_aux = render_buffers->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+	}
+
 	RID depth = use_msaa ? render_buffers->get_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH_MSAA) : render_buffers->get_depth_texture();
 
 	if (render_buffers->has_texture(RB_SCOPE_VRS, RB_TEXTURE)) {
 		RID vrs_texture = render_buffers->get_texture(RB_SCOPE_VRS, RB_TEXTURE);
-		return FramebufferCacheRD::get_singleton()->get_cache_multiview(v_count, color, specular, velocity_buffer, depth, vrs_texture);
+		return FramebufferCacheRD::get_singleton()->get_cache_multiview(v_count, color, specular, velocity_buffer, mesh_blend_aux, depth, vrs_texture);
 	} else {
-		return FramebufferCacheRD::get_singleton()->get_cache_multiview(v_count, color, specular, velocity_buffer, depth);
+		return FramebufferCacheRD::get_singleton()->get_cache_multiview(v_count, color, specular, velocity_buffer, mesh_blend_aux, depth);
 	}
 }
 
@@ -1274,21 +1280,19 @@ void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_rend
 	}
 
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	bool need_full_visibility = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER;
 	ERR_FAIL_COND(rb.is_null());
 
 	// Lazily allocate visibility buffer only when requested (debug VB or mesh blend).
-	bool use_main_depth_for_vb = RendererSceneRenderRD::get_singleton()->is_visibility_buffer_reusing_main_depth();
-	if (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {
-		use_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.
-	}
+	bool use_main_depth_for_vb = RendererSceneRenderRD::get_singleton()->is_visibility_buffer_reusing_main_depth() || RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled();
 	// If MSAA is enabled, the resolved depth lacks depth-attachment usage, so keep a dedicated VB depth.
 	if (rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
 		use_main_depth_for_vb = false;
 	}
 	bool need_aux = RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled();
-	rb->ensure_visibility_textures(need_aux, !use_main_depth_for_vb);
+	rb->ensure_visibility_textures(need_full_visibility, need_aux, !use_main_depth_for_vb);
 
-	RID vb_vis = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS);
+	RID vb_vis = rb->get_texture(RB_SCOPE_BUFFERS, need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
 	RID vb_aux = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
 
 	if (vb_vis.is_null()) {
@@ -2169,6 +2173,16 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			global_pipeline_data_required.use_multiview = true;
 		}
 
+		const bool mesh_blend_main_pass = _mesh_blend_enabled() && p_render_data->reflection_probe.is_null() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
+		if (mesh_blend_main_pass) {
+			color_pass_flags |= COLOR_PASS_FLAG_MESH_BLEND;
+			rb->ensure_visibility_textures(false, true, false);
+			RID mesh_blend_main_aux = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+			if (mesh_blend_main_aux.is_valid()) {
+				RD::get_singleton()->texture_clear(mesh_blend_main_aux, Color(0, 0, 0, 0), 0, 1, 0, rb->get_view_count());
+			}
+		}
+
 		color_framebuffer = rb_data->get_color_pass_fb(color_pass_flags);
 		color_only_framebuffer = rb_data->get_color_only_fb();
 		samplers = rb->get_samplers();
@@ -2907,7 +2921,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	RD::get_singleton()->draw_command_end_label();
 
 	bool visibility_debug = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER;
-	if (visibility_debug || _mesh_blend_enabled()) {
+	const bool mesh_blend_requires_visibility_pass = _mesh_blend_enabled() && !mesh_blend_main_pass;
+	if (visibility_debug || mesh_blend_requires_visibility_pass) {
 		_render_visibility_buffer_pass(p_render_data, samplers, reverse_cull, base_specialization);
 	}
 
