@@ -60,6 +60,44 @@ jobs:
           command -v git
           command -v python3
 
+          # V3 is used as a patch-program container. Normalize its one nested
+          # multiline GLSL literal so the driver can extract the whole step.
+          python3 - <<'PYFIX'
+          from pathlib import Path
+
+          path = Path(".github/workflows/renderer_batch2_apply_v3.yml")
+          text = path.read_text(encoding="utf-8")
+          start_marker = "          post_code = r'''\n"
+          end_marker = "\n'''\n          text = text.replace(marker, marker + post_code, 1)"
+
+          start = text.find(start_marker)
+          if start < 0:
+              raise RuntimeError("Nested post_code literal was not found in V3")
+          end = text.find(end_marker, start)
+          if end < 0:
+              raise RuntimeError("Nested post_code literal terminator was not found in V3")
+
+          replacement = (
+              "          post_code = (\n"
+              "              \"\\n#ifdef MODE_RENDER_VISIBILITY\\n\"\n"
+              "              \"\\tfloat material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);\\n\"\n"
+              "              \"\\tfloat blend_id = sc_instance_hash(packed_ids.y);\\n\"\n"
+              "              \"\\tfrag_visibility_aux = vec2(material_mesh_blend, blend_id);\\n\"\n"
+              "              \"#ifdef MESH_BLEND_OUTPUT_USED\\n\"\n"
+              "              \"\\tfrag_visibility_aux.x = clamp(mesh_blend_output, 0.0, 1.0);\\n\"\n"
+              "              \"#endif\\n\"\n"
+              "              \"#ifdef MESH_BLEND_GROUP_OUTPUT_USED\\n\"\n"
+              "              \"\\tfrag_visibility_aux.y = float(min(mesh_blend_group_output, 255u)) / 255.0;\\n\"\n"
+              "              \"#endif\\n\"\n"
+              "              \"\\treturn;\\n\"\n"
+              "              \"#endif\\n\"\n"
+              "          )"
+          )
+
+          text = text[:start] + replacement + text[end + 4:]
+          path.write_text(text, encoding="utf-8")
+          PYFIX
+
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
