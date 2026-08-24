@@ -23,53 +23,77 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
+      - name: Fix Mesh Blend depth selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("servers/rendering/renderer_rd/renderer_scene_render_rd.cpp")
+          text = path.read_text(encoding="utf-8")
+          function_start = text.index("void RendererSceneRenderRD::_process_mesh_blend(")
+          function_end = text.index("\n// ——— VISIBILITY FILL", function_start)
+          block = text[function_start:function_end]
+
+          old_setup = """\tbool need_aux = _mesh_blend_enabled();
+          \t// Mesh blend requires storage-capable depth; always use VB depth.
+          \trb->ensure_visibility_textures(need_aux, true);"""
+          new_setup = """\tbool need_aux = _mesh_blend_enabled();
+          \tbool use_main_depth_for_mesh_blend = is_visibility_buffer_reusing_main_depth() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
+          \trb->ensure_visibility_textures(need_aux, !use_main_depth_for_mesh_blend);"""
+          if block.count(old_setup) != 1:
+              raise RuntimeError("Unexpected Mesh Blend visibility texture setup")
+          block = block.replace(old_setup, new_setup, 1)
+
+          old_depth = "\t\tRID vb_depth_slice = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, v, 0);"
+          new_depth = "\t\tRID mesh_depth = use_main_depth_for_mesh_blend ? rb->get_depth_texture(v) : rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, v, 0);"
+          if block.count(old_depth) != 1:
+              raise RuntimeError("Unexpected Mesh Blend per-view depth declaration")
+          block = block.replace(old_depth, new_depth, 1)
+
+          remaining = block.count("vb_depth_slice")
+          if remaining != 4:
+              raise RuntimeError(f"Expected four remaining VB depth references, found {remaining}")
+          block = block.replace("vb_depth_slice", "mesh_depth")
+
+          text = text[:function_start] + block + text[function_end:]
+          path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Apply Godot formatters
         continue-on-error: true
         uses: j178/prek-action@v2
         with:
           extra-args: >-
             --files
-            servers/rendering/renderer_rd/effects/mesh_blend.cpp
-            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
-            servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
-            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
-            servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
-            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
 
-      - name: Validate formatter output
+      - name: Validate patch
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
+          grep -n "use_main_depth_for_mesh_blend" servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          grep -n "RID mesh_depth =" servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          grep -n "generate_mask(vb_vis_slice, vb_aux_slice, mesh_depth" servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          if sed -n '/void RendererSceneRenderRD::_process_mesh_blend/,/VISIBILITY FILL/p' servers/rendering/renderer_rd/renderer_scene_render_rd.cpp | grep -q 'vb_depth_slice'; then
+            echo "Stale vb_depth_slice reference remains in Mesh Blend processing" >&2
+            exit 1
+          fi
 
           mapfile -t changed < <(git diff --name-only)
-          for path in "${changed[@]}"; do
-            case "$path" in
-              servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp|\
-              servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl|\
-              servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl)
-                ;;
-              *)
-                echo "Formatter changed unexpected file: $path" >&2
-                exit 1
-                ;;
-            esac
-          done
+          if [[ ${#changed[@]} -ne 1 || "${changed[0]}" != "servers/rendering/renderer_rd/renderer_scene_render_rd.cpp" ]]; then
+            printf 'Unexpected changed files:\n%s\n' "${changed[*]}" >&2
+            exit 1
+          fi
 
-      - name: Commit formatted renderer sources
+      - name: Commit depth-selection fix
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet; then
-            echo "Renderer sources are already formatted."
-            exit 0
-          fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp \
-            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
-            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
-          git commit -m "Format renderer optimization sources"
+          git add servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          git commit -m "Fix Mesh Blend depth source selection"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
