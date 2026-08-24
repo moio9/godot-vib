@@ -52,6 +52,30 @@ jobs:
       - name: Prepare Godot 4.7.2 patch compatibility
         run: python3 .github/scripts/prepare_renderer_batch2_driver.py
 
+      - name: Complete the main-pass attachment adapter
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/scripts/apply_renderer_batch2.py")
+          text = path.read_text(encoding="utf-8")
+          marker = '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
+          addition = (
+              '        body = body.replace(\n'
+              '            \'if "COLOR_PASS_FLAG_MESH_BLEND" not in fb_fn:\',\n'
+              '            \'if "RID mesh_blend_aux;" not in fb_fn:\',\n'
+              '        )\n'
+          )
+          guard = 'if "RID mesh_blend_aux;" not in fb_fn:'
+          if guard not in text:
+              if marker not in text:
+                  raise RuntimeError("Main-pass compatibility branch was not found")
+              text = text.replace(marker, marker + addition, 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Apply renderer, Mesh Blend and MSAA source optimizations
         run: python3 .github/scripts/apply_renderer_batch2.py
 
