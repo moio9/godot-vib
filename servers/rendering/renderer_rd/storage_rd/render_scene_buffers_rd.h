@@ -118,7 +118,7 @@ private:
 		}
 
 		static uint32_t hash(const NTKey &p_val) {
-			uint32_t h = hash_murmur3_one_32(p_val.layer);
+			uint32_t h = p_val.context.hash();
 			h = hash_murmur3_one_32(p_val.buffer_name.hash(), h);
 			return hash_fmix32(h);
 		}
@@ -175,7 +175,7 @@ private:
 		Vector<Size2i> sizes;
 	};
 
-	mutable HashMap<NTKey, NamedTexture> named_textures;
+	mutable HashMap<NTKey, NamedTexture, NTKey> named_textures;
 	void update_sizes(NamedTexture &p_named_texture) const;
 	void free_named_texture(NamedTexture &p_named_texture);
 
@@ -229,7 +229,6 @@ public:
 	RID get_texture(const StringName &p_context, const StringName &p_texture_name) const;
 	const RD::TextureFormat get_texture_format(const StringName &p_context, const StringName &p_texture_name) const;
 	RID get_texture_slice(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_layer, const uint32_t p_mipmap, const uint32_t p_layers = 1, const uint32_t p_mipmaps = 1);
-	RID get_texture_slice_view(const StringName &p_context, const StringName &p_texture_name, const StringName &p_view_name, RD::TextureView p_view = RD::TextureView());
 	RID get_texture_slice_view(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_layer, const uint32_t p_mipmap, const uint32_t p_layers = 1, const uint32_t p_mipmaps = 1, RD::TextureView p_view = RD::TextureView());
 	Size2i get_texture_slice_size(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_mipmap);
 
@@ -381,7 +380,7 @@ private:
 	// Our classDB doesn't support calling our normal exposed functions
 
 	RID _create_texture_from_format(const StringName &p_context, const StringName &p_texture_name, const Ref<RDTextureFormat> &p_texture_format, const Ref<RDTextureView> &p_view = Ref<RDTextureView>(), bool p_unique = true);
-	RID _create_texture_view(const StringName &p_context, const StringName &p_texture_name, const StringName &p_view_name, const Ref<RDTextureView> p_view = Ref<RDTextureView>(), bool p_unique = true);
+	RID _create_texture_view(const StringName &p_context, const StringName &p_texture_name, const StringName &p_view_name, const Ref<RDTextureView> p_view = Ref<RDTextureView>());
 	Ref<RDTextureFormat> _get_texture_format(const StringName &p_context, const StringName &p_texture_name) const;
 	RID _get_texture_slice_view(const StringName &p_context, const StringName &p_texture_name, const uint32_t p_layer, const uint32_t p_mipmap, const uint32_t p_layers = 1, const uint32_t p_mipmaps = 1, const Ref<RDTextureView> p_view = Ref<RDTextureView>());
 
