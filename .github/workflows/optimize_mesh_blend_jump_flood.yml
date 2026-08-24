@@ -1,0 +1,197 @@
+name: Bound Mesh Blend jump flood by pixel radius
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-bounded-jump-flood
+    paths:
+      - .github/workflows/optimize_mesh_blend_jump_flood.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-bounded-jump-flood
+          fetch-depth: 0
+
+      - name: Skip jump-flood passes outside the pixel-space influence radius
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def find_enclosing_function(text: str, position: int) -> tuple[int, int]:
+              candidates = list(re.finditer(r"(?:^|\n)[A-Za-z_][A-Za-z0-9_:<>*& ,\n\t]*\([^;{}]*\)\s*\{", text[:position]))
+              if not candidates:
+                  raise RuntimeError("Could not find the function containing jump_flood")
+              match = candidates[-1]
+              start = match.start() + (1 if text[match.start():].startswith("\n") else 0)
+              brace = text.index("{", match.start())
+              depth = 0
+              for index in range(brace, len(text)):
+                  if text[index] == "{":
+                      depth += 1
+                  elif text[index] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          return start, index + 1
+              raise RuntimeError("The jump-flood caller function has unbalanced braces")
+
+          def find_enclosing_for(function: str, call_position: int) -> tuple[int, int, int]:
+              candidates = list(re.finditer(r"\bfor\s*\([^)]*\)\s*\{", function[:call_position]))
+              for match in reversed(candidates):
+                  brace = function.index("{", match.start())
+                  depth = 0
+                  end = None
+                  for index in range(brace, len(function)):
+                      if function[index] == "{":
+                          depth += 1
+                      elif function[index] == "}":
+                          depth -= 1
+                          if depth == 0:
+                              end = index + 1
+                              break
+                  if end is not None and call_position < end:
+                      return match.start(), brace, end
+              raise RuntimeError("Could not find a for loop enclosing jump_flood")
+
+          def split_arguments(source: str, open_paren: int) -> tuple[list[str], int]:
+              args = []
+              depth = 0
+              current = []
+              index = open_paren + 1
+              while index < len(source):
+                  char = source[index]
+                  if char in "([{":
+                      depth += 1
+                      current.append(char)
+                  elif char in ")]}":
+                      if char == ")" and depth == 0:
+                          args.append("".join(current).strip())
+                          return args, index
+                      depth -= 1
+                      current.append(char)
+                  elif char == "," and depth == 0:
+                      args.append("".join(current).strip())
+                      current = []
+                  else:
+                      current.append(char)
+                  index += 1
+              raise RuntimeError("Unterminated jump_flood call")
+
+          patched_loops = 0
+          source_paths = list(Path("servers/rendering").rglob("*.cpp"))
+          for path in source_paths:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              search_position = 0
+              changed = False
+              while True:
+                  call = re.search(r"(?:->|\.)jump_flood\s*\(", text[search_position:])
+                  if call is None:
+                      break
+                  call_start = search_position + call.start()
+                  open_paren = text.index("(", call_start)
+                  args, call_end = split_arguments(text, open_paren)
+                  if len(args) < 5:
+                      raise RuntimeError(f"{path}: unexpected jump_flood arguments: {args}")
+                  spread_expression = args[-1]
+
+                  fn_start, fn_end = find_enclosing_function(text, call_start)
+                  fn = text[fn_start:fn_end]
+                  local_call = call_start - fn_start
+                  loop_start, loop_brace, loop_end = find_enclosing_for(fn, local_call)
+                  loop = fn[loop_start:loop_end]
+                  if "mesh_blend_pixel_radius_limit" in loop:
+                      search_position = call_end + 1
+                      continue
+
+                  world_tokens = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*use_world_radius[A-Za-z0-9_]*\b", fn)
+                  radius_tokens = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*edge_radius[A-Za-z0-9_]*\b", fn)
+                  if not world_tokens or not radius_tokens:
+                      raise RuntimeError(
+                          f"{path}: could not infer use_world_radius/edge_radius variables in jump-flood caller"
+                      )
+                  use_world = world_tokens[-1]
+                  edge_radius = radius_tokens[-1]
+
+                  loop_indent_match = re.match(r"[\t ]*", fn[loop_start:])
+                  loop_indent = loop_indent_match.group(0)
+                  body_indent = loop_indent + "\t"
+                  guard = (
+                      "\n"
+                      + body_indent
+                      + f"const int mesh_blend_pixel_radius_limit = MAX(1, int(Math::ceil({edge_radius} * 2.0f)));\n"
+                      + body_indent
+                      + f"if (!{use_world} && ({spread_expression}) > mesh_blend_pixel_radius_limit) {{\n"
+                      + body_indent + "\tcontinue;\n"
+                      + body_indent + "}"
+                  )
+                  insertion = loop_brace + 1
+                  fn = fn[:insertion] + guard + fn[insertion:]
+                  text = text[:fn_start] + fn + text[fn_end:]
+                  changed = True
+                  patched_loops += 1
+                  search_position = fn_start + insertion + len(guard)
+
+              if changed:
+                  path.write_text(text, encoding="utf-8")
+
+          if patched_loops == 0:
+              # The branch may already have the optimization; require the guard globally.
+              all_cpp = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in source_paths)
+              if "mesh_blend_pixel_radius_limit" not in all_cpp:
+                  raise RuntimeError("No jump-flood loop was patched")
+
+          # Every jump-flood caller loop should now contain the radius guard.
+          for path in source_paths:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              if "jump_flood(" in text and "mesh_blend_pixel_radius_limit" not in text:
+                  # Ignore the MeshBlend method implementation itself; it contains the function definition,
+                  # not the multi-pass caller.
+                  if "void MeshBlend::jump_flood(" not in text:
+                      raise RuntimeError(f"{path}: a jump-flood caller remains unbounded")
+          PY
+
+          git diff --check
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove workflow, record validation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_jump_flood.yml
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/mesh-blend-bounded-jump-flood"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "pixel_radius_guard_multiplier=2.0"
+            echo "world_space_path=unchanged"
+          } > .github/build-status/mesh-blend-bounded-jump-flood.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Bound Mesh Blend jump flood by pixel-space radius"
+          git push origin HEAD:opt/mesh-blend-bounded-jump-flood
