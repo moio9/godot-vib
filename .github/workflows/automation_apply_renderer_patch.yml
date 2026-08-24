@@ -1,4 +1,4 @@
-name: Temporary renderer patch automation
+name: Format renderer optimization branch
 
 on:
   pull_request_target:
@@ -6,57 +6,71 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
-  apply:
-    if: github.event.pull_request.number == 5
+  format:
+    if: >-
+      github.event.pull_request.number == 3 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'work/renderer-optimizations'
     runs-on: ubuntu-24.04
+
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout trusted renderer branch
+        uses: actions/checkout@v7
         with:
-          ref: opt/mesh-blend-vb-depth
+          ref: work/renderer-optimizations
           fetch-depth: 0
 
-      - name: Apply renderer patch
+      - name: Apply Godot formatters
+        id: format
+        continue-on-error: true
+        uses: j178/prek-action@v2
+        with:
+          extra-args: >-
+            --files
+            servers/rendering/renderer_rd/effects/mesh_blend.cpp
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+            servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
+            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
+            servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+
+      - name: Validate formatter output
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/apply_mesh_blend_depth_v1.py
+          git diff --check
 
-          # Godot's static check rejects generated files tracked despite
-          # matching .gitignore. Remove only ignored generated files; abort on
-          # any unexpected ignored tracked path.
-          mapfile -t ignored < <(git ls-files -ci --exclude-standard)
-          for path in "${ignored[@]}"; do
+          mapfile -t changed < <(git diff --name-only)
+          for path in "${changed[@]}"; do
             case "$path" in
-              *.gen.*)
-                rm -f -- "$path"
+              servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp|\
+              servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl|\
+              servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl)
                 ;;
               *)
-                echo "Unexpected tracked ignored file: $path" >&2
+                echo "Formatter changed unexpected file: $path" >&2
                 exit 1
                 ;;
             esac
           done
 
-          git diff --check
-          grep -n "p_gtid.y % 8" servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
-          grep -n "p_gtid.y % 16" servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
-          grep -n "sampler2D mesh_depth" servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
-          grep -n "SAMPLER_WITH_TEXTURE, 4" servers/rendering/renderer_rd/effects/mesh_blend.cpp
-          grep -n "scene_depth = rb->get_depth_texture" servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
-          if grep -n "create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH" servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp; then
-            echo "VB_DEPTH is still allocated" >&2
-            exit 1
-          fi
-
-      - name: Commit and push optimized branch
+      - name: Commit formatter changes
         shell: bash
         run: |
           set -euo pipefail
+          if git diff --quiet; then
+            echo "Renderer files are already formatted."
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Reuse main depth for Mesh Blend and fix depth mip lanes"
-          git push origin HEAD:opt/mesh-blend-vb-depth
+          git add \
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp \
+            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          git commit -m "Format renderer optimization sources"
+          git push origin HEAD:work/renderer-optimizations
