@@ -27,7 +27,31 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: opt/renderer-batch2
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Fetch only validated patch branches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          branches=(
+            opt/renderer-depth-final
+            opt/mesh-blend-mask-bandwidth
+            opt/mesh-blend-compact-visibility-attachment
+            opt/mesh-blend-bounded-jump-flood
+            opt/mesh-blend-rg16-edges
+            opt/mesh-blend-packed-mask
+            opt/mesh-blend-packed-vb-aux
+            opt/mesh-blend-reuse-vb-aux-mask
+            opt/mesh-blend-main-pass-metadata
+          )
+
+          for branch in "${branches[@]}"; do
+            git fetch --depth=1 origin \
+              "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+          done
 
       - name: Apply and verify V3 source stages
         shell: bash
@@ -69,7 +93,6 @@ jobs:
               return "\n".join(line[prefix:] if line.strip() else "" for line in block) + "\n"
 
           stages = [
-              "Fetch source branches",
               "Normalize current source names",
               "Apply validated shared-depth and edge-correctness patch",
               "Add functional per-pixel Mesh Blend shader API",
