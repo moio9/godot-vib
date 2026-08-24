@@ -1,0 +1,163 @@
+name: Use RG16 Mesh Blend edge buffers
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-rg16-edges
+    paths:
+      - .github/workflows/optimize_mesh_blend_edge_format.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-rg16-edges
+          fetch-depth: 0
+
+      - name: Convert edge coordinate storage to 16-bit unsigned pairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          shader_paths = (
+              Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl"),
+              Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_jump_flood.glsl"),
+          )
+          shader_replacements = 0
+          for path in shader_paths:
+              text = path.read_text(encoding="utf-8")
+              updated, count = re.subn(r"layout\(rg32ui,", "layout(rg16ui,", text)
+              if count:
+                  path.write_text(updated, encoding="utf-8")
+                  shader_replacements += count
+          if shader_replacements < 3:
+              raise RuntimeError(f"Expected at least three edge image declarations, changed {shader_replacements}")
+
+          # Change only texture allocations associated with Mesh Blend edge ping-pong targets.
+          allocation_replacements = 0
+          touched_files = []
+          for path in list(Path("servers/rendering").rglob("*.cpp")) + list(Path("servers/rendering").rglob("*.h")):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              positions = [match.start() for match in re.finditer("RD::DATA_FORMAT_R32G32_UINT", text)]
+              if not positions:
+                  continue
+              updated = text
+              offset = 0
+              changed_here = 0
+              for position in positions:
+                  adjusted = position + offset
+                  window_start = max(0, adjusted - 500)
+                  window_end = min(len(updated), adjusted + 500)
+                  window = updated[window_start:window_end].lower()
+                  edge_context = (
+                      "mesh_blend" in window
+                      and ("edge" in window or "jump" in window)
+                  )
+                  if not edge_context:
+                      continue
+                  old = "RD::DATA_FORMAT_R32G32_UINT"
+                  new = "RD::DATA_FORMAT_R16G16_UINT"
+                  updated = updated[:adjusted] + new + updated[adjusted + len(old):]
+                  offset += len(new) - len(old)
+                  changed_here += 1
+                  allocation_replacements += 1
+              if changed_here:
+                  path.write_text(updated, encoding="utf-8")
+                  touched_files.append(path)
+
+          if allocation_replacements < 1:
+              raise RuntimeError("No Mesh Blend edge texture allocation was converted to R16G16_UINT")
+
+          # Assert the full Visibility debug texture remains RG32_UINT.
+          visibility_context_found = False
+          for path in list(Path("servers/rendering").rglob("*.cpp")) + list(Path("servers/rendering").rglob("*.h")):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              if "RB_TEX_VB_VIS" in text and "RD::DATA_FORMAT_R32G32_UINT" in text:
+                  visibility_context_found = True
+                  break
+          if not visibility_context_found:
+              raise RuntimeError("The full Visibility debug attachment no longer retains R32G32_UINT")
+
+          # No shader edge image may remain 32-bit per component.
+          for path in shader_paths:
+              text = path.read_text(encoding="utf-8")
+              if "layout(rg32ui" in text:
+                  raise RuntimeError(f"{path}: an RG32 edge image remains")
+              if "layout(rg16ui" not in text:
+                  raise RuntimeError(f"{path}: RG16 edge image declaration is missing")
+
+          # Document the coordinate encoding limit beside the edge producer. Godot's
+          # RenderingDevice texture limit is well below 65535 on supported hardware.
+          mask = shader_paths[0]
+          text = mask.read_text(encoding="utf-8")
+          comment = "// Edge coordinates are stored as coord + 1 in RG16UI; zero is the invalid sentinel."
+          if comment not in text:
+              marker = "layout(rg16ui, set = 0, binding = 2) uniform writeonly uimage2D mesh_edges;"
+              if marker not in text:
+                  raise RuntimeError("Mesh edge declaration marker was not found")
+              text = text.replace(marker, comment + "\n" + marker, 1)
+              mask.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+
+      - name: Validate modified compute shaders
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools spirv-tools
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ("mesh_blend_mask", "mesh_blend_jump_flood"):
+              source = Path(f"servers/rendering/renderer_rd/shaders/effects/{name}.glsl")
+              text = source.read_text(encoding="utf-8").replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
+              Path(f"/tmp/{name}.comp").write_text(text, encoding="utf-8")
+          PY
+          for shader in /tmp/mesh_blend_*.comp; do
+            glslangValidator -V --target-env vulkan1.2 -S comp "$shader" -o "${shader%.comp}.spv"
+            spirv-val --target-env vulkan1.2 "${shader%.comp}.spv"
+          done
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove workflow, record validation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_edge_format.yml
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/mesh-blend-rg16-edges"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "old_format=R32G32_UINT"
+            echo "new_format=R16G16_UINT"
+          } > .github/build-status/mesh-blend-rg16-edges.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Use RG16 edge coordinates for Mesh Blend jump flood"
+          git push origin HEAD:opt/mesh-blend-rg16-edges
