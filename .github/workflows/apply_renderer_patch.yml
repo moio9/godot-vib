@@ -23,30 +23,53 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      - name: Apply guarded source transformations
-        run: python3 misc/scripts/apply_renderer_optimizations.py
+      - name: Apply Godot formatters
+        continue-on-error: true
+        uses: j178/prek-action@v2
+        with:
+          extra-args: >-
+            --files
+            servers/rendering/renderer_rd/effects/mesh_blend.cpp
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+            servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
+            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
+            servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
 
-      - name: Validate patch formatting
-        run: git diff --check
+      - name: Validate formatter output
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
 
-      - name: Commit transformed sources
+          mapfile -t changed < <(git diff --name-only)
+          for path in "${changed[@]}"; do
+            case "$path" in
+              servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp|\
+              servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl|\
+              servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl)
+                ;;
+              *)
+                echo "Formatter changed unexpected file: $path" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Commit formatted renderer sources
         shell: bash
         run: |
           set -euo pipefail
           if git diff --quiet; then
-            echo "Renderer sources already contain the requested optimizations."
+            echo "Renderer sources are already formatted."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
-            servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl \
-            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl \
-            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
-            servers/rendering/renderer_rd/effects/mesh_blend.cpp \
             servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp \
-            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp \
-            .github/workflows/termux_build.yml
-          git commit -m "Optimize VB mesh blending and shared depth preparation"
+            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          git commit -m "Format renderer optimization sources"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
