@@ -1,0 +1,160 @@
+name: Fix Mesh Blend edge synchronization and sentinel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/mesh-blend-edge-propagation
+    paths:
+      - .github/workflows/apply_mesh_blend_edge_fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/mesh-blend-edge-propagation
+          fetch-depth: 0
+
+      - name: Apply edge synchronization and coordinate encoding fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          mask = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = mask.read_text(encoding="utf-8")
+          old_bounds = '''\tivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+\tivec2 resolution = params.resolution;
+\tif (any(greaterThanEqual(pixel, resolution))) {
+\t\treturn;
+\t}
+
+\tivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * THREADCOUNT - ivec2(TILE_BORDER);'''
+          new_bounds = '''\tivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+\tivec2 resolution = params.resolution;
+\tbool pixel_in_bounds = all(lessThan(pixel, resolution));
+
+\tivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * THREADCOUNT - ivec2(TILE_BORDER);'''
+          if old_bounds in text:
+              text = text.replace(old_bounds, new_bounds, 1)
+          if "bool pixel_in_bounds" not in text:
+              raise RuntimeError("Could not establish the post-barrier bounds guard")
+
+          barrier_marker = '''\tbarrier();
+
+\tivec2 local_pixel = local_id + ivec2(TILE_BORDER);'''
+          if barrier_marker in text:
+              text = text.replace(
+                  barrier_marker,
+                  '''\tbarrier();
+
+\tif (!pixel_in_bounds) {
+\t\treturn;
+\t}
+
+\tivec2 local_pixel = local_id + ivec2(TILE_BORDER);''',
+                  1,
+              )
+          if "if (!pixel_in_bounds)" not in text:
+              raise RuntimeError("The post-barrier bounds guard is missing")
+
+          # Zero remains the invalid sentinel; real edge coordinates are stored as coordinate + 1.
+          text = text.replace(
+              "\t\tedge_store.xy = uvec2(neighbor_pixel);",
+              "\t\tedge_store.xy = uvec2(neighbor_pixel + ivec2(1));",
+              1,
+          )
+          if "neighbor_pixel + ivec2(1)" not in text:
+              raise RuntimeError("Encoded edge coordinate write is missing")
+          mask.write_text(text, encoding="utf-8")
+
+          flood = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_jump_flood.glsl")
+          text = flood.read_text(encoding="utf-8")
+          old_init = '''\tuvec2 best_edge = imageLoad(edges_in, pixel).xy;
+\tvec2 best_diff = vec2(pixel - ivec2(best_edge));
+\tfloat best_dist = dot(best_diff, best_diff);'''
+          new_init = '''\tuvec2 best_edge = imageLoad(edges_in, pixel).xy;
+\tfloat best_dist = 3.402823466e+38;
+\tif (any(notEqual(best_edge, uvec2(0u)))) {
+\t\tivec2 best_coord = ivec2(best_edge) - ivec2(1);
+\t\tvec2 best_diff = vec2(pixel - best_coord);
+\t\tbest_dist = dot(best_diff, best_diff);
+\t}'''
+          if old_init not in text:
+              raise RuntimeError("Jump-flood initial edge block was not found")
+          text = text.replace(old_init, new_init, 1)
+
+          old_candidate = '''\t\tuvec2 edge_candidate = imageLoad(edges_in, sample_pixel).xy;
+\t\tivec2 edge_coord = ivec2(edge_candidate);
+
+\t\tif (any(lessThan(edge_coord, ivec2(0))) || any(greaterThanEqual(edge_coord, params.resolution))) {
+\t\t\tcontinue;
+\t\t}'''
+          new_candidate = '''\t\tuvec2 edge_candidate = imageLoad(edges_in, sample_pixel).xy;
+\t\tif (all(equal(edge_candidate, uvec2(0u)))) {
+\t\t\tcontinue;
+\t\t}
+\t\tivec2 edge_coord = ivec2(edge_candidate) - ivec2(1);
+
+\t\tif (any(lessThan(edge_coord, ivec2(0))) || any(greaterThanEqual(edge_coord, params.resolution))) {
+\t\t\tcontinue;
+\t\t}'''
+          if old_candidate not in text:
+              raise RuntimeError("Jump-flood candidate decode block was not found")
+          text = text.replace(old_candidate, new_candidate, 1)
+          flood.write_text(text, encoding="utf-8")
+
+          blend = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_blend.glsl")
+          text = blend.read_text(encoding="utf-8")
+          old_decode = '''\tuvec2 edge_coord_u = texelFetch(edge_tex, pixel, 0).xy;
+\tivec2 edge_coord = ivec2(edge_coord_u);
+\tif (edge_coord == ivec2(0)) {
+\t\tfrag_color = texelFetch(source_color, pixel, 0);
+\t\treturn;
+\t}'''
+          new_decode = '''\tuvec2 edge_coord_u = texelFetch(edge_tex, pixel, 0).xy;
+\tif (all(equal(edge_coord_u, uvec2(0u)))) {
+\t\tfrag_color = texelFetch(source_color, pixel, 0);
+\t\treturn;
+\t}
+\tivec2 edge_coord = ivec2(edge_coord_u) - ivec2(1);'''
+          if old_decode not in text:
+              raise RuntimeError("Blend edge decode block was not found")
+          text = text.replace(old_decode, new_decode, 1)
+          blend.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/apply_mesh_blend_edge_fixes.yml
+
+      - name: Commit compiled fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Mesh Blend edge synchronization and propagation sentinel"
+          git push origin HEAD:fix/mesh-blend-edge-propagation
