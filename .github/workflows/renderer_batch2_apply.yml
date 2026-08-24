@@ -1,0 +1,22 @@
+name: Cancel obsolete renderer optimization run
+
+on:
+  pull_request:
+    branches:
+      - "4.7"
+    paths:
+      - ".github/workflows/renderer_batch2_apply.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: renderer-batch2-apply
+  cancel-in-progress: true
+
+jobs:
+  cancel-stale-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm stale renderer run replacement
+        run: echo "Obsolete renderer optimization run replaced."
