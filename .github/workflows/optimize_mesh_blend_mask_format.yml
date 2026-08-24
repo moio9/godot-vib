@@ -1,0 +1,303 @@
+name: Pack Mesh Blend mask into R16_UINT
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-packed-mask
+    paths:
+      - .github/workflows/optimize_mesh_blend_mask_format.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-packed-mask
+          fetch-depth: 0
+
+      - name: Pack group and signed blend strength into 16 bits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          mask_path = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl")
+          text = mask_path.read_text(encoding="utf-8")
+          text = text.replace(
+              "layout(rg16f, set = 0, binding = 1) uniform writeonly image2D mesh_mask;",
+              "layout(r16ui, set = 0, binding = 1) uniform writeonly uimage2D mesh_mask;",
+              1,
+          )
+          if "uint pack_mesh_blend_mask" not in text:
+              main_position = text.find("void main()")
+              if main_position < 0:
+                  raise RuntimeError("Mesh Blend mask shader main() was not found")
+              helper = '''uint pack_mesh_blend_mask(vec2 value) {
+\tuint group_id = uint(round(clamp(value.x, 0.0, 1.0) * 255.0));
+\tint weight_snorm = int(round(clamp(value.y, -1.0, 1.0) * 127.0));
+\tuint weight_bits = uint(weight_snorm) & 0xFFu;
+\treturn (group_id << 8u) | weight_bits;
+}
+
+'''
+              text = text[:main_position] + helper + text[main_position:]
+          text = text.replace(
+              "imageStore(mesh_mask, pixel, vec4(current, 0.0, 0.0));",
+              "imageStore(mesh_mask, pixel, uvec4(pack_mesh_blend_mask(current), 0u, 0u, 0u));",
+              1,
+          )
+          required_mask = (
+              "layout(r16ui, set = 0, binding = 1) uniform writeonly uimage2D mesh_mask;",
+              "uint pack_mesh_blend_mask(vec2 value)",
+              "group_id << 8u",
+              "imageStore(mesh_mask, pixel, uvec4(pack_mesh_blend_mask(current)",
+          )
+          for needle in required_mask:
+              if needle not in text:
+                  raise RuntimeError(f"Mask shader is missing: {needle}")
+          mask_path.write_text(text, encoding="utf-8")
+
+          flood_path = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_jump_flood.glsl")
+          text = flood_path.read_text(encoding="utf-8")
+          text = text.replace(
+              "layout(rg16f, set = 0, binding = 2) uniform readonly image2D mesh_mask;",
+              "layout(r16ui, set = 0, binding = 2) uniform readonly uimage2D mesh_mask;",
+              1,
+          )
+          if "uint mesh_blend_group_from_packed" not in text:
+              main_position = text.find("void main()")
+              if main_position < 0:
+                  raise RuntimeError("Jump-flood shader main() was not found")
+              helper = '''uint mesh_blend_group_from_packed(uint packed_value) {
+\treturn (packed_value >> 8u) & 0xFFu;
+}
+
+'''
+              text = text[:main_position] + helper + text[main_position:]
+
+          text = text.replace(
+              '''\tvec2 current_mask = imageLoad(mesh_mask, pixel).xy;
+\tfloat current_id = current_mask.x;''',
+              '''\tuint current_mask = imageLoad(mesh_mask, pixel).x;
+\tuint current_id = mesh_blend_group_from_packed(current_mask);''',
+              1,
+          )
+          text = text.replace(
+              "float edge_id = imageLoad(mesh_mask, edge_coord).x;",
+              "uint edge_id = mesh_blend_group_from_packed(imageLoad(mesh_mask, edge_coord).x);",
+              1,
+          )
+          if re.search(r"\bvec2\s+current_mask\s*=\s*imageLoad\(mesh_mask", text):
+              raise RuntimeError("Jump-flood shader still treats the packed mask as RG16F")
+          required_flood = (
+              "layout(r16ui, set = 0, binding = 2) uniform readonly uimage2D mesh_mask;",
+              "uint current_id = mesh_blend_group_from_packed",
+              "uint edge_id = mesh_blend_group_from_packed",
+          )
+          for needle in required_flood:
+              if needle not in text:
+                  raise RuntimeError(f"Jump-flood shader is missing: {needle}")
+          flood_path.write_text(text, encoding="utf-8")
+
+          blend_path = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_blend.glsl")
+          text = blend_path.read_text(encoding="utf-8")
+          text = text.replace(
+              "layout(set = 1, binding = 2) uniform sampler2D mask_tex;",
+              "layout(set = 1, binding = 2) uniform usampler2D mask_tex;",
+              1,
+          )
+          if "vec2 unpack_mesh_blend_mask" not in text:
+              reconstruct_position = text.find("vec3 reconstruct_position")
+              if reconstruct_position < 0:
+                  raise RuntimeError("Blend shader reconstruction helper was not found")
+              helper = '''vec2 unpack_mesh_blend_mask(uint packed_value) {
+\tuint group_id = (packed_value >> 8u) & 0xFFu;
+\tuint weight_bits = packed_value & 0xFFu;
+\tint weight_snorm = weight_bits >= 128u ? int(weight_bits) - 256 : int(weight_bits);
+\tfloat weight = clamp(float(weight_snorm) / 127.0, -1.0, 1.0);
+\treturn vec2(float(group_id), weight);
+}
+
+uint unpack_mesh_blend_group(uint packed_value) {
+\treturn (packed_value >> 8u) & 0xFFu;
+}
+
+'''
+              text = text[:reconstruct_position] + helper + text[reconstruct_position:]
+
+          text = text.replace(
+              '''\tvec2 mask_value = texelFetch(mask_tex, pixel, 0).xy;
+\tfloat current_id = mask_value.x;''',
+              '''\tuint mask_value_packed = texelFetch(mask_tex, pixel, 0).x;
+\tvec2 mask_value = unpack_mesh_blend_mask(mask_value_packed);
+\tuint current_id = uint(mask_value.x);''',
+              1,
+          )
+          text = text.replace(
+              '''\tvec2 edge_mask = texelFetch(mask_tex, edge_coord, 0).xy;
+\tfloat edge_id = edge_mask.x;''',
+              '''\tuint edge_mask_packed = texelFetch(mask_tex, edge_coord, 0).x;
+\tvec2 edge_mask = unpack_mesh_blend_mask(edge_mask_packed);
+\tuint edge_id = uint(edge_mask.x);''',
+              1,
+          )
+          text = text.replace(
+              "vec4 gather_mask = textureGather(mask_tex, seam_uv, 0);",
+              "uvec4 gather_mask = textureGather(mask_tex, seam_uv, 0);",
+              1,
+          )
+          text = text.replace(
+              "float sample_id = gather_mask[i];",
+              "uint sample_id = unpack_mesh_blend_group(gather_mask[i]);",
+              1,
+          )
+          if "uniform sampler2D mask_tex" in text:
+              raise RuntimeError("Blend shader still exposes a floating-point mask sampler")
+          required_blend = (
+              "uniform usampler2D mask_tex;",
+              "vec2 unpack_mesh_blend_mask(uint packed_value)",
+              "uint current_id = uint(mask_value.x);",
+              "uvec4 gather_mask = textureGather(mask_tex, seam_uv, 0);",
+              "uint sample_id = unpack_mesh_blend_group(gather_mask[i]);",
+          )
+          for needle in required_blend:
+              if needle not in text:
+                  raise RuntimeError(f"Blend shader is missing: {needle}")
+          blend_path.write_text(text, encoding="utf-8")
+
+          # Change only the Mesh Blend mask allocation, not the VB auxiliary texture.
+          allocation_replacements = 0
+          source_paths = list(Path("servers/rendering").rglob("*.cpp")) + list(Path("servers/rendering").rglob("*.h"))
+          for path in source_paths:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              positions = [match.start() for match in re.finditer("RD::DATA_FORMAT_R16G16_SFLOAT", text)]
+              if not positions:
+                  continue
+              updated = text
+              offset = 0
+              changed_here = 0
+              for position in positions:
+                  adjusted = position + offset
+                  window = updated[max(0, adjusted - 500):min(len(updated), adjusted + 500)].lower()
+                  if "mesh_blend" not in window or "mask" not in window:
+                      continue
+                  old = "RD::DATA_FORMAT_R16G16_SFLOAT"
+                  new = "RD::DATA_FORMAT_R16_UINT"
+                  updated = updated[:adjusted] + new + updated[adjusted + len(old):]
+                  offset += len(new) - len(old)
+                  allocation_replacements += 1
+                  changed_here += 1
+              if changed_here:
+                  path.write_text(updated, encoding="utf-8")
+          if allocation_replacements < 1:
+              raise RuntimeError("No Mesh Blend mask texture allocation was converted to R16_UINT")
+
+          # The rasterized VB auxiliary texture must retain RG16F because it carries the
+          # unquantized per-pixel material output before mask generation.
+          vb_aux_retained = False
+          for path in source_paths:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              if "RB_TEX_VB_AUX" in text and "RD::DATA_FORMAT_R16G16_SFLOAT" in text:
+                  vb_aux_retained = True
+                  break
+          if not vb_aux_retained:
+              raise RuntimeError("VB_AUX no longer retains its R16G16_SFLOAT format")
+
+          # Integer mask textures must use nearest sampling in the final blend pass.
+          mesh_cpp = Path("servers/rendering/renderer_rd/effects/mesh_blend.cpp")
+          text = mesh_cpp.read_text(encoding="utf-8")
+          old_binding = "RD::Uniform u_mask(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ sampler_linear, p_mask }));"
+          new_binding = "RD::Uniform u_mask(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ sampler_nearest, p_mask }));"
+          if old_binding in text:
+              text = text.replace(old_binding, new_binding, 1)
+          if new_binding not in text:
+              raise RuntimeError("Final Mesh Blend pass does not bind the packed mask with nearest sampling")
+          mesh_cpp.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+
+      - name: Validate packing precision and all modified shader stages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools spirv-tools
+          python3 - <<'PY'
+          from pathlib import Path
+
+          max_error = 0.0
+          for group_id in (0, 1, 63, 127, 255):
+              for step in range(-1000, 1001):
+                  weight = step / 1000.0
+                  quantized = round(max(-1.0, min(1.0, weight)) * 127.0)
+                  packed = ((group_id & 0xFF) << 8) | (quantized & 0xFF)
+                  decoded_group = (packed >> 8) & 0xFF
+                  bits = packed & 0xFF
+                  signed = bits - 256 if bits >= 128 else bits
+                  decoded_weight = max(-1.0, min(1.0, signed / 127.0))
+                  if decoded_group != group_id:
+                      raise RuntimeError("Packed group ID did not round-trip")
+                  max_error = max(max_error, abs(decoded_weight - weight))
+          if max_error > (1.0 / 127.0 + 1e-9):
+              raise RuntimeError(f"Unexpected mask quantization error: {max_error}")
+          Path("/tmp/mesh_mask_quantization.txt").write_text(f"max_abs_error={max_error:.9f}\n", encoding="utf-8")
+
+          for name in ("mesh_blend_mask", "mesh_blend_jump_flood"):
+              source = Path(f"servers/rendering/renderer_rd/shaders/effects/{name}.glsl")
+              text = source.read_text(encoding="utf-8").replace("#[compute]\n", "", 1).replace("#VERSION_DEFINES", "", 1)
+              Path(f"/tmp/{name}.comp").write_text(text, encoding="utf-8")
+
+          blend = Path("servers/rendering/renderer_rd/shaders/effects/mesh_blend_blend.glsl").read_text(encoding="utf-8")
+          fragment = blend.split("#[fragment]", 1)[1].replace("#VERSION_DEFINES", "", 1)
+          Path("/tmp/mesh_blend_blend.frag").write_text(fragment, encoding="utf-8")
+          PY
+
+          for shader in /tmp/mesh_blend_*.comp; do
+            glslangValidator -V --target-env vulkan1.2 -S comp "$shader" -o "${shader%.comp}.spv"
+            spirv-val --target-env vulkan1.2 "${shader%.comp}.spv"
+          done
+          glslangValidator -V --target-env vulkan1.2 -S frag /tmp/mesh_blend_blend.frag -o /tmp/mesh_blend_blend.spv
+          spirv-val --target-env vulkan1.2 /tmp/mesh_blend_blend.spv
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove workflow, record validation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_mask_format.yml
+          mkdir -p .github/build-status
+          cp /tmp/mesh_mask_quantization.txt .github/build-status/mesh-blend-packed-mask-precision.txt
+          {
+            echo "branch=opt/mesh-blend-packed-mask"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "format=R16_UINT"
+            echo "layout=group_u8,weight_snorm8"
+          } > .github/build-status/mesh-blend-packed-mask.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Pack Mesh Blend mask into R16_UINT"
+          git push origin HEAD:opt/mesh-blend-packed-mask
