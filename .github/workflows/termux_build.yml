@@ -1,0 +1,101 @@
+name: 📱 Termux Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "4.7"
+      - "sync/4.7.2"
+    paths:
+      - "core/**"
+      - "drivers/**"
+      - "editor/**"
+      - "main/**"
+      - "modules/**"
+      - "platform/**"
+      - "scene/**"
+      - "servers/**"
+      - "thirdparty/**"
+      - "SConstruct"
+      - "version.py"
+      - ".github/workflows/termux_build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-termux-aarch64:
+    name: Termux aarch64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Clone Termux package builder
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/termux/termux-packages.git "$RUNNER_TEMP/termux-packages"
+
+      - name: Point Termux Godot recipe at this fork commit
+        env:
+          SOURCE_URL: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.tar.gz
+        run: |
+          set -euxo pipefail
+          RECIPE="$RUNNER_TEMP/termux-packages/x11-packages/godot/build.sh"
+
+          # Use the exact fork commit being tested rather than stock Godot sources.
+          curl -L --fail --retry 3 "$SOURCE_URL" -o "$RUNNER_TEMP/godot-vib.tar.gz"
+          SOURCE_SHA256="$(sha256sum "$RUNNER_TEMP/godot-vib.tar.gz" | awk '{print $1}')"
+
+          VERSION="$(python3 - <<'PY'
+          ns = {}
+          with open('version.py', 'r', encoding='utf-8') as f:
+              exec(f.read(), ns)
+          print(f"{ns['major']}.{ns['minor']}.{ns['patch']}")
+          PY
+          )"
+
+          sed -i -E "s/^TERMUX_PKG_VERSION=.*/TERMUX_PKG_VERSION=\"${VERSION}\"/" "$RECIPE"
+          sed -i -E "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=\"${SOURCE_URL}\"|" "$RECIPE"
+          sed -i -E "s/^TERMUX_PKG_SHA256=.*/TERMUX_PKG_SHA256=${SOURCE_SHA256}/" "$RECIPE"
+          sed -i -E 's/^TERMUX_PKG_AUTO_UPDATE=.*/TERMUX_PKG_AUTO_UPDATE=false/' "$RECIPE"
+          sed -i '/^TERMUX_PKG_REVISION=/d' "$RECIPE"
+          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=99" "$RECIPE"
+
+          echo "Building Godot ${VERSION} fork commit ${{ github.sha }} for Termux/aarch64"
+          grep -E '^TERMUX_PKG_(VERSION|REVISION|SRCURL|SHA256|DEPENDS|BUILD_DEPENDS)=' "$RECIPE"
+
+      - name: Free disk space
+        working-directory: ${{ runner.temp }}/termux-packages
+        run: |
+          set -euxo pipefail
+          ./scripts/free-space.sh
+
+      - name: Build Godot package for Termux
+        working-directory: ${{ runner.temp }}/termux-packages
+        run: |
+          set -euxo pipefail
+          ./scripts/run-docker.sh -d ./build-package.sh -I -C -f -a aarch64 godot
+
+      - name: Collect packages
+        if: always()
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/termux-artifacts"
+          if [ -d "$RUNNER_TEMP/termux-packages/output" ]; then
+            find "$RUNNER_TEMP/termux-packages/output" -maxdepth 1 -type f -name 'godot*.deb' -exec cp -v {} "$GITHUB_WORKSPACE/termux-artifacts/" \;
+          fi
+          ls -lah "$GITHUB_WORKSPACE/termux-artifacts"
+
+      - name: Upload Termux package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-vib-termux-aarch64-${{ github.sha }}
+          path: termux-artifacts/*.deb
+          if-no-files-found: error
+          retention-days: 14
