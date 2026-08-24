@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "render_forward_clustered.h"
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
@@ -2637,8 +2638,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		rb->ensure_upscaled();
 	}
 
-
-
 	if (scene_state.used_screen_texture || global_surface_data.screen_texture_used) {
 		RENDER_TIMESTAMP("Copy Screen Texture");
 
@@ -2683,8 +2682,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		RENDER_TIMESTAMP("Process Pre Transparent Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
-
-
 
 	RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
@@ -2732,7 +2729,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	if (!p_render_data->environment.is_valid()) {
 		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
 	} else {
-
 		RID directional_light;
 		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
 			RID li = p_render_data->render_shadows[i].light;

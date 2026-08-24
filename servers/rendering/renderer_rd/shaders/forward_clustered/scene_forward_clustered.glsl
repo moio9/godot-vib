@@ -2751,14 +2751,14 @@ void fragment_shader(in SceneData scene_data) {
 			shadow = mix(1.0, shadow, directional_lights.data[i].shadow_opacity);
 #endif
 
-		if (i == 0 && bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSS)) {
+			if (i == 0 && bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSS)) {
 #ifdef USE_MULTIVIEW
-			float sss_shadow = texture(sampler2DArray(sss_buffer, SAMPLER_LINEAR_CLAMP), vec3(screen_uv, ViewIndex)).r;
+				float sss_shadow = texture(sampler2DArray(sss_buffer, SAMPLER_LINEAR_CLAMP), vec3(screen_uv, ViewIndex)).r;
 #else
-			float sss_shadow = texture(sampler2D(sss_buffer, SAMPLER_LINEAR_CLAMP), screen_uv).r;
+				float sss_shadow = texture(sampler2D(sss_buffer, SAMPLER_LINEAR_CLAMP), screen_uv).r;
 #endif
-			shadow *= sss_shadow;
-		}
+				shadow *= sss_shadow;
+			}
 
 			blur_shadow(shadow);
 
