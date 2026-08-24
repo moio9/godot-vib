@@ -39,6 +39,7 @@ on:
 permissions:
   contents: read
 
+# Keep only the newest package build for each PR or branch.
 concurrency:
   group: ${{ github.workflow }}|${{ github.ref }}
   cancel-in-progress: true
