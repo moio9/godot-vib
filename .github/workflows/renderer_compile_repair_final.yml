@@ -1,5 +1,6 @@
 name: Repair and compile renderer batch
 
+# trigger: 2
 on:
   push:
     branches:
