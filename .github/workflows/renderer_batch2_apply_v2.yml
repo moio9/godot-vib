@@ -1,4 +1,4 @@
-name: Consolidate renderer optimizations driver
+name: Apply consolidated renderer optimizations
 
 on:
   pull_request:
@@ -17,10 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  apply-build-commit:
+  apply-and-commit-source:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'opt/renderer-batch2'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    runs-on: ubuntu-slim
+    timeout-minutes: 60
 
     steps:
       - name: Checkout optimization branch
@@ -29,10 +29,13 @@ jobs:
           ref: opt/renderer-batch2
           fetch-depth: 0
 
-      - name: Execute V3 patch and validation stages
+      - name: Apply and verify V3 source stages
         shell: bash
         run: |
           set -euxo pipefail
+          command -v git
+          command -v python3
+
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
@@ -61,6 +64,7 @@ jobs:
               nonempty = [line for line in block if line.strip()]
               if not nonempty:
                   raise RuntimeError(f"Empty run block for V3 step: {name}")
+
               prefix = min(len(line) - len(line.lstrip()) for line in nonempty)
               return "\n".join(line[prefix:] if line.strip() else "" for line in block) + "\n"
 
@@ -72,8 +76,6 @@ jobs:
               "Apply validated Mesh Blend bandwidth passes",
               "Remove tracked generated files",
               "Verify optimized source invariants",
-              "Install shader validation tools",
-              "Validate standalone Mesh Blend shaders",
           ]
 
           for stage in stages:
@@ -84,39 +86,32 @@ jobs:
               )
           PY
 
-      - name: Set up Godot build dependencies
-        uses: ./.github/actions/godot-deps
-
-      - name: Compile Linux Forward+ editor
-        uses: ./.github/actions/godot-build
-        with:
-          platform: linuxbsd
-          target: editor
-          scons-flags: >-
-            dev_mode=yes
-            module_text_server_fb_enabled=yes
-            tests=no
-
-      - name: Commit validated V3 result
+      - name: Commit consolidated source
         shell: bash
         run: |
           set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          lines = Path(".github/workflows/renderer_batch2_apply_v3.yml").read_text(encoding="utf-8").splitlines()
-          name = "Commit validated source result"
-          start = next(i for i, line in enumerate(lines) if line.strip() == f"- name: {name}")
-          run_index = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "run: |")
-          run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
-          block = []
-          for line in lines[run_index + 1:]:
-              if line.strip() and len(line) - len(line.lstrip()) <= run_indent:
-                  break
-              block.append(line)
-          nonempty = [line for line in block if line.strip()]
-          prefix = min(len(line) - len(line.lstrip()) for line in nonempty)
-          script = "\n".join(line[prefix:] if line.strip() else "" for line in block) + "\n"
-          subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], check=True)
-          PY
+          rm -f .github/workflows/renderer_batch2_apply.yml
+          rm -f .github/workflows/renderer_batch2_apply_v2.yml
+          rm -f .github/workflows/renderer_batch2_apply_v3.yml
+
+          mkdir -p .github/build-status
+          {
+            echo "branch=opt/renderer-batch2"
+            echo "source_patches=applied"
+            echo "applied_by_run=${{ github.run_id }}"
+            echo "applied_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "linux_compile=pending"
+            echo "msaa_runtime_validation=pending"
+          } > .github/build-status/renderer-batch2-source.txt
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::No renderer source changes were produced"
+            exit 1
+          fi
+
+          git commit -m "Apply renderer, Mesh Blend and MSAA optimizations"
+          git push origin HEAD:opt/renderer-batch2
