@@ -1,0 +1,53 @@
+name: Pack Mesh Blend metadata
+
+on:
+  push:
+    branches:
+      - "opt/renderer-depth-meshblend"
+    paths:
+      - "misc/scripts/apply_mesh_blend_packed_aux.py"
+      - ".github/workflows/apply_mesh_blend_packed_aux.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[mesh-blend-packed-aux-applied]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-meshblend
+          fetch-depth: 0
+
+      - name: Apply guarded source transformations
+        run: python3 misc/scripts/apply_mesh_blend_packed_aux.py
+
+      - name: Validate patch
+        run: |
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+
+          changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).split())
+          required = {
+              "servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl",
+              "servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl",
+          }
+          if not required.issubset(changed) or not any("render_scene_buffers" in path for path in changed):
+              raise SystemExit(f"Unexpected packed metadata changes: {sorted(changed)}")
+          PY
+
+      - name: Commit packed metadata path
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          git diff --cached --quiet && { echo "No packed metadata changes staged"; exit 1; }
+          git commit -m "Pack Mesh Blend metadata into 16 bits per pixel [mesh-blend-packed-aux-applied]"
+          git push origin HEAD:opt/renderer-depth-meshblend
