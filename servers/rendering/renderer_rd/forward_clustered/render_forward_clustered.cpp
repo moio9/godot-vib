@@ -2112,6 +2112,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	bool using_ssil = !is_reflection_probe && p_render_data->environment.is_valid() && environment_get_ssil_enabled(p_render_data->environment);
 	bool using_ssgi = !is_reflection_probe && p_render_data->environment.is_valid() && environment_get_ssgi_enabled(p_render_data->environment);
 	bool using_motion_pass = rb_data.is_valid() && using_upscaling;
+	bool mesh_blend_main_pass = false;
 
 	if (using_ssgi) {
 		motion_vectors_required = true;
@@ -2173,7 +2174,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			global_pipeline_data_required.use_multiview = true;
 		}
 
-		const bool mesh_blend_main_pass = _mesh_blend_enabled() && p_render_data->reflection_probe.is_null() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
+		mesh_blend_main_pass = _mesh_blend_enabled() && p_render_data->reflection_probe.is_null() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
 		if (mesh_blend_main_pass) {
 			color_pass_flags |= COLOR_PASS_FLAG_MESH_BLEND;
 			rb->ensure_visibility_textures(false, true, false);
