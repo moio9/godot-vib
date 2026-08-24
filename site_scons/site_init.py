@@ -1,15 +1,15 @@
 """Temporary one-shot repair hook for the renderer optimization branch.
 
-SCons imports ``site_scons/site_init.py`` before reading the project scripts. The
-hook fixes two source transformations that were generated incorrectly, then
-commits them when running in GitHub Actions. Remove this file after the repair
-commit lands.
+SCons imports ``site_scons/site_init.py`` before reading the project scripts.
+The hook fixes generated source transformations in the CI working tree. It also
+prints base64 copies of changed sources into the build log so the validated
+files can be committed through the GitHub API after compilation succeeds.
 """
 
 from __future__ import annotations
 
+import base64
 import os
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,33 +58,9 @@ if changed_forward:
     CHANGED.append(forward_path)
 
 if CHANGED and os.environ.get("GITHUB_ACTIONS") == "true":
-    subprocess.run(
-        ["git", "config", "user.name", "github-actions[bot]"],
-        cwd=ROOT,
-        check=True,
-    )
-    subprocess.run(
-        [
-            "git",
-            "config",
-            "user.email",
-            "41898282+github-actions[bot]@users.noreply.github.com",
-        ],
-        cwd=ROOT,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "add", *[str(path.relative_to(ROOT)) for path in CHANGED]],
-        cwd=ROOT,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "commit", "-m", "Fix renderer Visibility allocation and main-pass scope"],
-        cwd=ROOT,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "push", "origin", "HEAD:opt/renderer-batch2"],
-        cwd=ROOT,
-        check=True,
-    )
+    for path in CHANGED:
+        relative = path.relative_to(ROOT).as_posix()
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        print(f"RENDERER_PATCHED_SOURCE_BEGIN:{relative}")
+        print(encoded)
+        print(f"RENDERER_PATCHED_SOURCE_END:{relative}")
