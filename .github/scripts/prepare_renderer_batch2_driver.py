@@ -121,6 +121,54 @@ aux_path.write_text(aux_text, encoding="utf-8")
             raise RuntimeError("The old location-three output validation was not found")
         body = body.replace(old_output_check, new_output_check, 1)
 
+        validation_marker = "# Validate the final source tree."
+        if validation_marker not in body:
+            raise RuntimeError("Main-pass final validation marker was not found")
+        current_cpp_repair = '''# Repair the current Godot 4.7.2 no-MSAA C++ setup if the old script
+# only updated the fallback condition but skipped the declaration/framebuffer path.
+render_text = render_cpp.read_text(encoding="utf-8")
+if "COLOR_PASS_FLAG_MESH_BLEND" not in render_text:
+    framebuffer_match = re.search(
+        r"(?m)^(?P<indent>[\\t ]*)color_framebuffer\\s*=\\s*.*get_color_pass_fb(?:_mesh_blend)?\\(color_pass_flags\\).*;$",
+        render_text,
+    )
+    if framebuffer_match is None:
+        raise RuntimeError("Current 4.7.2 color framebuffer assignment was not found")
+
+    indent = framebuffer_match.group("indent")
+    setup = (
+        f"{indent}bool mesh_blend_main_pass = _mesh_blend_enabled() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;\\n"
+        f"{indent}if (mesh_blend_main_pass) {{\\n"
+        f"{indent}\\tif (!rb->ensure_visibility_textures(false, true, false)) {{\\n"
+        f"{indent}\\t\\treturn;\\n"
+        f"{indent}\\t}}\\n"
+        f"{indent}\\tcolor_pass_flags |= COLOR_PASS_FLAG_MESH_BLEND;\\n"
+        f"{indent}}}\\n"
+    )
+    acquisition = (
+        f"{indent}color_framebuffer = (color_pass_flags & COLOR_PASS_FLAG_MESH_BLEND) ? "
+        "rb_data->get_color_pass_fb_mesh_blend(color_pass_flags) : "
+        "rb_data->get_color_pass_fb(color_pass_flags);"
+    )
+    render_text = (
+        render_text[: framebuffer_match.start()]
+        + setup
+        + acquisition
+        + render_text[framebuffer_match.end() :]
+    )
+
+    old_fallback = "\\tif (visibility_debug || _mesh_blend_enabled()) {"
+    new_fallback = "\\tif (visibility_debug || (_mesh_blend_enabled() && !mesh_blend_main_pass)) {"
+    if old_fallback in render_text:
+        render_text = render_text.replace(old_fallback, new_fallback, 1)
+    elif new_fallback not in render_text:
+        raise RuntimeError("Current 4.7.2 Visibility fallback condition was not found")
+
+    render_cpp.write_text(render_text, encoding="utf-8")
+
+'''
+        body = body.replace(validation_marker, current_cpp_repair + validation_marker, 1)
+
 """
     text = insert_once(
         text,
