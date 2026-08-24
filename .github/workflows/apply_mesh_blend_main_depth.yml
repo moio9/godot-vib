@@ -1,0 +1,115 @@
+name: Apply Mesh Blend main-depth reuse
+
+on:
+  push:
+    branches:
+      - "opt/4.7.2-renderer-depth-v1"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Reuse main depth for Mesh Blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp")
+          text = path.read_text(encoding="utf-8")
+
+          # Mesh Blend no longer needs STORAGE usage for depth. Reuse main depth
+          # as the VB pass attachment when MSAA is disabled. MSAA still keeps a
+          # dedicated depth attachment because the resolved depth cannot be used
+          # as a depth attachment.
+          force_separate = (
+              "\tif (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {\n"
+              "\t\tuse_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.\n"
+              "\t}\n"
+          )
+          count = text.count(force_separate)
+          if count != 1:
+              raise RuntimeError(f"Expected one Mesh Blend forced-depth block, found {count}")
+          text = text.replace(force_separate, "", 1)
+
+          # The mask compute pass must sample the resolved main depth directly.
+          # Preserve the existing variable and view index so all null checks and
+          # call sites remain unchanged.
+          patterns = [
+              re.compile(
+                  r"RID vb_depth\s*=\s*(?P<rb>[A-Za-z_][A-Za-z0-9_]*)->get_texture_slice\(\s*RB_SCOPE_BUFFERS\s*,\s*RB_TEX_VB_DEPTH\s*,\s*(?P<view>[A-Za-z_][A-Za-z0-9_]*)\s*,\s*0\s*\);"
+              ),
+              re.compile(
+                  r"RID vb_depth\s*=\s*(?P<rb>[A-Za-z_][A-Za-z0-9_]*)->get_texture\(\s*RB_SCOPE_BUFFERS\s*,\s*RB_TEX_VB_DEPTH\s*\);"
+              ),
+          ]
+
+          replaced = False
+          for pattern in patterns:
+              match = pattern.search(text)
+              if not match:
+                  continue
+              rb = match.group("rb")
+              view = match.groupdict().get("view")
+              replacement = f"RID vb_depth = {rb}->get_depth_texture({view});" if view else f"RID vb_depth = {rb}->get_depth_texture();"
+              text = text[:match.start()] + replacement + text[match.end():]
+              replaced = True
+              break
+          if not replaced:
+              # Fallback for code where a slice is acquired from an already
+              # selected depth texture. Print nearby context in the job log.
+              index = text.find("mesh_blend->generate_mask")
+              context = text[max(0, index - 1800):index + 800] if index >= 0 else "generate_mask call not found"
+              raise RuntimeError("Unable to locate VB sampled-depth acquisition. Context:\n" + context)
+
+          copy_block = (
+              "\n\t// When VB depth is a separate texture, copy depth from the main depth after the pass.\n"
+              "\tif (!use_main_depth_for_vb) {\n"
+              "\t\tRendererSceneRenderRD *rsrr = RendererSceneRenderRD::get_singleton();\n"
+              "\t\trsrr->copy_depth_to_vb_depth(rb, p_render_data);\n"
+              "\t}\n"
+          )
+          count = text.count(copy_block)
+          if count != 1:
+              raise RuntimeError(f"Expected one VB depth-copy block, found {count}")
+          text = text.replace(copy_block, "\n", 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          rm -f .github/workflows/apply_mesh_blend_main_depth.yml
+
+      - name: Validate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if grep -q "Mesh blend needs STORAGE usage" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp; then
+            echo "Old forced separate-depth path remains" >&2
+            exit 1
+          fi
+          if grep -q "copy_depth_to_vb_depth(rb, p_render_data)" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp; then
+            echo "Obsolete Mesh Blend depth copy remains" >&2
+            exit 1
+          fi
+          grep -n "RID vb_depth = .*get_depth_texture" servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Reuse main resolved depth for Mesh Blend"
+          git push origin HEAD
