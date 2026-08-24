@@ -15,6 +15,64 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Repair malformed renderer allocator when present
+      shell: bash
+      run: |
+        set -euxo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+
+        header = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h")
+        source = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp")
+        if not header.exists() or not source.exists():
+            raise SystemExit(0)
+
+        text = header.read_text(encoding="utf-8")
+        bad = "bool ensure_visibility_textures(true, bool p_need_aux = true, bool p_need_depth = true);"
+        good = "bool ensure_visibility_textures(bool p_need_full_visibility = true, bool p_need_aux = true, bool p_need_depth = true);"
+        if bad in text:
+            text = text.replace(bad, good, 1)
+        elif "ensure_visibility_textures(" in text and good not in text:
+            raise RuntimeError("Unknown ensure_visibility_textures declaration")
+        text = text.replace(
+            '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F',
+            '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // R16_UINT: packed group and strength',
+            1,
+        )
+        text = text.replace(
+            '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords',
+            '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R16G16_UINT: edge coords',
+            1,
+        )
+        text = text.replace(
+            '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong',
+            '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R16G16_UINT: ping/pong',
+            1,
+        )
+        header.write_text(text, encoding="utf-8")
+
+        text = source.read_text(encoding="utf-8")
+        bad_return = "\treturn has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);"
+        good_return = """\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
+\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+\treturn visibility_ready && aux_ready && depth_ready;"""
+        if bad_return in text:
+            text = text.replace(bad_return, good_return, 1)
+        elif "p_need_full_visibility" in text and good_return not in text:
+            raise RuntimeError("Unknown ensure_visibility_textures result")
+        source.write_text(text, encoding="utf-8")
+        PY
+
+        if [ -f servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h ]; then
+          ! grep -R -n 'ensure_visibility_textures(true,' servers/rendering
+          grep -q 'bool ensure_visibility_textures(bool p_need_full_visibility = true' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h
+          grep -q 'p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          git diff --check
+        fi
+
     - name: Set up Python 3.x
       uses: actions/setup-python@v7
       with:
