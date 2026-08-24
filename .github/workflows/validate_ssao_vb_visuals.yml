@@ -1,0 +1,339 @@
+name: Validate SSAO Visibility Bitmask visuals
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/ssao-vb-sector-intervals
+    paths:
+      - .github/workflows/validate_ssao_vb_visuals.yml
+
+permissions:
+  contents: write
+
+jobs:
+  render-validate-record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/ssao-vb-sector-intervals
+          fetch-depth: 0
+
+      - name: Install software Vulkan and image-analysis dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mesa-vulkan-drivers vulkan-tools xvfb python3-pil python3-numpy
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Create the controlled AO scene
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ssao-vb-visual/results
+          cat > /tmp/ssao-vb-visual/project.godot <<'EOF'
+          [application]
+          config/name="SSAO Visibility Bitmask Visual Validation"
+
+          [display]
+          window/size/viewport_width=512
+          window/size/viewport_height=512
+          window/size/window_width_override=512
+          window/size/window_height_override=512
+
+          [rendering]
+          renderer/rendering_method="gl_compatibility"
+          renderer/rendering_method.mobile="gl_compatibility"
+          environment/defaults/default_clear_color=Color(0.08, 0.08, 0.08, 1)
+          EOF
+
+          cat > /tmp/ssao-vb-visual/render_test.gd <<'EOF'
+          extends SceneTree
+
+          const OUTPUT_DIR := "/tmp/ssao-vb-visual/results"
+          const SIZE := Vector2i(512, 512)
+
+          var environment: Environment
+          var camera: Camera3D
+
+          func make_material(color: Color) -> StandardMaterial3D:
+              var material := StandardMaterial3D.new()
+              material.albedo_color = color
+              material.roughness = 1.0
+              material.metallic = 0.0
+              return material
+
+          func add_box(parent: Node3D, position: Vector3, size: Vector3, color: Color) -> void:
+              var node := MeshInstance3D.new()
+              var mesh := BoxMesh.new()
+              mesh.size = size
+              node.mesh = mesh
+              node.position = position
+              node.material_override = make_material(color)
+              parent.add_child(node)
+
+          func setup_scene() -> void:
+              get_root().size = SIZE
+              var world := Node3D.new()
+              world.name = "World"
+              get_root().add_child(world)
+
+              var floor_node := MeshInstance3D.new()
+              var floor_mesh := PlaneMesh.new()
+              floor_mesh.size = Vector2(10.0, 10.0)
+              floor_node.mesh = floor_mesh
+              floor_node.material_override = make_material(Color(0.78, 0.78, 0.78))
+              world.add_child(floor_node)
+
+              add_box(world, Vector3(-2.0, 0.55, 0.0), Vector3(1.1, 1.1, 1.1), Color(0.82, 0.72, 0.62))
+              add_box(world, Vector3(0.0, 1.0, 0.35), Vector3(0.45, 2.0, 2.6), Color(0.62, 0.72, 0.84))
+              add_box(world, Vector3(2.0, 0.3, -0.4), Vector3(1.7, 0.6, 1.7), Color(0.72, 0.82, 0.64))
+
+              camera = Camera3D.new()
+              camera.position = Vector3(6.2, 5.2, 7.4)
+              camera.look_at(Vector3(0.0, 0.45, 0.0), Vector3.UP)
+              camera.fov = 45.0
+              camera.current = true
+              world.add_child(camera)
+
+              var directional := DirectionalLight3D.new()
+              directional.rotation_degrees = Vector3(-55.0, -35.0, 0.0)
+              directional.light_energy = 0.15
+              directional.shadow_enabled = false
+              world.add_child(directional)
+
+              environment = Environment.new()
+              environment.background_mode = Environment.BG_COLOR
+              environment.background_color = Color(0.12, 0.12, 0.12)
+              environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+              environment.ambient_light_color = Color.WHITE
+              environment.ambient_light_energy = 1.0
+              environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+              environment.ssao_enabled = true
+              environment.ssao_radius = 1.15
+              environment.ssao_intensity = 2.0
+              environment.ssao_power = 1.35
+              environment.ssao_detail = 0.5
+              environment.ssao_horizon = 0.06
+              environment.ssao_sharpness = 0.98
+
+              var world_environment := WorldEnvironment.new()
+              world_environment.environment = environment
+              world.add_child(world_environment)
+
+          func has_algorithm_property() -> bool:
+              for property in environment.get_property_list():
+                  if property.name == "ssao_algorithm":
+                      return true
+              return false
+
+          func settle_frames(count: int = 10) -> void:
+              for _index in range(count):
+                  await process_frame
+                  await RenderingServer.frame_post_draw
+              RenderingServer.force_sync()
+
+          func save_frame(mode: int, file_name: String) -> void:
+              environment.set("ssao_algorithm", mode)
+              await settle_frames()
+              var image := get_root().get_texture().get_image()
+              if image.is_empty():
+                  push_error("Viewport image is empty for mode %d" % mode)
+                  quit(20)
+                  return
+              var error := image.save_png(OUTPUT_DIR.path_join(file_name))
+              if error != OK:
+                  push_error("Could not save %s: %s" % [file_name, error_string(error)])
+                  quit(21)
+
+          func save_sample_points() -> void:
+              var points := {
+                  "contact_left": camera.unproject_position(Vector3(-2.0, 0.03, 0.48)),
+                  "contact_center": camera.unproject_position(Vector3(0.28, 0.03, 0.5)),
+                  "contact_right": camera.unproject_position(Vector3(2.0, 0.03, 0.45)),
+                  "open_floor_a": camera.unproject_position(Vector3(-3.7, 0.03, 2.5)),
+                  "open_floor_b": camera.unproject_position(Vector3(3.5, 0.03, 2.7)),
+                  "flat_box_top": camera.unproject_position(Vector3(2.0, 0.61, -0.4)),
+              }
+              var serializable := {}
+              for key in points:
+                  var point: Vector2 = points[key]
+                  serializable[key] = [point.x, point.y]
+              var file := FileAccess.open(OUTPUT_DIR.path_join("points.json"), FileAccess.WRITE)
+              file.store_string(JSON.stringify(serializable))
+
+          func _initialize() -> void:
+              setup_scene()
+              await settle_frames(6)
+              if not has_algorithm_property():
+                  push_error("Environment.ssao_algorithm is unavailable")
+                  quit(22)
+                  return
+              save_sample_points()
+              await save_frame(0, "standard.png")
+              await save_frame(1, "visibility_bitmask.png")
+              await save_frame(2, "visibility_bitmask_bi.png")
+              await save_frame(1, "visibility_bitmask_repeat.png")
+              quit()
+          EOF
+
+      - name: Render STANDARD, VB and VB-BI through Lavapipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          GODOT_BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.*' | head -n1)"
+          test -n "$GODOT_BIN"
+          LVP_ICD="$(find /usr/share/vulkan/icd.d -type f -iname '*lvp*.json' | head -n1)"
+          test -n "$LVP_ICD"
+          export VK_ICD_FILENAMES="$LVP_ICD"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export MESA_VK_WSI_PRESENT_MODE=immediate
+
+          xvfb-run -a -s '-screen 0 512x512x24' \
+            "$GODOT_BIN" \
+            --path /tmp/ssao-vb-visual \
+            --script /tmp/ssao-vb-visual/render_test.gd \
+            --rendering-method forward_plus \
+            --audio-driver Dummy \
+            --display-driver x11 \
+            > /tmp/ssao-vb-visual/godot.log 2>&1
+
+          cat /tmp/ssao-vb-visual/godot.log
+          test -s /tmp/ssao-vb-visual/results/standard.png
+          test -s /tmp/ssao-vb-visual/results/visibility_bitmask.png
+          test -s /tmp/ssao-vb-visual/results/visibility_bitmask_bi.png
+          test -s /tmp/ssao-vb-visual/results/visibility_bitmask_repeat.png
+
+      - name: Analyze AO contacts, open surfaces and temporal stability
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import numpy as np
+          from PIL import Image
+
+          root = Path("/tmp/ssao-vb-visual/results")
+          points = json.loads((root / "points.json").read_text(encoding="utf-8"))
+
+          def load(name: str) -> np.ndarray:
+              image = np.asarray(Image.open(root / name).convert("RGB"), dtype=np.float32) / 255.0
+              if image.shape != (512, 512, 3):
+                  raise RuntimeError(f"Unexpected image shape for {name}: {image.shape}")
+              if not np.isfinite(image).all():
+                  raise RuntimeError(f"Non-finite pixels in {name}")
+              return image
+
+          def luminance(image: np.ndarray) -> np.ndarray:
+              return image[..., 0] * 0.2126 + image[..., 1] * 0.7152 + image[..., 2] * 0.0722
+
+          def patch_values(image: np.ndarray, point_name: str, radius: int = 5) -> np.ndarray:
+              x, y = points[point_name]
+              x = int(round(x))
+              y = int(round(y))
+              x0, x1 = max(0, x - radius), min(image.shape[1], x + radius + 1)
+              y0, y1 = max(0, y - radius), min(image.shape[0], y + radius + 1)
+              if x1 <= x0 or y1 <= y0:
+                  raise RuntimeError(f"Invalid sample patch {point_name}: {(x, y)}")
+              return luminance(image[y0:y1, x0:x1])
+
+          standard = load("standard.png")
+          vb = load("visibility_bitmask.png")
+          vb_bi = load("visibility_bitmask_bi.png")
+          vb_repeat = load("visibility_bitmask_repeat.png")
+
+          metrics = {}
+          for name, image in (("standard", standard), ("vb", vb), ("vb_bi", vb_bi)):
+              luma = luminance(image)
+              contact_values = np.concatenate([
+                  patch_values(image, "contact_left").ravel(),
+                  patch_values(image, "contact_center").ravel(),
+                  patch_values(image, "contact_right").ravel(),
+              ])
+              open_values = np.concatenate([
+                  patch_values(image, "open_floor_a").ravel(),
+                  patch_values(image, "open_floor_b").ravel(),
+              ])
+              flat_values = patch_values(image, "flat_box_top", radius=7)
+              metrics[name] = {
+                  "mean_luma": float(luma.mean()),
+                  "contact_luma": float(contact_values.mean()),
+                  "open_luma": float(open_values.mean()),
+                  "contact_contrast": float(open_values.mean() - contact_values.mean()),
+                  "flat_patch_std": float(flat_values.std()),
+              }
+
+          metrics["vb_vs_standard_mae"] = float(np.abs(vb - standard).mean())
+          metrics["vb_bi_vs_standard_mae"] = float(np.abs(vb_bi - standard).mean())
+          metrics["vb_repeat_mae"] = float(np.abs(vb_repeat - vb).mean())
+
+          failures = []
+          for mode in ("vb", "vb_bi"):
+              values = metrics[mode]
+              if not (0.08 < values["mean_luma"] < 0.95):
+                  failures.append(f"{mode}: implausible mean luminance {values['mean_luma']:.6f}")
+              if values["contact_contrast"] < 0.003:
+                  failures.append(f"{mode}: contact AO is not darker than open floor ({values['contact_contrast']:.6f})")
+              if values["flat_patch_std"] > 0.12:
+                  failures.append(f"{mode}: excessive variation on flat surface ({values['flat_patch_std']:.6f})")
+
+          if not (0.0002 < metrics["vb_vs_standard_mae"] < 0.35):
+              failures.append(f"VB/standard difference is suspicious: {metrics['vb_vs_standard_mae']:.6f}")
+          if not (0.0002 < metrics["vb_bi_vs_standard_mae"] < 0.35):
+              failures.append(f"VB-BI/standard difference is suspicious: {metrics['vb_bi_vs_standard_mae']:.6f}")
+          if metrics["vb_repeat_mae"] > 0.005:
+              failures.append(f"VB is unstable between settled captures: {metrics['vb_repeat_mae']:.6f}")
+
+          (root / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
+          print(json.dumps(metrics, indent=2, sort_keys=True))
+          if failures:
+              raise RuntimeError("\n".join(failures))
+          PY
+
+      - name: Upload rendered validation images
+        uses: actions/upload-artifact@v6
+        with:
+          name: ssao-vb-visual-validation-${{ github.sha }}
+          path: |
+            /tmp/ssao-vb-visual/results/*.png
+            /tmp/ssao-vb-visual/results/metrics.json
+            /tmp/ssao-vb-visual/godot.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Record successful visual validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/validate_ssao_vb_visuals.yml
+          mkdir -p .github/build-status
+          cp /tmp/ssao-vb-visual/results/metrics.json .github/build-status/ssao-vb-visual-metrics.json
+          {
+            echo "branch=fix/ssao-vb-sector-intervals"
+            echo "source_sha=${{ github.sha }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "renderer=forward_plus-lavapipe"
+          } > .github/build-status/ssao-vb-visual-validation.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Validate SSAO Visibility Bitmask with software Vulkan renders"
+          git push origin HEAD:fix/ssao-vb-sector-intervals
