@@ -1,0 +1,70 @@
+name: Gate renderer depth v1
+
+on:
+  pull_request:
+    branches:
+      - "4.7"
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  wait-and-merge:
+    if: github.event.pull_request.head.ref == 'opt/4.7.2-renderer-depth-v1' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Wait for full Godot and Termux validation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 460); do
+            runs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100")"
+
+            gha="$(jq -c '[.workflow_runs[] | select(.name == "🔗 GHA" and .head_sha == env.HEAD_SHA)] | sort_by(.created_at) | last // empty' <<<"$runs")"
+            termux="$(jq -c '[.workflow_runs[] | select(.name == "📱 Termux Build" and .head_sha == env.HEAD_SHA)] | sort_by(.created_at) | last // empty' <<<"$runs")"
+
+            if [[ -n "$gha" && -n "$termux" ]]; then
+              gha_status="$(jq -r '.status' <<<"$gha")"
+              gha_result="$(jq -r '.conclusion // ""' <<<"$gha")"
+              termux_status="$(jq -r '.status' <<<"$termux")"
+              termux_result="$(jq -r '.conclusion // ""' <<<"$termux")"
+
+              echo "GHA: ${gha_status}/${gha_result}; Termux: ${termux_status}/${termux_result}"
+
+              for result in "$gha_result" "$termux_result"; do
+                case "$result" in
+                  failure|cancelled|timed_out|action_required|startup_failure|stale)
+                    echo "A required validation workflow failed; refusing to merge." >&2
+                    exit 1
+                    ;;
+                esac
+              done
+
+              if [[ "$gha_status" == "completed" && "$gha_result" == "success" && "$termux_status" == "completed" && "$termux_result" == "success" ]]; then
+                gh pr ready "$PR_NUMBER" --repo "$REPOSITORY" || true
+                gh pr merge "$PR_NUMBER" --repo "$REPOSITORY" --merge --match-head-commit "$HEAD_SHA"
+                exit 0
+              fi
+            else
+              echo "Waiting for both required workflow runs to appear."
+            fi
+
+            sleep 30
+          done
+
+          echo "Timed out waiting for required validation workflows." >&2
+          exit 1
