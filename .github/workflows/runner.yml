@@ -1,15 +1,139 @@
 name: 🔗 GHA
 on: [push, pull_request, merge_group, workflow_dispatch]
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}|${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  repair-renderer-batch2:
+    if: github.event_name == 'push' && github.ref_name == '4.7' && contains(github.event.head_commit.message, '[renderer-repair]')
+    name: Repair renderer batch allocator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout renderer optimization branch
+        uses: actions/checkout@v7
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+
+      - name: Repair Visibility texture allocator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          header = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h")
+          text = header.read_text(encoding="utf-8")
+          bad_decl = "bool ensure_visibility_textures(true, bool p_need_aux = true, bool p_need_depth = true);"
+          good_decl = "bool ensure_visibility_textures(bool p_need_full_visibility = true, bool p_need_aux = true, bool p_need_depth = true);"
+          if bad_decl in text:
+              text = text.replace(bad_decl, good_decl, 1)
+          elif good_decl not in text:
+              raise RuntimeError("Unexpected ensure_visibility_textures declaration")
+          text = text.replace(
+              '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F',
+              '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // R16_UINT: packed (group, weight)',
+              1,
+          )
+          text = text.replace(
+              '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords',
+              '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R16G16_UINT: edge coords',
+              1,
+          )
+          text = text.replace(
+              '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong',
+              '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R16G16_UINT: ping/pong',
+              1,
+          )
+          header.write_text(text, encoding="utf-8")
+
+          cpp = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp")
+          text = cpp.read_text(encoding="utf-8")
+          old_return = "\treturn has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);"
+          new_return = """\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
+\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+\treturn visibility_ready && aux_ready && depth_ready;"""
+          if old_return in text:
+              text = text.replace(old_return, new_return, 1)
+          elif new_return not in text:
+              raise RuntimeError("Unexpected ensure_visibility_textures return expression")
+          cpp.write_text(text, encoding="utf-8")
+          PY
+
+          grep -n "ensure_visibility_textures" \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          if grep -R -n 'ensure_visibility_textures(true,' servers/rendering; then
+            echo "::error::Malformed Visibility allocator declaration remains"
+            exit 1
+          fi
+          grep -q 'p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          git diff --check
+
+      - name: Commit allocator repair to optimization branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/renderer_batch2_compile_repair_01.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix Visibility texture allocator signature and readiness"
+          git push origin HEAD:opt/renderer-batch2
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux Forward+ editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Smoke-test compiled editor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          binary="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor*' -perm -111 | head -n 1)"
+          test -n "$binary"
+          "$binary" --headless --version
+
+      - name: Package Linux editor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/linux
+          binary="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor*' -perm -111 | head -n 1)"
+          cp "$binary" artifacts/linux/godot-vib-4.7.2-linux-x86_64
+          chmod +x artifacts/linux/godot-vib-4.7.2-linux-x86_64
+          tar -C artifacts/linux -cJf artifacts/godot-vib-4.7.2-linux-x86_64.tar.xz godot-vib-4.7.2-linux-x86_64
+
+      - name: Upload Linux editor
+        uses: actions/upload-artifact@v6
+        with:
+          name: godot-vib-4.7.2-linux-x86_64
+          path: artifacts/godot-vib-4.7.2-linux-x86_64.tar.xz
+          if-no-files-found: error
+          retention-days: 14
+
   # First stage: Only static checks, fast and prevent expensive builds from running.
 
   static-checks:
-    if: ${{ !vars.DISABLE_GODOT_CI || github.run_attempt > 1 || github.event_name == 'workflow_dispatch' }}
+    if: ${{ !contains(github.event.head_commit.message, '[renderer-repair]') && (!vars.DISABLE_GODOT_CI || github.run_attempt > 1 || github.event_name == 'workflow_dispatch') }}
     name: 📊 Static checks
     uses: ./.github/workflows/static_checks.yml
 
