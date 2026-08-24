@@ -52,7 +52,7 @@ jobs:
       - name: Prepare Godot 4.7.2 patch compatibility
         run: python3 .github/scripts/prepare_renderer_batch2_driver.py
 
-      - name: Persist main-pass C++ and replace legacy final greps
+      - name: Persist main-pass C++ and remove legacy verification
         shell: bash
         run: |
           set -euxo pipefail
@@ -79,9 +79,8 @@ jobs:
               text = text.replace(branch_marker, branch_marker + persistence, 1)
 
           legacy_stage = '        "Verify optimized source invariants",\n'
-          if legacy_stage not in text:
-              raise RuntimeError("Legacy V3 verification stage was not found")
-          text = text.replace(legacy_stage, "", 1)
+          if legacy_stage in text:
+              text = text.replace(legacy_stage, "", 1)
 
           path.write_text(text, encoding="utf-8")
           PY
@@ -192,12 +191,23 @@ jobs:
               "servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl"
           )
           require_all(
-              "Packed Mesh Blend mask",
+              "Packed VB_AUX Mesh Blend edge input",
               mask_shader,
-              ("layout(r16ui", "uimage2D mesh_mask"),
+              (
+                  "layout(r16ui",
+                  "uimage2D vb_aux",
+                  "unpack_visibility_aux",
+                  "uimage2D mesh_edges",
+              ),
           )
+          if "mesh_mask" in mask_shader:
+              raise RuntimeError(
+                  "The duplicate full-resolution Mesh Blend mask still exists"
+              )
           if "vb_vis" in mask_shader:
-              raise RuntimeError("Mesh Blend mask still reads the full Visibility ID buffer")
+              raise RuntimeError(
+                  "Mesh Blend edge detection still reads the full Visibility ID buffer"
+              )
 
           jump_shader = read(
               "servers/rendering/renderer_rd/shaders/effects/mesh_blend_jump_flood.glsl"
@@ -246,6 +256,7 @@ jobs:
           rm -f .github/workflows/renderer_batch2_apply_v2.yml
           rm -f .github/workflows/renderer_batch2_apply_v3.yml
           rm -f .github/workflows/renderer_batch2_apply_final.yml
+          rm -f .github/workflows/renderer_batch2_validation_repair.yml
           rm -f .github/scripts/apply_renderer_batch2.py
           rm -f .github/scripts/prepare_renderer_batch2_driver.py
           rm -f .github/scripts/fix_renderer_batch2_main_pass_cpp.py
@@ -265,8 +276,8 @@ jobs:
           git add -A
           git diff --cached --check
           if git diff --cached --quiet; then
-            echo "::error::No renderer source changes were produced"
-            exit 1
+              echo "::error::No renderer source changes were produced"
+              exit 1
           fi
 
           git commit -m "Apply renderer, Mesh Blend and MSAA optimizations"
