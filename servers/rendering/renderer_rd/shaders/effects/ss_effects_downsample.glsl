@@ -139,7 +139,7 @@ void prepare_depths_and_mips(vec4 p_samples, uvec2 p_output_coord, uvec2 p_gtid)
 		depth_buffer[depth_array_index][buffer_coord.x][buffer_coord.y] = avg;
 	}
 
-	still_alive = p_gtid.x % 8 == depth_array_offset.x && depth_array_offset.y % 8 == depth_array_offset.y;
+	still_alive = p_gtid.x % 8 == depth_array_offset.x && p_gtid.y % 8 == depth_array_offset.y;
 
 	p_output_coord /= 2;
 	groupMemoryBarrier();
@@ -158,7 +158,7 @@ void prepare_depths_and_mips(vec4 p_samples, uvec2 p_output_coord, uvec2 p_gtid)
 #else
 		depth_buffer[depth_array_index][buffer_coord.x][buffer_coord.y] = avg;
 	}
-	still_alive = p_gtid.x % 16 == depth_array_offset.x && depth_array_offset.y % 16 == depth_array_offset.y;
+	still_alive = p_gtid.x % 16 == depth_array_offset.x && p_gtid.y % 16 == depth_array_offset.y;
 
 	p_output_coord /= 2;
 

@@ -1233,7 +1233,10 @@ vec3 encode24(vec3 v) {
 void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
 
-#ifdef MODE_RENDER_VISIBILITY
+#if defined(MODE_RENDER_VISIBILITY) && !defined(MESH_BLEND_USED) && !defined(DISCARD_USED) && !defined(ALPHA_SCISSOR_USED) && !defined(ALPHA_HASH_USED) && !defined(ALPHA_ANTIALIASING_EDGE_USED)
+	// Most materials do not need their fragment function during the VB pass.
+	// Keep the original fast path and only execute fragment() for per-pixel
+	// Mesh Blend or alpha/discard-dependent materials.
 	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
 	visibility_id_output = uvec4(packed_ids, 0u, 0u);
 
@@ -1278,7 +1281,7 @@ void fragment_shader(in SceneData scene_data) {
 	float anisotropy = 0.0;
 	vec2 anisotropy_flow = vec2(1.0, 0.0);
 	vec3 energy_compensation = vec3(1.0);
-	float mesh_blend_value = 0.0;
+	float mesh_blend_value = sc_get_material_mesh_blend();
 #ifndef FOG_DISABLED
 	vec4 fog = vec4(0.0, 0.0, 0.0, 1.0);
 #endif
@@ -1478,6 +1481,21 @@ void fragment_shader(in SceneData scene_data) {
 #endif // MODE_RENDER_DEPTH
 
 #endif // !USE_SHADOW_TO_OPACITY
+
+#ifdef MODE_RENDER_VISIBILITY
+	// The material fragment has now evaluated textures, procedural masks,
+	// alpha cutouts and discard. Store its final per-pixel Mesh Blend value.
+	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
+	visibility_id_output = uvec4(packed_ids, 0u, 0u);
+
+#ifndef MODE_RENDER_VISIBILITY_NO_AUX
+	float material_mesh_blend = clamp(mesh_blend_value, -1.0, 1.0);
+	float blend_id = sc_instance_hash(packed_ids.y);
+	vec2 aux = vec2(material_mesh_blend, blend_id);
+	visibility_aux_output = vec4(aux, 0.0, 0.0);
+#endif
+	return;
+#endif
 
 #if defined(NORMAL_MAP_USED)
 	normal_map.xy = normal_map.xy * 2.0 - 1.0;

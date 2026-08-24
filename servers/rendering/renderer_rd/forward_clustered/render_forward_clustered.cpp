@@ -1278,9 +1278,6 @@ void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_rend
 
 	// Lazily allocate visibility buffer only when requested (debug VB or mesh blend).
 	bool use_main_depth_for_vb = RendererSceneRenderRD::get_singleton()->is_visibility_buffer_reusing_main_depth();
-	if (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {
-		use_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.
-	}
 	// If MSAA is enabled, the resolved depth lacks depth-attachment usage, so keep a dedicated VB depth.
 	if (rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
 		use_main_depth_for_vb = false;

@@ -257,9 +257,6 @@ Ref<RenderSceneBuffers> RendererSceneRenderRD::render_buffers_create() {
 	if (vb_always_on) {
 		bool need_aux = _mesh_blend_enabled();
 		bool use_main_depth_for_vb = vb_reuse_main_depth;
-		if (_mesh_blend_enabled()) {
-			use_main_depth_for_vb = false; // mesh blend needs storage-capable depth
-		}
 		if (rb->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
 			use_main_depth_for_vb = false;
 		}

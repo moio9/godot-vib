@@ -10,7 +10,7 @@ layout(rg32ui, set = 0, binding = 0) uniform readonly uimage2D vb_vis;
 layout(rg16f, set = 0, binding = 1) uniform readonly image2D vb_aux;
 layout(rg16f, set = 0, binding = 2) uniform writeonly image2D mesh_mask;
 layout(rg32ui, set = 0, binding = 3) uniform writeonly uimage2D mesh_edges;
-layout(r32f, set = 0, binding = 4) uniform readonly image2D mesh_depth;
+layout(set = 0, binding = 4) uniform sampler2D mesh_depth;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 resolution;
@@ -58,7 +58,7 @@ void main() {
 
 	uvec4 ids = imageLoad(vb_vis, sample_pixel);
 	vec2 aux = imageLoad(vb_aux, sample_pixel).xy;
-	float depth_value = imageLoad(mesh_depth, sample_pixel).x;
+	float depth_value = texelFetch(mesh_depth, sample_pixel, 0).x;
 
 	if (ids.x != 0u) {
 		float raw_weight = aux.x;
