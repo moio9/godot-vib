@@ -1,1 +1,1 @@
-Trusted renderer patch trigger, revision 3.
+Trusted renderer patch trigger, revision 4.
