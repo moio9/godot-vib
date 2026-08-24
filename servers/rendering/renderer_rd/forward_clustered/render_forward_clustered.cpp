@@ -1299,7 +1299,11 @@ void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_rend
 	RID vb_fbo_depth = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH);
 	RID main_depth = rb->get_depth_texture();
 	RID depth_attachment;
-	if (vb_fbo_depth.is_valid()) {
+	if (use_main_depth_for_vb && main_depth.is_valid() && (RD::get_singleton()->texture_get_format(main_depth).usage_bits & RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+		// Load the opaque pass depth and let the regular greater-or-equal
+		// depth test reject hidden visibility fragments before fragment().
+		depth_attachment = main_depth;
+	} else if (vb_fbo_depth.is_valid()) {
 		depth_attachment = vb_fbo_depth;
 	} else if (main_depth.is_valid() && (RD::get_singleton()->texture_get_format(main_depth).usage_bits & RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
 		depth_attachment = main_depth;
@@ -1339,7 +1343,9 @@ void RenderForwardClustered::_render_visibility_buffer_pass(RenderDataRD *p_rend
 	}
 
 	BitField<RD::DrawFlags> draw_flags = need_aux ? BitField<RD::DrawFlags>(RD::DRAW_CLEAR_COLOR_0 | RD::DRAW_CLEAR_COLOR_1) : BitField<RD::DrawFlags>(RD::DRAW_CLEAR_COLOR_0);
-	if (depth_attachment.is_valid()) {
+	if (depth_attachment.is_valid() && !use_main_depth_for_vb) {
+		// Dedicated VB depth starts empty. Main depth is intentionally
+		// loaded so it acts as an early-Z prepass for this raster pass.
 		draw_flags = draw_flags | BitField<RD::DrawFlags>(RD::DRAW_CLEAR_DEPTH);
 	}
 	_render_list_with_draw_list(&render_list_params, framebuffer, draw_flags, clear_colors, 0.0f, 0u, p_render_data->render_region);
