@@ -1,0 +1,59 @@
+name: Finalize renderer optimization branch
+
+on:
+  push:
+    branches:
+      - "opt/renderer-depth-meshblend"
+    paths:
+      - ".github/workflows/finalize_renderer_optimization_branch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[renderer-branch-finalized]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-meshblend
+          fetch-depth: 0
+
+      - name: Format changed renderer sources
+        run: |
+          python3 -m pip install pre-commit
+          git fetch origin 4.7
+          mapfile -t files < <(git diff --name-only origin/4.7 -- | grep -E '\.(cpp|h|glsl)$' | grep -v '^misc/scripts/' || true)
+          if [ ${#files[@]} -gt 0 ]; then
+            pre-commit run --files "${files[@]}" || true
+            pre-commit run --files "${files[@]}"
+          fi
+          git diff --check
+
+      - name: Remove one-shot migration helpers
+        run: |
+          git rm --ignore-unmatch \
+            misc/scripts/apply_renderer_optimizations.py \
+            misc/scripts/apply_depth_two_mip_optimization.py \
+            misc/scripts/apply_mesh_blend_shader_builtins.py \
+            misc/scripts/apply_ssao_standard_vb_split.py \
+            misc/scripts/apply_vb_pipeline_cleanup.py \
+            misc/scripts/apply_mesh_blend_packed_aux.py \
+            .github/workflows/apply_renderer_optimizations.yml \
+            .github/workflows/apply_depth_two_mip_optimization.yml \
+            .github/workflows/apply_mesh_blend_shader_builtins.yml \
+            .github/workflows/apply_ssao_standard_vb_split.yml \
+            .github/workflows/apply_vb_pipeline_cleanup.yml \
+            .github/workflows/apply_mesh_blend_packed_aux.yml \
+            .github/workflows/finalize_renderer_optimization_branch.yml
+
+      - name: Commit final branch cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "No finalization changes staged"; exit 1; }
+          git commit -m "Format renderer changes and remove migration helpers [renderer-branch-finalized]"
+          git push origin HEAD:opt/renderer-depth-meshblend
