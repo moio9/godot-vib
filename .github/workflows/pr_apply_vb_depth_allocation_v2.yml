@@ -1,0 +1,127 @@
+name: Apply unused VB depth allocation removal
+
+on:
+  pull_request:
+    branches:
+      - "opt/4.7.2-renderer-depth-v1"
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'opt/4.7.2-renderer-depth-v2' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Remove unused sampled VB depth allocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp')
+          text = path.read_text(encoding='utf-8')
+          fn_start = text.find('void RenderSceneBuffersRD::ensure_visibility_textures')
+          if fn_start < 0:
+              raise RuntimeError('ensure_visibility_textures() not found')
+          open_brace = text.find('{', fn_start)
+          depth = 0
+          fn_end = None
+          for i in range(open_brace, len(text)):
+              if text[i] == '{':
+                  depth += 1
+              elif text[i] == '}':
+                  depth -= 1
+                  if depth == 0:
+                      fn_end = i + 1
+                      break
+          if fn_end is None:
+              raise RuntimeError('ensure_visibility_textures() is unterminated')
+
+          function = text[fn_start:fn_end]
+          occurrence = function.find('RB_TEX_VB_DEPTH')
+          if occurrence >= 0:
+              depths = [0] * (len(function) + 1)
+              current_depth = 0
+              for i, char in enumerate(function):
+                  depths[i] = current_depth
+                  if char == '{':
+                      current_depth += 1
+                  elif char == '}':
+                      current_depth -= 1
+              depths[len(function)] = current_depth
+
+              block_start = None
+              if_start = None
+              for i in range(occurrence, -1, -1):
+                  if function[i] == '{' and depths[i] == 1:
+                      candidate = function.rfind('if', 0, i)
+                      if candidate >= 0 and depths[candidate] == 1 and function[candidate:i].strip().startswith('if'):
+                          block_start = i
+                          if_start = candidate
+                          break
+              if block_start is None:
+                  raise RuntimeError('Sampled VB depth allocation block not found')
+
+              nested_depth = 0
+              block_end = None
+              for i in range(block_start, len(function)):
+                  if function[i] == '{':
+                      nested_depth += 1
+                  elif function[i] == '}':
+                      nested_depth -= 1
+                      if nested_depth == 0:
+                          block_end = i + 1
+                          break
+              if block_end is None:
+                  raise RuntimeError('Sampled VB depth allocation block is unterminated')
+
+              block = function[if_start:block_end]
+              if 'RB_TEX_VB_DEPTH' not in block or 'RB_TEX_VB_FBO_DEPTH' in block:
+                  raise RuntimeError('Refusing to remove a combined or unexpected depth block')
+
+              remove_start = function.rfind('\n', 0, if_start) + 1
+              remove_end = block_end
+              while remove_end < len(function) and function[remove_end] in ' \t':
+                  remove_end += 1
+              if remove_end < len(function) and function[remove_end] == '\n':
+                  remove_end += 1
+              function = function[:remove_start] + function[remove_end:]
+              if 'RB_TEX_VB_DEPTH' in function:
+                  raise RuntimeError('Unexpected remaining sampled VB depth allocation')
+              text = text[:fn_start] + function + text[fn_end:]
+              path.write_text(text, encoding='utf-8')
+
+          Path('.github/workflows/pr_apply_vb_depth_allocation_v2.yml').unlink()
+          PY
+
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp')
+          text = path.read_text(encoding='utf-8')
+          start = text.find('void RenderSceneBuffersRD::ensure_visibility_textures')
+          end = text.find('\n}', start)
+          if start < 0 or end < 0:
+              raise RuntimeError('Unable to verify ensure_visibility_textures()')
+          if 'RB_TEX_VB_DEPTH' in text[start:end]:
+              raise RuntimeError('Sampled VB depth is still allocated')
+          if 'RB_TEX_VB_FBO_DEPTH' not in text[start:end]:
+              raise RuntimeError('MSAA-compatible VB depth attachment was removed unexpectedly')
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Stop allocating unused sampled Visibility Buffer depth'
+          git push origin HEAD
