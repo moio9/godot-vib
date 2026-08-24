@@ -1,0 +1,549 @@
+name: Write Mesh Blend metadata in the main opaque pass
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/mesh-blend-main-pass-metadata
+    paths:
+      - .github/workflows/optimize_mesh_blend_main_pass_metadata.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-runtime-test-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/mesh-blend-main-pass-metadata
+          fetch-depth: 0
+
+      - name: Integrate packed Mesh Blend metadata into the no-MSAA color pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def function_extent(text: str, signature_pattern: str, start_at: int = 0) -> tuple[int, int]:
+              match = re.search(signature_pattern, text[start_at:])
+              if match is None:
+                  raise RuntimeError(f"Function not found: {signature_pattern}")
+              absolute_start = start_at + match.start()
+              brace = text.index("{", start_at + match.end())
+              depth = 0
+              for index in range(brace, len(text)):
+                  if text[index] == "{":
+                      depth += 1
+                  elif text[index] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          return absolute_start, index + 1
+              raise RuntimeError(f"Unbalanced function: {signature_pattern}")
+
+          # 1) Reserve a color-pass flag for the packed R16UI metadata attachment.
+          header_candidates = []
+          for path in Path("servers/rendering/renderer_rd/forward_clustered").rglob("*.h"):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              if "COLOR_PASS_FLAG_SEPARATE_SPECULAR" in text:
+                  header_candidates.append(path)
+          if len(header_candidates) != 1:
+              raise RuntimeError(f"Expected one color-pass flag header, found: {header_candidates}")
+          header = header_candidates[0]
+          text = header.read_text(encoding="utf-8")
+          if "COLOR_PASS_FLAG_MESH_BLEND" not in text:
+              enum_match = re.search(
+                  r"enum\s+(?:class\s+)?[A-Za-z_][A-Za-z0-9_]*\s*(?::[^\{]+)?\{(?P<body>.*?COLOR_PASS_FLAG_SEPARATE_SPECULAR.*?)\n(?P<indent>[\t ]*)\};",
+                  text,
+                  flags=re.DOTALL,
+              )
+              if enum_match is None:
+                  raise RuntimeError("The ColorPassFlags enum was not found")
+              body = enum_match.group("body")
+              shifts = [int(value) for value in re.findall(r"COLOR_PASS_FLAG_[A-Z0-9_]+\s*=\s*1\s*<<\s*(\d+)", body)]
+              if not shifts:
+                  raise RuntimeError("No explicit color-pass flag shifts were found")
+              next_shift = max(shifts) + 1
+              body_indent_matches = re.findall(r"(?m)^([\t ]*)COLOR_PASS_FLAG_", body)
+              item_indent = body_indent_matches[-1] if body_indent_matches else "\t\t"
+              insertion = f"\n{item_indent}COLOR_PASS_FLAG_MESH_BLEND = 1 << {next_shift},"
+              new_body = body.rstrip() + insertion
+              text = text[:enum_match.start("body")] + new_body + text[enum_match.end("body"):]
+              header.write_text(text, encoding="utf-8")
+
+          # 2) Make attachment location 3 available in color-pass framebuffers.
+          cpp = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp")
+          text = cpp.read_text(encoding="utf-8")
+          fb_start, fb_end = function_extent(
+              text,
+              r"RID\s+RenderForwardClustered::RenderBufferDataForwardClustered::get_color_pass_fb\s*\(uint32_t\s+p_color_pass_flags\)",
+          )
+          fb_fn = text[fb_start:fb_end]
+          if "COLOR_PASS_FLAG_MESH_BLEND" not in fb_fn:
+              depth_decl = re.search(r"(?m)^(?P<indent>[\t ]*)RID\s+depth\s*=", fb_fn)
+              if depth_decl is None:
+                  raise RuntimeError("The color-pass depth attachment declaration was not found")
+              indent = depth_decl.group("indent")
+              block = (
+                  f"{indent}RID mesh_blend_aux;\n"
+                  f"{indent}if (p_color_pass_flags & COLOR_PASS_FLAG_MESH_BLEND) {{\n"
+                  f"{indent}\trender_buffers->ensure_visibility_textures(false, true, false);\n"
+                  f"{indent}\tmesh_blend_aux = render_buffers->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);\n"
+                  f"{indent}}}\n\n"
+              )
+              fb_fn = fb_fn[:depth_decl.start()] + block + fb_fn[depth_decl.start():]
+
+              old_attachment_sequence = "color, specular, velocity_buffer, depth"
+              replacement_count = fb_fn.count(old_attachment_sequence)
+              if replacement_count < 2:
+                  raise RuntimeError(
+                      f"Expected both color framebuffer cache calls to expose color/specular/velocity/depth, found {replacement_count}"
+                  )
+              fb_fn = fb_fn.replace(
+                  old_attachment_sequence,
+                  "color, specular, velocity_buffer, mesh_blend_aux, depth",
+              )
+              text = text[:fb_start] + fb_fn + text[fb_end:]
+
+          # 3) In the main scene render function, enable and clear metadata only for the
+          # main view with Mesh Blend enabled and MSAA disabled.
+          visibility_match = re.search(
+              r"(?m)^(?P<indent>[\t ]*)bool\s+visibility_debug\s*=\s*get_debug_draw_mode\(\)\s*==\s*RSE::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER\s*;",
+              text,
+          )
+          if visibility_match is None:
+              raise RuntimeError("The Visibility debug condition was not found")
+          render_fn_start, render_fn_end = function_extent(text, r"void\s+RenderForwardClustered::[A-Za-z0-9_]+\s*\(", max(0, visibility_match.start() - 90000))
+          if not (render_fn_start <= visibility_match.start() < render_fn_end):
+              # Fall back to finding the closest function signature before the visibility block.
+              signatures = list(re.finditer(r"(?m)^void\s+RenderForwardClustered::[A-Za-z0-9_]+\s*\(", text[:visibility_match.start()]))
+              if not signatures:
+                  raise RuntimeError("The scene render function containing visibility_debug was not found")
+              render_fn_start, render_fn_end = function_extent(text, re.escape(signatures[-1].group(0).strip()))
+          render_fn = text[render_fn_start:render_fn_end]
+
+          if "mesh_blend_main_pass" not in render_fn:
+              fb_call = re.search(
+                  r"(?m)^(?P<indent>[\t ]*)RID\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*[^;]*get_color_pass_fb\((?P<flags>[A-Za-z_][A-Za-z0-9_]*)\)\s*;",
+                  render_fn,
+              )
+              if fb_call is None:
+                  raise RuntimeError("The opaque color framebuffer acquisition was not found")
+              indent = fb_call.group("indent")
+              flags_var = fb_call.group("flags")
+
+              rb_match = re.search(
+                  r"Ref<RenderSceneBuffersRD>\s+(?P<rb>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*p_render_data->render_buffers\s*;",
+                  render_fn,
+              )
+              if rb_match is None:
+                  raise RuntimeError("The RenderSceneBuffersRD local was not found in the scene render function")
+              rb_var = rb_match.group("rb")
+
+              setup = (
+                  f"{indent}const bool mesh_blend_main_pass = _mesh_blend_enabled() && "
+                  f"p_render_data->reflection_probe.is_null() && "
+                  f"{rb_var}->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;\n"
+                  f"{indent}if (mesh_blend_main_pass) {{\n"
+                  f"{indent}\t{flags_var} |= COLOR_PASS_FLAG_MESH_BLEND;\n"
+                  f"{indent}\t{rb_var}->ensure_visibility_textures(false, true, false);\n"
+                  f"{indent}\tRID mesh_blend_main_aux = {rb_var}->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);\n"
+                  f"{indent}\tif (mesh_blend_main_aux.is_valid()) {{\n"
+                  f"{indent}\t\tRD::get_singleton()->texture_clear(mesh_blend_main_aux, Color(0, 0, 0, 0), 0, 1, 0, {rb_var}->get_view_count());\n"
+                  f"{indent}\t}}\n"
+                  f"{indent}}}\n\n"
+              )
+              render_fn = render_fn[:fb_call.start()] + setup + render_fn[fb_call.start():]
+
+              old_condition = re.search(
+                  r"(?m)^(?P<indent>[\t ]*)if\s*\(visibility_debug\s*\|\|\s*_mesh_blend_enabled\(\)\)\s*\{",
+                  render_fn,
+              )
+              if old_condition is None:
+                  raise RuntimeError("The existing Visibility/Mesh Blend pass condition was not found")
+              condition_indent = old_condition.group("indent")
+              replacement = (
+                  f"{condition_indent}const bool mesh_blend_requires_visibility_pass = _mesh_blend_enabled() && !mesh_blend_main_pass;\n"
+                  f"{condition_indent}if (visibility_debug || mesh_blend_requires_visibility_pass) {{"
+              )
+              render_fn = render_fn[:old_condition.start()] + replacement + render_fn[old_condition.end():]
+              text = text[:render_fn_start] + render_fn + text[render_fn_end:]
+
+          # 4) Emit the same packed metadata directly from the regular color shader.
+          scene_shader = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          shader_text = scene_shader.read_text(encoding="utf-8")
+          if "frag_mesh_blend_aux" not in shader_text:
+              color_output_matches = list(re.finditer(
+                  r"(?m)^(?P<indent>[\t ]*)layout\(location\s*=\s*0\)\s*out\s+vec4\s+frag_color\s*;",
+                  shader_text,
+              ))
+              if len(color_output_matches) != 1:
+                  raise RuntimeError(f"Expected one frag_color output declaration, found {len(color_output_matches)}")
+              color_output = color_output_matches[0]
+              declaration = (
+                  color_output.group(0)
+                  + "\n"
+                  + color_output.group("indent") + "#define MESH_BLEND_MAIN_PASS_OUTPUT\n"
+                  + color_output.group("indent") + "layout(location = 3) out uint frag_mesh_blend_aux;"
+              )
+              shader_text = shader_text[:color_output.start()] + declaration + shader_text[color_output.end():]
+
+              existing_start = shader_text.find("vec2 mesh_blend_aux_value =")
+              existing_end_marker = "frag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);"
+              existing_end = shader_text.find(existing_end_marker, existing_start)
+              if existing_start < 0 or existing_end < 0:
+                  raise RuntimeError("The validated Visibility auxiliary packing block was not found")
+              existing_end += len(existing_end_marker)
+              existing_block = shader_text[existing_start:existing_end]
+              main_block = existing_block.replace("mesh_blend_aux_value", "mesh_blend_main_aux_value")
+              main_block = main_block.replace("frag_visibility_aux", "frag_mesh_blend_aux")
+              main_block = "#ifdef MESH_BLEND_MAIN_PASS_OUTPUT\n" + main_block + "\n#endif\n"
+
+              fragment_markers = list(re.finditer(r"(?m)^#CODE : FRAGMENT\s*$", shader_text))
+              if len(fragment_markers) != 1:
+                  raise RuntimeError(f"Expected one fragment code marker, found {len(fragment_markers)}")
+              marker = fragment_markers[0]
+              insertion = marker.end()
+              shader_text = shader_text[:insertion] + "\n" + main_block + shader_text[insertion:]
+
+          # Fixed locations 0/1/2 are already used by color/specular/velocity. Location 3
+          # must be unique for the packed integer metadata target.
+          location_three_outputs = re.findall(
+              r"layout\(location\s*=\s*3\)\s*out\s+([A-Za-z0-9_]+)\s+([A-Za-z0-9_]+)",
+              shader_text,
+          )
+          if location_three_outputs != [("uint", "frag_mesh_blend_aux")]:
+              raise RuntimeError(f"Unexpected fragment output(s) at location 3: {location_three_outputs}")
+          required_shader = (
+              "#define MESH_BLEND_MAIN_PASS_OUTPUT",
+              "layout(location = 3) out uint frag_mesh_blend_aux;",
+              "vec2 mesh_blend_main_aux_value",
+              "frag_mesh_blend_aux = pack_visibility_aux(mesh_blend_main_aux_value);",
+          )
+          for needle in required_shader:
+              if needle not in shader_text:
+                  raise RuntimeError(f"Main-pass Mesh Blend shader path is missing: {needle}")
+          scene_shader.write_text(shader_text, encoding="utf-8")
+
+          # Final C++ source invariants.
+          cpp_text = cpp.read_text(encoding="utf-8")
+          invariants = (
+              "COLOR_PASS_FLAG_MESH_BLEND",
+              "color, specular, velocity_buffer, mesh_blend_aux, depth",
+              "const bool mesh_blend_main_pass = _mesh_blend_enabled()",
+              "get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED",
+              "texture_clear(mesh_blend_main_aux",
+              "mesh_blend_requires_visibility_pass = _mesh_blend_enabled() && !mesh_blend_main_pass",
+          )
+          for needle in invariants:
+              if needle not in cpp_text:
+                  raise RuntimeError(f"Main-pass Mesh Blend C++ path is missing: {needle}")
+          PY
+
+          git diff --check
+
+      - name: Validate the Forward+ shader template and packed attachment type
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools spirv-tools mesa-vulkan-drivers xvfb python3-pil python3-numpy
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          text = source.read_text(encoding="utf-8")
+          # Godot expands many includes/markers, so source-level checks are used here;
+          # generated shaders are compiled by the full editor build below.
+          if "layout(location = 3) out uint frag_mesh_blend_aux;" not in text:
+              raise RuntimeError("Packed integer color output is missing")
+          if "pack_visibility_aux(mesh_blend_main_aux_value)" not in text:
+              raise RuntimeError("Main color output is not packed through the shared helper")
+          PY
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Compile Windows editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: windows
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+            arch=x86_64
+
+      - name: Discover Mesh Blend project settings and create runtime projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          settings = set()
+          for path in Path("servers").rglob("*.cpp"):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              settings.update(
+                  match.group(1)
+                  for match in re.finditer(
+                      r'["\'](rendering/[^"\']*mesh_blend[^"\']*)["\']',
+                      text,
+                      flags=re.IGNORECASE,
+                  )
+              )
+          enabled_settings = sorted(value for value in settings if "enabled" in value.lower())
+          if not enabled_settings:
+              raise RuntimeError("No Mesh Blend enabled ProjectSetting was discovered")
+
+          def write_project(root: Path, enabled: bool) -> None:
+              root.mkdir(parents=True, exist_ok=True)
+              lines = [
+                  '[application]',
+                  f'config/name="Mesh Blend Main Pass {"Enabled" if enabled else "Disabled"}"',
+                  '',
+                  '[display]',
+                  'window/size/viewport_width=512',
+                  'window/size/viewport_height=512',
+                  'window/size/window_width_override=512',
+                  'window/size/window_height_override=512',
+                  '',
+                  '[rendering]',
+                  'renderer/rendering_method="forward_plus"',
+                  'renderer/rendering_method.mobile="forward_plus"',
+              ]
+              for setting in sorted(settings):
+                  lowered = setting.lower()
+                  if "enabled" in lowered:
+                      value = "true" if enabled else "false"
+                  elif "use_world_radius" in lowered or "world_space" in lowered:
+                      value = "false"
+                  elif "radius" in lowered:
+                      value = "14.0"
+                  elif "depth_tolerance" in lowered:
+                      value = "0.05"
+                  elif "neighbor_blend" in lowered:
+                      value = "0.0"
+                  else:
+                      continue
+                  lines.append(f'{setting}={value}')
+              (root / "project.godot").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          write_project(Path("/tmp/mesh-blend-main-pass/enabled"), True)
+          write_project(Path("/tmp/mesh-blend-main-pass/disabled"), False)
+          PY
+
+          cat > /tmp/mesh-blend-main-pass/render_test.gd <<'EOF'
+          extends SceneTree
+
+          func make_material(group_id: int, color: Color, phase: float) -> ShaderMaterial:
+              var shader := Shader.new()
+              shader.code = """shader_type spatial;
+          uniform uint group_id = 1u;
+          uniform vec3 base_color = vec3(0.8);
+          uniform float phase = 0.0;
+          void fragment() {
+              float n = sin((UV.x * 12.0) + phase) * 0.22 + 0.75;
+              MESH_BLEND = n;
+              MESH_BLEND_GROUP = group_id;
+              ALBEDO = base_color;
+              ROUGHNESS = 1.0;
+          }
+          """
+              var material := ShaderMaterial.new()
+              material.shader = shader
+              material.set_shader_parameter("group_id", group_id)
+              material.set_shader_parameter("base_color", Vector3(color.r, color.g, color.b))
+              material.set_shader_parameter("phase", phase)
+              return material
+
+          func add_box(parent: Node3D, position: Vector3, size: Vector3, material: Material) -> void:
+              var instance := MeshInstance3D.new()
+              var box := BoxMesh.new()
+              box.size = size
+              instance.mesh = box
+              instance.position = position
+              instance.material_override = material
+              parent.add_child(instance)
+
+          func _initialize() -> void:
+              var args := OS.get_cmdline_user_args()
+              var output := args[0] if args.size() > 0 else "/tmp/mesh-blend-main-pass/frame.png"
+              var enable_msaa := args.has("msaa")
+              get_root().size = Vector2i(512, 512)
+              get_root().msaa_3d = Viewport.MSAA_2X if enable_msaa else Viewport.MSAA_DISABLED
+
+              var world := Node3D.new()
+              get_root().add_child(world)
+              add_box(world, Vector3(-0.75, 0.0, 0.0), Vector3(2.4, 2.4, 2.4), make_material(1, Color(0.88, 0.30, 0.20), 0.0))
+              add_box(world, Vector3(0.75, 0.0, 0.0), Vector3(2.4, 2.4, 2.4), make_material(2, Color(0.18, 0.42, 0.92), 1.1))
+
+              var floor_node := MeshInstance3D.new()
+              var plane := PlaneMesh.new()
+              plane.size = Vector2(12.0, 12.0)
+              floor_node.mesh = plane
+              floor_node.position.y = -1.25
+              var floor_material := StandardMaterial3D.new()
+              floor_material.albedo_color = Color(0.52, 0.52, 0.52)
+              floor_material.roughness = 1.0
+              floor_node.material_override = floor_material
+              world.add_child(floor_node)
+
+              var camera := Camera3D.new()
+              camera.position = Vector3(5.4, 3.9, 6.8)
+              camera.look_at(Vector3(0.0, -0.1, 0.0), Vector3.UP)
+              camera.fov = 42.0
+              camera.current = true
+              world.add_child(camera)
+
+              var light := DirectionalLight3D.new()
+              light.rotation_degrees = Vector3(-52.0, -28.0, 0.0)
+              light.light_energy = 1.0
+              world.add_child(light)
+
+              var environment := Environment.new()
+              environment.background_mode = Environment.BG_COLOR
+              environment.background_color = Color(0.08, 0.08, 0.08)
+              environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+              environment.ambient_light_color = Color.WHITE
+              environment.ambient_light_energy = 0.45
+              var world_environment := WorldEnvironment.new()
+              world_environment.environment = environment
+              world.add_child(world_environment)
+
+              for _frame in range(14):
+                  await process_frame
+                  await RenderingServer.frame_post_draw
+              RenderingServer.force_sync()
+              var image := get_root().get_texture().get_image()
+              if image.is_empty():
+                  push_error("Mesh Blend main-pass validation produced an empty image")
+                  quit(50)
+                  return
+              if image.save_png(output) != OK:
+                  push_error("Could not save Mesh Blend main-pass validation image")
+                  quit(51)
+                  return
+              quit()
+          EOF
+
+      - name: Render disabled, no-MSAA main-pass and MSAA fallback paths through Lavapipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mesh-blend-main-pass/results
+          GODOT_BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.*' | head -n1)"
+          LVP_ICD="$(find /usr/share/vulkan/icd.d -type f -iname '*lvp*.json' | head -n1)"
+          test -n "$GODOT_BIN"
+          test -n "$LVP_ICD"
+          export VK_ICD_FILENAMES="$LVP_ICD"
+          export LIBGL_ALWAYS_SOFTWARE=1
+
+          run_case() {
+            local project="$1"
+            local output="$2"
+            shift 2
+            xvfb-run -a -s '-screen 0 512x512x24' \
+              "$GODOT_BIN" \
+              --path "$project" \
+              --script /tmp/mesh-blend-main-pass/render_test.gd \
+              --rendering-method forward_plus \
+              --audio-driver Dummy \
+              --display-driver x11 \
+              -- "$output" "$@" \
+              > "${output%.png}.log" 2>&1
+            cat "${output%.png}.log"
+            test -s "$output"
+            if grep -Eqi 'shader compilation failed|pipeline.*invalid|framebuffer.*format|validation error|unknown identifier.*MESH_BLEND' "${output%.png}.log"; then
+              exit 1
+            fi
+          }
+
+          run_case /tmp/mesh-blend-main-pass/disabled /tmp/mesh-blend-main-pass/results/disabled.png
+          run_case /tmp/mesh-blend-main-pass/enabled /tmp/mesh-blend-main-pass/results/main_pass.png
+          run_case /tmp/mesh-blend-main-pass/enabled /tmp/mesh-blend-main-pass/results/msaa_fallback.png msaa
+
+      - name: Analyze enabled/disabled and no-MSAA/MSAA output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import numpy as np
+          from PIL import Image
+
+          root = Path("/tmp/mesh-blend-main-pass/results")
+          def load(name: str) -> np.ndarray:
+              image = np.asarray(Image.open(root / name).convert("RGB"), dtype=np.float32) / 255.0
+              if image.shape != (512, 512, 3):
+                  raise RuntimeError(f"Unexpected image shape for {name}: {image.shape}")
+              return image
+
+          disabled = load("disabled.png")
+          main_pass = load("main_pass.png")
+          msaa = load("msaa_fallback.png")
+          metrics = {
+              "enabled_vs_disabled_mae": float(np.abs(main_pass - disabled).mean()),
+              "main_pass_vs_msaa_mae": float(np.abs(main_pass - msaa).mean()),
+              "main_pass_mean": float(main_pass.mean()),
+              "msaa_mean": float(msaa.mean()),
+          }
+          if metrics["enabled_vs_disabled_mae"] <= 0.00001:
+              raise RuntimeError(f"Mesh Blend enabled output is indistinguishable from disabled: {metrics}")
+          if metrics["main_pass_vs_msaa_mae"] >= 0.25:
+              raise RuntimeError(f"No-MSAA main-pass and MSAA fallback diverge implausibly: {metrics}")
+          if not (0.02 < metrics["main_pass_mean"] < 0.98 and 0.02 < metrics["msaa_mean"] < 0.98):
+              raise RuntimeError(f"Implausible rendered luminance: {metrics}")
+          (root / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
+          print(json.dumps(metrics, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload runtime evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: mesh-blend-main-pass-metadata-${{ github.sha }}
+          path: |
+            /tmp/mesh-blend-main-pass/results/*.png
+            /tmp/mesh-blend-main-pass/results/*.json
+            /tmp/mesh-blend-main-pass/results/*.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove workflow, record validation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/optimize_mesh_blend_main_pass_metadata.yml
+          mkdir -p .github/build-status
+          cp /tmp/mesh-blend-main-pass/results/metrics.json .github/build-status/mesh-blend-main-pass-metadata-metrics.json
+          {
+            echo "branch=opt/mesh-blend-main-pass-metadata"
+            echo "validated_by_run=${{ github.run_id }}"
+            echo "validated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "no_msaa_path=main_opaque_color_pass"
+            echo "msaa_path=separate_visibility_pass"
+            echo "runtime=forward_plus-lavapipe"
+          } > .github/build-status/mesh-blend-main-pass-metadata.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Write Mesh Blend metadata in the no-MSAA opaque pass"
+          git push origin HEAD:opt/mesh-blend-main-pass-metadata
