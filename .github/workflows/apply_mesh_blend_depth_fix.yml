@@ -51,7 +51,7 @@ jobs:
               raise RuntimeError("Unexpected depth declaration")
           block = block.replace(old_depth, new_depth, 1)
 
-          if block.count("vb_depth_slice") != 4:
+          if block.count("vb_depth_slice") != 3:
               raise RuntimeError("Unexpected remaining VB depth reference count")
           block = block.replace("vb_depth_slice", "mesh_depth")
           path.write_text(text[:start] + block + text[end:], encoding="utf-8")
