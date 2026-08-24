@@ -8,7 +8,6 @@ on:
       - ".github/workflows/renderer_batch2_apply.yml"
       - ".github/scripts/apply_renderer_batch2.py"
       - ".github/scripts/prepare_renderer_batch2_driver.py"
-      - ".github/scripts/fix_renderer_batch2_main_pass_cpp.py"
   workflow_dispatch:
 
 permissions:
@@ -53,7 +52,7 @@ jobs:
       - name: Prepare Godot 4.7.2 patch compatibility
         run: python3 .github/scripts/prepare_renderer_batch2_driver.py
 
-      - name: Use structural validation for the main-pass attachment
+      - name: Persist main-pass C++ before validating it
         shell: bash
         run: |
           set -euxo pipefail
@@ -62,46 +61,25 @@ jobs:
 
           path = Path(".github/scripts/apply_renderer_batch2.py")
           text = path.read_text(encoding="utf-8")
-
           branch_marker = '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
-          compatibility = (
-              '        # The historical exact-string invariant is replaced by a structural fixer.\n'
+          addition = (
+              '        persistence_marker = "# Final C++ source invariants."\n'
+              '        if persistence_marker not in body:\n'
+              '            raise RuntimeError("Main-pass C++ invariant marker was not found")\n'
               '        body = body.replace(\n'
-              '            \'for snippet in required_cpp_snippets:\\n\',\n'
-              '            \'for snippet in required_cpp_snippets:\\n\'\n'
-              '            \'    if snippet == "color, specular, velocity_buffer, mesh_blend_aux, depth":\\n\'\n'
-              '            \'        continue\\n\',\n'
+              '            persistence_marker,\n'
+              '            \'cpp.write_text(text, encoding="utf-8")\\n\\n\' + persistence_marker,\n'
               '            1,\n'
               '        )\n'
           )
-          if "if snippet == \"color, specular, velocity_buffer, mesh_blend_aux, depth\"" not in text:
+          guard = 'persistence_marker = "# Final C++ source invariants."'
+          if guard not in text:
               if branch_marker not in text:
                   raise RuntimeError("Main-pass compatibility branch was not found")
-              text = text.replace(branch_marker, branch_marker + compatibility, 1)
-
-          run_marker = '    run(["python3", str(patch_path)])\n'
-          fixer_call = (
-              '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
-              '        run([\n'
-              '            "python3",\n'
-              '            str(ROOT / ".github/scripts/fix_renderer_batch2_main_pass_cpp.py"),\n'
-              '        ])\n'
-          )
-          if "str(ROOT / \".github/scripts/fix_renderer_batch2_main_pass_cpp.py\")" not in text:
-              if run_marker not in text:
-                  raise RuntimeError("Patch execution marker was not found")
-              text = text.replace(run_marker, run_marker + fixer_call, 1)
-
+              text = text.replace(branch_marker, branch_marker + addition, 1)
           path.write_text(text, encoding="utf-8")
           PY
-
-      - name: Validate generated optimization driver
-        shell: bash
-        run: |
-          set -euxo pipefail
           python3 -m py_compile .github/scripts/apply_renderer_batch2.py
-          grep -n -A18 -B4 "required_cpp_snippets" .github/scripts/apply_renderer_batch2.py | head -80
-          grep -n -A10 -B3 "fix_renderer_batch2_main_pass_cpp.py" .github/scripts/apply_renderer_batch2.py
 
       - name: Apply renderer, Mesh Blend and MSAA source optimizations
         run: python3 .github/scripts/apply_renderer_batch2.py
@@ -119,6 +97,7 @@ jobs:
           rm -f .github/scripts/apply_renderer_batch2.py
           rm -f .github/scripts/prepare_renderer_batch2_driver.py
           rm -f .github/scripts/fix_renderer_batch2_main_pass_cpp.py
+          rm -f .github/scripts/fix_renderer_batch2_main_pass_adapter.py
 
           mkdir -p .github/build-status
           {
@@ -127,6 +106,7 @@ jobs:
             echo "applied_by_run=${{ github.run_id }}"
             echo "applied_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "linux_compile=pending"
+            echo "termux_compile=pending"
             echo "msaa_runtime_validation=pending"
           } > .github/build-status/renderer-batch2-source.txt
 
