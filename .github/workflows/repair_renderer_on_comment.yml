@@ -1,34 +1,42 @@
-name: Repair renderer branch on command
+name: Repair and verify renderer branch
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/repair_renderer_on_comment.yml"
   issue_comment:
     types: [created]
+  workflow_dispatch:
 
 permissions:
   contents: write
-  issues: read
+  issues: write
   pull-requests: read
 
 concurrency:
-  group: repair-renderer-branch-command
+  group: repair-and-verify-renderer-branch
   cancel-in-progress: true
 
 jobs:
-  repair:
+  repair-build:
     if: >-
-      github.event.issue.pull_request &&
-      github.event.issue.number == 27 &&
-      github.event.comment.body == '/repair-renderer-now'
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+       github.event.issue.number == 27 &&
+       github.event.comment.body == '/repair-renderer-now')
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
 
     steps:
       - name: Checkout renderer optimization branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           ref: opt/renderer-batch2
           fetch-depth: 1
 
-      - name: Repair Visibility allocator source
+      - name: Persist renderer source repairs
         shell: bash
         run: |
           set -euxo pipefail
@@ -64,32 +72,130 @@ jobs:
           text = source.read_text(encoding="utf-8")
           bad_return = "\treturn has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);"
           good_return = """\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
-\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
-\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
-\treturn visibility_ready && aux_ready && depth_ready;"""
+          \tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+          \tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+          \treturn visibility_ready && aux_ready && depth_ready;"""
+          # Remove indentation introduced by the YAML/Python heredoc while retaining C++ tabs.
+          good_return = "\n".join(line.lstrip(" ") for line in good_return.splitlines())
           if bad_return in text:
               text = text.replace(bad_return, good_return, 1)
           elif good_return not in text:
               raise RuntimeError("Unexpected ensure_visibility_textures return expression")
           source.write_text(text, encoding="utf-8")
+
+          forward = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp")
+          text = forward.read_text(encoding="utf-8")
+          outer_anchor = "\tbool using_motion_pass = rb_data.is_valid() && using_upscaling;\n"
+          outer_decl = outer_anchor + "\tbool mesh_blend_main_pass = false;\n"
+          local_decl = "\t\tconst bool mesh_blend_main_pass = _mesh_blend_enabled() && p_render_data->reflection_probe.is_null() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;"
+          assignment = "\t\tmesh_blend_main_pass = _mesh_blend_enabled() && p_render_data->reflection_probe.is_null() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;"
+          if outer_decl not in text:
+              if outer_anchor not in text:
+                  raise RuntimeError("Could not find Mesh Blend outer-scope anchor")
+              text = text.replace(outer_anchor, outer_decl, 1)
+          if local_decl in text:
+              text = text.replace(local_decl, assignment, 1)
+          elif assignment not in text:
+              raise RuntimeError("Could not find Mesh Blend main-pass assignment")
+          forward.write_text(text, encoding="utf-8")
           PY
+
+          rm -f site_scons/site_init.py
 
           ! grep -R -n 'ensure_visibility_textures(true,' servers/rendering
           grep -q 'bool ensure_visibility_textures(bool p_need_full_visibility = true' \
             servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h
           grep -q 'p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT' \
             servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          grep -q '^\tbool mesh_blend_main_pass = false;' \
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          test ! -e site_scons/site_init.py
           git diff --check
 
-      - name: Commit repair
+      - name: Commit repaired source before compiling
         shell: bash
         run: |
           set -euxo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
+          git add -A \
             servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h \
-            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp \
+            servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp \
+            site_scons/site_init.py
           git diff --cached --check
-          git commit -m "Fix Visibility texture allocator declaration and readiness"
-          git push origin HEAD:opt/renderer-batch2
+          if ! git diff --cached --quiet; then
+            git commit -m "Persist renderer Visibility and main-pass fixes"
+            git push origin HEAD:opt/renderer-batch2
+          fi
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux Forward+ editor
+        shell: bash
+        run: |
+          set -o pipefail
+          scons -j4 \
+            platform=linuxbsd \
+            target=editor \
+            arch=x86_64 \
+            dev_mode=yes \
+            module_text_server_fb_enabled=yes \
+            tests=no \
+            2>&1 | tee renderer-repair-build.log
+
+      - name: Smoke-test editor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          binary="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor*' -perm -111 | head -n 1)"
+          test -n "$binary"
+          "$binary" --headless --version | tee renderer-version.txt
+
+      - name: Package Linux editor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/linux
+          binary="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor*' -perm -111 | head -n 1)"
+          cp "$binary" artifacts/linux/godot-vib-4.7.2-renderer-linux-x86_64
+          chmod +x artifacts/linux/godot-vib-4.7.2-renderer-linux-x86_64
+          cp renderer-version.txt artifacts/linux/
+          tar -C artifacts/linux -cJf artifacts/godot-vib-4.7.2-renderer-linux-x86_64.tar.xz \
+            godot-vib-4.7.2-renderer-linux-x86_64 renderer-version.txt
+
+      - name: Upload verified Linux editor
+        uses: actions/upload-artifact@v6
+        with:
+          name: godot-vib-4.7.2-renderer-linux-x86_64
+          path: artifacts/godot-vib-4.7.2-renderer-linux-x86_64.tar.xz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: renderer-repair-build-log
+          path: renderer-repair-build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report success on PR
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/27/comments" \
+            -f body="Renderer source repairs were persisted, the Linux Forward+ editor compiled, and the binary passed --headless --version. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Report failure on PR
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/27/comments" \
+            -f body="Renderer repair/build failed. Exact run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
