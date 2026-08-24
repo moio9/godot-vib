@@ -1,0 +1,151 @@
+name: Apply per-pixel Mesh Blend shader API
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/mesh-blend-per-pixel
+    paths:
+      - .github/workflows/apply_mesh_blend_per_pixel.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/mesh-blend-per-pixel
+          fetch-depth: 0
+
+      - name: Add writable per-pixel shader built-ins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Register MESH_BLEND and MESH_BLEND_GROUP as writable spatial fragment built-ins.
+          shader_types = Path("servers/rendering/shader_types.cpp")
+          text = shader_types.read_text(encoding="utf-8")
+          if 'built_ins["MESH_BLEND"]' not in text:
+              lines = text.splitlines(keepends=True)
+              albedo_index = next(
+                  (i for i, line in enumerate(lines) if 'functions["fragment"].built_ins["ALBEDO"]' in line),
+                  None,
+              )
+              if albedo_index is None:
+                  raise RuntimeError("Could not locate the spatial fragment ALBEDO built-in registration")
+              template = lines[albedo_index]
+              blend_line = template.replace('["ALBEDO"]', '["MESH_BLEND"]').replace("TYPE_VEC3", "TYPE_FLOAT")
+              group_line = template.replace('["ALBEDO"]', '["MESH_BLEND_GROUP"]').replace("TYPE_VEC3", "TYPE_UINT")
+              if blend_line == template or group_line == template:
+                  raise RuntimeError("Could not derive Mesh Blend built-in registrations from ALBEDO")
+              lines[albedo_index + 1:albedo_index + 1] = [blend_line, group_line]
+              text = "".join(lines)
+          shader_types.write_text(text, encoding="utf-8")
+
+          compiler = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp")
+          text = compiler.read_text(encoding="utf-8")
+
+          if 'actions.renames["MESH_BLEND"]' not in text:
+              lines = text.splitlines(keepends=True)
+              rename_index = next((i for i, line in enumerate(lines) if 'actions.renames["ALBEDO"]' in line), None)
+              if rename_index is None:
+                  raise RuntimeError("Could not locate the ALBEDO compiler rename")
+              indent = re.match(r"\s*", lines[rename_index]).group(0)
+              lines[rename_index + 1:rename_index + 1] = [
+                  f'{indent}actions.renames["MESH_BLEND"] = "mesh_blend_output";\n',
+                  f'{indent}actions.renames["MESH_BLEND_GROUP"] = "mesh_blend_group_output";\n',
+              ]
+              text = "".join(lines)
+
+          if 'actions.usage_defines["MESH_BLEND"]' not in text:
+              lines = text.splitlines(keepends=True)
+              usage_index = next((i for i, line in enumerate(lines) if 'actions.usage_defines["ALBEDO"]' in line), None)
+              if usage_index is None:
+                  raise RuntimeError("Could not locate the ALBEDO compiler usage define")
+              indent = re.match(r"\s*", lines[usage_index]).group(0)
+              lines[usage_index + 1:usage_index + 1] = [
+                  f'{indent}actions.usage_defines["MESH_BLEND"] = "#define MESH_BLEND_OUTPUT_USED\\n";\n',
+                  f'{indent}actions.usage_defines["MESH_BLEND_GROUP"] = "#define MESH_BLEND_GROUP_OUTPUT_USED\\n";\n',
+              ]
+              text = "".join(lines)
+          compiler.write_text(text, encoding="utf-8")
+
+          shader = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          text = shader.read_text(encoding="utf-8")
+
+          if "float mesh_blend_output" not in text:
+              marker = "#CODE : FRAGMENT"
+              if text.count(marker) != 1:
+                  raise RuntimeError(f"Expected one fragment code marker, found {text.count(marker)}")
+              declarations = (
+                  "float mesh_blend_output = 0.0;\n"
+                  "uint mesh_blend_group_output = 0u;\n\n"
+              )
+              text = text.replace(marker, declarations + marker, 1)
+
+          if "MESH_BLEND_OUTPUT_USED" not in text:
+              assignment_matches = list(re.finditer(r"^[\t ]*frag_visibility_aux[\t ]*=.*?;[\t ]*$", text, flags=re.MULTILINE))
+              if not assignment_matches:
+                  raise RuntimeError("Could not locate frag_visibility_aux assignment")
+              match = assignment_matches[-1]
+              indent = re.match(r"[\t ]*", match.group(0)).group(0)
+              override = (
+                  "\n#ifdef MESH_BLEND_OUTPUT_USED\n"
+                  f"{indent}frag_visibility_aux.x = clamp(mesh_blend_output, 0.0, 1.0);\n"
+                  "#endif\n"
+                  "#ifdef MESH_BLEND_GROUP_OUTPUT_USED\n"
+                  f"{indent}frag_visibility_aux.y = float(min(mesh_blend_group_output, 255u)) / 255.0;\n"
+                  "#endif"
+              )
+              text = text[:match.end()] + override + text[match.end():]
+
+          shader.write_text(text, encoding="utf-8")
+
+          # Source-level assertions prevent a partial API from being committed.
+          checks = {
+              shader_types: ('built_ins["MESH_BLEND"]', 'built_ins["MESH_BLEND_GROUP"]'),
+              compiler: ('actions.renames["MESH_BLEND"]', 'actions.usage_defines["MESH_BLEND_GROUP"]'),
+              shader: ("float mesh_blend_output", "MESH_BLEND_GROUP_OUTPUT_USED", "frag_visibility_aux.y"),
+          }
+          for path, needles in checks.items():
+              content = path.read_text(encoding="utf-8")
+              for needle in needles:
+                  if needle not in content:
+                      raise RuntimeError(f"{path}: missing {needle}")
+          PY
+
+          git diff --check
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove temporary workflow
+        shell: bash
+        run: rm -f .github/workflows/apply_mesh_blend_per_pixel.yml
+
+      - name: Commit compiled shader API
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add per-pixel Mesh Blend outputs to spatial shaders"
+          git push origin HEAD:feature/mesh-blend-per-pixel
