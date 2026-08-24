@@ -6,8 +6,6 @@ on:
       - "4.7"
     types:
       - synchronize
-    paths:
-      - ".github/build-status/renderer-batch2-source.txt"
   workflow_dispatch:
 
 permissions:
