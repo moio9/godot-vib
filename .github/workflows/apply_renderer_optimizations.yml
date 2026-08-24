@@ -1,0 +1,99 @@
+name: Apply renderer optimizations
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/renderer-depth-mesh-blend
+    paths:
+      - .github/workflows/apply_renderer_optimizations.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout optimization branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-mesh-blend
+          fetch-depth: 0
+
+      - name: Apply safe depth and Mesh Blend optimizations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str, expected: int = 1) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != expected:
+                  raise RuntimeError(f"{path}: expected {expected} occurrence(s), found {count}: {old!r}")
+              p.write_text(text.replace(old, new), encoding="utf-8")
+
+          # Fix excess/duplicate writers when producing deeper linear-depth mips.
+          depth_shader = "servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl"
+          replace_exact(
+              depth_shader,
+              "still_alive = p_gtid.x % 8 == depth_array_offset.x && depth_array_offset.y % 8 == depth_array_offset.y;",
+              "still_alive = p_gtid.x % 8 == depth_array_offset.x && p_gtid.y % 8 == depth_array_offset.y;",
+          )
+          replace_exact(
+              depth_shader,
+              "still_alive = p_gtid.x % 16 == depth_array_offset.x && depth_array_offset.y % 16 == depth_array_offset.y;",
+              "still_alive = p_gtid.x % 16 == depth_array_offset.x && p_gtid.y % 16 == depth_array_offset.y;",
+          )
+
+          # Mesh Blend only samples depth. A sampled texture removes the STORAGE-image requirement
+          # and lets the renderer bind the regular scene depth in the next optimization step.
+          mask_shader = "servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl"
+          replace_exact(
+              mask_shader,
+              "layout(r32f, set = 0, binding = 4) uniform readonly image2D mesh_depth;",
+              "layout(set = 0, binding = 4) uniform sampler2D mesh_depth;",
+          )
+          replace_exact(
+              mask_shader,
+              "float depth_value = imageLoad(mesh_depth, sample_pixel).x;",
+              "float depth_value = texelFetch(mesh_depth, sample_pixel, 0).x;",
+          )
+
+          mesh_cpp = "servers/rendering/renderer_rd/effects/mesh_blend.cpp"
+          p = Path(mesh_cpp)
+          text = p.read_text(encoding="utf-8")
+          anchor = "\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n"
+          if text.count(anchor) < 1:
+              raise RuntimeError("MeshBlend::generate_mask uniform-cache anchor not found")
+          replacement = anchor + "\tMaterialStorage *material_storage = MaterialStorage::get_singleton();\n\tERR_FAIL_NULL(material_storage);\n\tRID sampler_nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);\n"
+          # Only modify the first occurrence, which is generate_mask().
+          text = text.replace(anchor, replacement, 1)
+          old_depth_uniform = "\tRD::Uniform u_depth(RD::UNIFORM_TYPE_IMAGE, 4, Vector<RID>({ p_vb_depth }));"
+          new_depth_uniform = "\tRD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ sampler_nearest, p_vb_depth }));"
+          if text.count(old_depth_uniform) != 1:
+              raise RuntimeError(f"Expected one Mesh Blend depth image binding, found {text.count(old_depth_uniform)}")
+          text = text.replace(old_depth_uniform, new_depth_uniform)
+          p.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+
+      - name: Commit optimization patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl \
+                  servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
+                  servers/rendering/renderer_rd/effects/mesh_blend.cpp
+          git commit -m "Optimize screen-space depth prep and Mesh Blend depth sampling"
+          git push origin HEAD:opt/renderer-depth-mesh-blend

@@ -1,0 +1,61 @@
+name: Apply main-depth reuse optimization
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/renderer-depth-mesh-blend
+    paths:
+      - .github/workflows/apply_renderer_optimizations_stage2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-mesh-blend
+          fetch-depth: 0
+
+      - name: Reuse main depth for Mesh Blend when MSAA is disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp")
+          text = path.read_text(encoding="utf-8")
+          old = '''\tif (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {
+          \t\tuse_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.
+          \t}
+          '''
+          if old not in text:
+              # Accept the local helper spelling used in some revisions, but still require an exact block.
+              old = '''\tif (_mesh_blend_enabled()) {
+          \t\tuse_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.
+          \t}
+          '''
+          if old not in text:
+              raise RuntimeError("Expected Mesh Blend STORAGE-depth override was not found")
+          text = text.replace(old, "", 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+          git diff --check
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          git commit -m "Reuse main depth for Mesh Blend without MSAA"
+          git push origin HEAD:opt/renderer-depth-mesh-blend

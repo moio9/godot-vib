@@ -1,0 +1,165 @@
+name: Apply and validate renderer depth optimizations
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opt/renderer-depth-mesh-blend
+    paths:
+      - .github/workflows/apply_renderer_optimizations_stage3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-depth-mesh-blend
+          fetch-depth: 0
+
+      - name: Apply exact two-mip path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one match, found {count}: {old!r}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          shader = Path("servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl")
+          shader_text = shader.read_text(encoding="utf-8")
+          required = (
+              "p_gtid.y % 8 == depth_array_offset.y",
+              "p_gtid.y % 16 == depth_array_offset.y",
+          )
+          for item in required:
+              if item not in shader_text:
+                  raise RuntimeError(f"The safe mip-writer fix is missing: {item}")
+
+          old_decl = '''#ifdef GENERATE_MIPS
+          layout(r16f, set = 2, binding = 0) uniform restrict writeonly image2DArray dest_image1;
+          layout(r16f, set = 2, binding = 1) uniform restrict writeonly image2DArray dest_image2;
+          layout(r16f, set = 2, binding = 2) uniform restrict writeonly image2DArray dest_image3;
+          #ifdef GENERATE_FULL_MIPS
+          layout(r16f, set = 2, binding = 3) uniform restrict writeonly image2DArray dest_image4;
+          #endif
+          #endif
+          '''
+          new_decl = '''#ifdef GENERATE_MIPS
+          layout(r16f, set = 2, binding = 0) uniform restrict writeonly image2DArray dest_image1;
+          layout(r16f, set = 2, binding = 1) uniform restrict writeonly image2DArray dest_image2;
+          #ifndef GENERATE_TWO_MIPS
+          layout(r16f, set = 2, binding = 2) uniform restrict writeonly image2DArray dest_image3;
+          #ifdef GENERATE_FULL_MIPS
+          layout(r16f, set = 2, binding = 3) uniform restrict writeonly image2DArray dest_image4;
+          #endif
+          #endif
+          #endif
+          '''
+          replace_once(shader, old_decl, new_decl)
+
+          text = shader.read_text(encoding="utf-8")
+          third_mip_start = "\tstill_alive = p_gtid.x % 8 == depth_array_offset.x && p_gtid.y % 8 == depth_array_offset.y;"
+          if text.count(third_mip_start) != 1:
+              raise RuntimeError("Third-mip stage marker not found exactly once")
+          text = text.replace(third_mip_start, "#ifndef GENERATE_TWO_MIPS\n" + third_mip_start, 1)
+
+          start = text.index("#ifndef GENERATE_TWO_MIPS\n" + third_mip_start)
+          tail = "#endif\n}\n#else\n#ifndef USE_HALF_BUFFERS"
+          tail_pos = text.find(tail, start)
+          if tail_pos < 0:
+              raise RuntimeError("Could not locate the end of the mip-generation function")
+          text = text[:tail_pos] + "#endif\n#endif // !GENERATE_TWO_MIPS\n}\n#else\n#ifndef USE_HALF_BUFFERS" + text[tail_pos + len(tail):]
+          shader.write_text(text, encoding="utf-8")
+
+          header = Path("servers/rendering/renderer_rd/effects/ss_effects.h")
+          replace_once(
+              header,
+              "\t\tSS_EFFECTS_DOWNSAMPLE_FULL_MIPS,\n\t\tSS_EFFECTS_MAX",
+              "\t\tSS_EFFECTS_DOWNSAMPLE_FULL_MIPS,\n\t\tSS_EFFECTS_DOWNSAMPLE_TWO_MIPS,\n\t\tSS_EFFECTS_MAX",
+          )
+
+          cpp = Path("servers/rendering/renderer_rd/effects/ss_effects.cpp")
+          replace_once(
+              cpp,
+              '''\t\tdownsampler_modes.push_back("\\n#define GENERATE_MIPS\\n#define GENERATE_FULL_MIPS");
+          
+          \t\tss_effects.downsample_shader.initialize(downsampler_modes);''',
+              '''\t\tdownsampler_modes.push_back("\\n#define GENERATE_MIPS\\n#define GENERATE_FULL_MIPS");
+          \t\tdownsampler_modes.push_back("\\n#define GENERATE_MIPS\\n#define GENERATE_TWO_MIPS\\n");
+          
+          \t\tss_effects.downsample_shader.initialize(downsampler_modes);''',
+          )
+          replace_once(
+              cpp,
+              "\tbool use_half_size = false;\n\tbool use_full_mips = false;",
+              "\tbool use_half_size = false;\n\tbool use_full_mips = false;\n\tbool use_two_mips = false;",
+          )
+          replace_once(
+              cpp,
+              '''\t\t} else {
+          \t\t\t// Only need the first two mipmaps, but the cost to generate the next two is trivial
+          \t\t\t// TODO investigate the benefit of a shader version to generate only 2 mips
+          \t\t\tdownsample_mode = SS_EFFECTS_DOWNSAMPLE_MIPMAP;
+          \t\t\tuse_mips = true;
+          \t\t}
+          \t}''',
+              '''\t\t} else {
+          \t\t\tdownsample_mode = SS_EFFECTS_DOWNSAMPLE_TWO_MIPS;
+          \t\t\tuse_mips = true;
+          \t\t\tuse_two_mips = true;
+          \t\t}
+          \t}''',
+          )
+          replace_once(
+              cpp,
+              "\t\tfor (int i = 0; i < (use_full_mips ? 4 : 3); i++) {",
+              "\t\tconst int generated_mip_count = use_full_mips ? 4 : (use_two_mips ? 2 : 3);\n\t\tfor (int i = 0; i < generated_mip_count; i++) {",
+          )
+          PY
+
+          git diff --check
+
+      - name: Set up build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Remove temporary patch workflows
+        shell: bash
+        run: |
+          git rm -f .github/workflows/apply_renderer_optimizations.yml \
+                    .github/workflows/apply_renderer_optimizations_stage2.yml \
+                    .github/workflows/apply_renderer_optimizations_stage3.yml
+
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add servers/rendering/renderer_rd/effects/ss_effects.cpp \
+                  servers/rendering/renderer_rd/effects/ss_effects.h \
+                  servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl \
+                  servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl \
+                  servers/rendering/renderer_rd/effects/mesh_blend.cpp \
+                  servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          git commit -m "Optimize shared depth preparation and Mesh Blend depth reuse"
+          git push origin HEAD:opt/renderer-depth-mesh-blend
