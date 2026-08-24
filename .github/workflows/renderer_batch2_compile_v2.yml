@@ -1,0 +1,115 @@
+name: Compile renderer batch v2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - "4.7"
+    paths:
+      - "core/**"
+      - "drivers/**"
+      - "main/**"
+      - "modules/**"
+      - "platform/**"
+      - "scene/**"
+      - "servers/**"
+      - "thirdparty/**"
+      - "SConstruct"
+      - "version.py"
+      - ".github/actions/**"
+      - ".github/workflows/renderer_batch2_compile_v2.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: renderer-batch2-compile-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-forward-plus:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'opt/renderer-batch2'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout renderer branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Set up Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux Forward+ editor
+        id: compile
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          scons -j2 \
+            platform=linuxbsd \
+            target=editor \
+            arch=x86_64 \
+            dev_mode=yes \
+            module_text_server_fb_enabled=yes \
+            tests=no \
+            2>&1 | tee renderer-batch2-build.log
+
+      - name: Persist exact compiler failure
+        if: steps.compile.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p .github/build-status
+          {
+            echo "run_id=${{ github.run_id }}"
+            echo "head_sha=${{ github.sha }}"
+            echo "failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "===== FIRST COMPILER ERRORS ====="
+            grep -n -B4 -A12 -E '(^|[[:space:]])(error:|FAILED:|scons: \*\*\*)' renderer-batch2-build.log | head -n 500 || true
+            echo
+            echo "===== BUILD LOG TAIL ====="
+            tail -n 1200 renderer-batch2-build.log
+          } > .github/build-status/renderer-batch2-last-failure.log
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/build-status/renderer-batch2-last-failure.log
+          git commit -m "Record renderer batch compile failure" || true
+          git push origin HEAD:opt/renderer-batch2
+          exit 1
+
+      - name: Locate and smoke-test editor
+        if: steps.compile.outcome == 'success'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.x86_64*' -perm -111 | head -n 1)"
+          test -n "$BIN"
+          "$BIN" --headless --version | tee renderer-batch2-version.txt
+          mkdir -p renderer-batch2-artifact
+          cp "$BIN" renderer-batch2-artifact/godot-vib-4.7.2-renderer-batch2.x86_64
+          cp renderer-batch2-version.txt renderer-batch2-artifact/
+          tar -C renderer-batch2-artifact -cJf godot-vib-4.7.2-renderer-batch2-linux-x86_64.tar.xz .
+
+      - name: Upload Linux editor
+        if: steps.compile.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: godot-vib-4.7.2-renderer-batch2-linux-x86_64
+          path: godot-vib-4.7.2-renderer-batch2-linux-x86_64.tar.xz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload complete failure log
+        if: steps.compile.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: renderer-batch2-linux-build-log
+          path: renderer-batch2-build.log
+          if-no-files-found: error
+          retention-days: 14
