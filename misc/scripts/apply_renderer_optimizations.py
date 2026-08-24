@@ -195,15 +195,6 @@ def main() -> None:
         "allow lazily allocated VB textures to reuse main depth",
     )
 
-    # Compile the optimization branch with the same Termux package job before
-    # it is merged into 4.7.
-    changed |= replace_once(
-        ".github/workflows/termux_build.yml",
-        '      - "sync/4.7.2"\n',
-        '      - "sync/4.7.2"\n      - "work/renderer-optimizations"\n',
-        "enable Termux CI on the renderer optimization branch",
-    )
-
     print("Renderer optimization patch complete." if changed else "No changes were necessary.")
 
 
