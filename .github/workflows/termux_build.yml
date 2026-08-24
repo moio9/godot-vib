@@ -6,6 +6,7 @@ on:
     branches:
       - "4.7"
       - "sync/4.7.2"
+      # Validate renderer work before it reaches the stable fork branch.
       - "work/renderer-optimizations"
     paths:
       - "core/**"
