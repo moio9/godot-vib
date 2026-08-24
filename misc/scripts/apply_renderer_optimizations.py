@@ -70,8 +70,33 @@ def main() -> None:
         "fix 16x16 depth mip lane selection",
     )
 
+    scene_shader_cpp = "servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp"
+    changed |= replace_once(
+        scene_shader_cpp,
+        "\t\tactions.usage_defines[\"ALPHA_TEXTURE_COORDINATE\"] = \"@ALPHA_ANTIALIASING_EDGE\";\n\t\tactions.usage_defines[\"PREMUL_ALPHA_FACTOR\"] = \"#define PREMUL_ALPHA_USED\\n\";",
+        "\t\tactions.usage_defines[\"ALPHA_TEXTURE_COORDINATE\"] = \"@ALPHA_ANTIALIASING_EDGE\";\n\t\tactions.usage_defines[\"MESH_BLEND\"] = \"#define MESH_BLEND_USED\\n\";\n\t\tactions.usage_defines[\"DISCARD\"] = \"#define DISCARD_USED\\n\";\n\t\tactions.usage_defines[\"PREMUL_ALPHA_FACTOR\"] = \"#define PREMUL_ALPHA_USED\\n\";",
+        "emit visibility-pass defines for per-pixel Mesh Blend and discard",
+    )
+
     scene_shader = "servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl"
     old_visibility_early_exit = """#ifdef MODE_RENDER_VISIBILITY
+\tuvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
+\tvisibility_id_output = uvec4(packed_ids, 0u, 0u);
+
+#ifndef MODE_RENDER_VISIBILITY_NO_AUX
+\tfloat material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+\tfloat blend_id = sc_instance_hash(packed_ids.y);
+\tvec2 aux = vec2(material_mesh_blend, blend_id);
+\tvisibility_aux_output = vec4(aux, 0.0, 0.0);
+#endif
+\treturn;
+#endif
+
+"""
+    fast_visibility_path = """#if defined(MODE_RENDER_VISIBILITY) && !defined(MESH_BLEND_USED) && !defined(DISCARD_USED) && !defined(ALPHA_SCISSOR_USED) && !defined(ALPHA_HASH_USED) && !defined(ALPHA_ANTIALIASING_EDGE_USED)
+\t// Most materials do not need their fragment function during the VB pass.
+\t// Keep the original fast path and only execute fragment() for per-pixel
+\t// Mesh Blend or alpha/discard-dependent materials.
 \tuvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
 \tvisibility_id_output = uvec4(packed_ids, 0u, 0u);
 
@@ -88,8 +113,8 @@ def main() -> None:
     changed |= replace_once(
         scene_shader,
         old_visibility_early_exit,
-        "",
-        "allow the visibility pass to execute the material fragment function",
+        fast_visibility_path,
+        "retain a fast VB path for materials without per-pixel work",
     )
     changed |= replace_once(
         scene_shader,
@@ -99,8 +124,8 @@ def main() -> None:
     )
 
     visibility_output = """#ifdef MODE_RENDER_VISIBILITY
-\t// Run the material fragment first so MESH_BLEND can be authored per pixel
-\t// using textures, noise, UVs, world-space masks, or procedural logic.
+\t// The material fragment has now evaluated textures, procedural masks,
+\t// alpha cutouts and discard. Store its final per-pixel Mesh Blend value.
 \tuvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
 \tvisibility_id_output = uvec4(packed_ids, 0u, 0u);
 
@@ -139,8 +164,8 @@ def main() -> None:
     mesh_blend_cpp = "servers/rendering/renderer_rd/effects/mesh_blend.cpp"
     changed |= replace_once(
         mesh_blend_cpp,
-        "\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n\n\tRD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();",
-        "\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n\tMaterialStorage *material_storage = MaterialStorage::get_singleton();\n\tERR_FAIL_NULL(material_storage);\n\n\tRID sampler_nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);\n\n\tRD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();",
+        "\tif (p_vb_depth.is_null()) {\n\t\treturn;\n\t}\n\n\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n\n\tRD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();",
+        "\tif (p_vb_depth.is_null()) {\n\t\treturn;\n\t}\n\n\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n\tMaterialStorage *material_storage = MaterialStorage::get_singleton();\n\tERR_FAIL_NULL(material_storage);\n\n\tRID sampler_nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);\n\n\tRD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();",
         "create a nearest sampler for Mesh Blend depth",
     )
     changed |= replace_once(
@@ -152,7 +177,7 @@ def main() -> None:
 
     force_blocks_forward = (
         "\tif (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {\n\t\tuse_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.\n\t}\n",
-        "\tif (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {\n\t\tuse_main_depth_for_vb = false; // Mesh blend needs STORAGE usage on depth, main depth lacks it.\n\t}\n",
+        "\tif (RendererSceneRenderRD::get_singleton()->is_mesh_blend_enabled()) {\n\t\tuse_main_depth_for_vb = false; // mesh blend needs STORAGE usage on depth, main depth lacks it.\n\t}\n",
     )
     changed |= remove_optional_block(
         "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp",
