@@ -40,6 +40,59 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Repair malformed Visibility allocator for compilation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          header = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h")
+          text = header.read_text(encoding="utf-8")
+          bad = "bool ensure_visibility_textures(true, bool p_need_aux = true, bool p_need_depth = true);"
+          good = "bool ensure_visibility_textures(bool p_need_full_visibility = true, bool p_need_aux = true, bool p_need_depth = true);"
+          if bad in text:
+              text = text.replace(bad, good, 1)
+          elif good not in text:
+              raise RuntimeError("Unknown ensure_visibility_textures declaration")
+          text = text.replace(
+              '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F',
+              '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // R16_UINT: packed group and strength',
+              1,
+          )
+          text = text.replace(
+              '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords',
+              '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R16G16_UINT: edge coords',
+              1,
+          )
+          text = text.replace(
+              '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong',
+              '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R16G16_UINT: ping/pong',
+              1,
+          )
+          header.write_text(text, encoding="utf-8")
+
+          source = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp")
+          text = source.read_text(encoding="utf-8")
+          bad_return = "\treturn has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);"
+          good_return = """\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
+\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+\treturn visibility_ready && aux_ready && depth_ready;"""
+          if bad_return in text:
+              text = text.replace(bad_return, good_return, 1)
+          elif good_return not in text:
+              raise RuntimeError("Unknown ensure_visibility_textures result")
+          source.write_text(text, encoding="utf-8")
+          PY
+
+          ! grep -R -n 'ensure_visibility_textures(true,' servers/rendering
+          grep -q 'bool ensure_visibility_textures(bool p_need_full_visibility = true' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h
+          grep -q 'p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          git diff --check
+
       - name: Set up Python and SCons
         uses: ./.github/actions/godot-deps
 
@@ -58,29 +111,15 @@ jobs:
             tests=no \
             2>&1 | tee renderer-batch2-build.log
 
-      - name: Persist exact compiler failure
+      - name: Show exact compiler failure
         if: steps.compile.outcome == 'failure'
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p .github/build-status
-          {
-            echo "run_id=${{ github.run_id }}"
-            echo "head_sha=${{ github.sha }}"
-            echo "failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo
-            echo "===== FIRST COMPILER ERRORS ====="
-            grep -n -B4 -A12 -E '(^|[[:space:]])(error:|FAILED:|scons: \*\*\*)' renderer-batch2-build.log | head -n 500 || true
-            echo
-            echo "===== BUILD LOG TAIL ====="
-            tail -n 1200 renderer-batch2-build.log
-          } > .github/build-status/renderer-batch2-last-failure.log
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/build-status/renderer-batch2-last-failure.log
-          git commit -m "Record renderer batch compile failure" || true
-          git push origin HEAD:opt/renderer-batch2
+          echo "===== FIRST COMPILER ERRORS ====="
+          grep -n -B4 -A14 -E '(^|[[:space:]])(error:|FAILED:|scons: \*\*\*)' renderer-batch2-build.log | head -n 800 || true
+          echo "===== BUILD LOG TAIL ====="
+          tail -n 1600 renderer-batch2-build.log
           exit 1
 
       - name: Locate and smoke-test editor
@@ -104,6 +143,21 @@ jobs:
           path: godot-vib-4.7.2-renderer-batch2-linux-x86_64.tar.xz
           if-no-files-found: error
           retention-days: 14
+
+      - name: Persist repaired source after successful build
+        if: steps.compile.outcome == 'success'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          if ! git diff --cached --quiet; then
+            git commit -m "Fix Visibility texture allocator declaration and readiness"
+            git push origin HEAD:opt/renderer-batch2
+          fi
 
       - name: Upload complete failure log
         if: steps.compile.outcome == 'failure'
