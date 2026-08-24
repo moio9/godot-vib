@@ -1,0 +1,150 @@
+name: Apply per-pixel Mesh Blend shader output
+
+on:
+  pull_request:
+    branches:
+      - "opt/4.7.2-renderer-depth-v2"
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'feat/4.7.2-mesh-blend-per-pixel' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Add MESH_BLEND fragment output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Register MESH_BLEND as a writable float built-in in spatial fragment shaders.
+          shader_types = Path('servers/rendering/shader_types.cpp')
+          shader_types_text = shader_types.read_text(encoding='utf-8')
+          if 'built_ins["MESH_BLEND"]' not in shader_types_text:
+              alpha_match = re.search(
+                  r'^(?P<indent>\s*)(?P<line>.*functions\["fragment"\]\.built_ins\["ALPHA"\]\s*=\s*const ShaderLanguage::BuiltInInfo\(ShaderLanguage::TYPE_FLOAT[^\n]*;)$',
+                  shader_types_text,
+                  re.MULTILINE,
+              )
+              if not alpha_match:
+                  raise RuntimeError('Unable to locate spatial fragment ALPHA built-in declaration')
+              new_line = alpha_match.group('line').replace('["ALPHA"]', '["MESH_BLEND"]', 1)
+              # MESH_BLEND defaults to disabled, unlike ALPHA which may default to 1.
+              new_line = new_line.replace('"1.0"', '"0.0"', 1)
+              insertion = alpha_match.group(0) + '\n' + alpha_match.group('indent') + new_line
+              shader_types_text = shader_types_text[:alpha_match.start()] + insertion + shader_types_text[alpha_match.end():]
+              shader_types.write_text(shader_types_text, encoding='utf-8')
+
+          # Map the GDSHADER built-in to a unique generated GLSL local.
+          scene_cpp = Path('servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp')
+          scene_cpp_text = scene_cpp.read_text(encoding='utf-8')
+          if 'actions.renames["MESH_BLEND"]' not in scene_cpp_text:
+              alpha_rename = re.search(
+                  r'^(?P<indent>\s*)actions\.renames\["ALPHA"\]\s*=\s*"alpha";\s*$',
+                  scene_cpp_text,
+                  re.MULTILINE,
+              )
+              if not alpha_rename:
+                  raise RuntimeError('Unable to locate ALPHA compiler rename')
+              new_line = alpha_rename.group('indent') + 'actions.renames["MESH_BLEND"] = "mesh_blend_out";'
+              scene_cpp_text = scene_cpp_text[:alpha_rename.end()] + '\n' + new_line + scene_cpp_text[alpha_rename.end():]
+              scene_cpp.write_text(scene_cpp_text, encoding='utf-8')
+
+          # Preserve the existing material-wide Mesh Blend value as the default,
+          # then allow fragment() to override it for every pixel.
+          scene_glsl = Path('servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl')
+          glsl = scene_glsl.read_text(encoding='utf-8')
+          marker = '#CODE : FRAGMENT'
+          marker_pos = glsl.find(marker)
+          if marker_pos < 0:
+              raise RuntimeError('Fragment code marker not found in Forward+ scene shader')
+
+          if 'float mesh_blend_out =' not in glsl:
+              candidate = None
+              for match in re.finditer(r'^.*\bmesh_blend\w*\b.*$', glsl, re.MULTILINE | re.IGNORECASE):
+                  line = match.group(0)
+                  if match.start() <= marker_pos:
+                      continue
+                  if 'vec2' not in line or '=' not in line:
+                      continue
+                  if 'aux' not in line.lower() and 'visibility' not in line.lower():
+                      continue
+                  candidate = match
+                  break
+              if candidate is None:
+                  refs = [line for line in glsl.splitlines() if 'mesh_blend' in line.lower()]
+                  raise RuntimeError('Unable to locate Mesh Blend visibility auxiliary assignment. References:\n' + '\n'.join(refs[:40]))
+
+              line = candidate.group(0)
+              vec_pos = line.find('vec2')
+              open_pos = line.find('(', vec_pos)
+              if open_pos < 0:
+                  raise RuntimeError('Malformed vec2 Mesh Blend assignment')
+              depth = 0
+              comma_pos = None
+              close_pos = None
+              for i in range(open_pos + 1, len(line)):
+                  ch = line[i]
+                  if ch in '([{':
+                      depth += 1
+                  elif ch in ')]}':
+                      if ch == ')' and depth == 0:
+                          close_pos = i
+                          break
+                      depth -= 1
+                  elif ch == ',' and depth == 0 and comma_pos is None:
+                      comma_pos = i
+              if comma_pos is None or close_pos is None:
+                  raise RuntimeError('Unable to parse Mesh Blend vec2 arguments')
+
+              default_expr = line[open_pos + 1:comma_pos].strip()
+              if not default_expr:
+                  raise RuntimeError('Mesh Blend default expression is empty')
+              new_line = line[:open_pos + 1] + 'mesh_blend_out' + line[comma_pos:]
+              glsl = glsl[:candidate.start()] + new_line + glsl[candidate.end():]
+
+              marker_pos = glsl.find(marker)
+              declaration = f'\n\tfloat mesh_blend_out = {default_expr};\n'
+              glsl = glsl[:marker_pos] + declaration + glsl[marker_pos:]
+              scene_glsl.write_text(glsl, encoding='utf-8')
+
+          # Add a tiny parser fixture used by CI and by developers when testing the fork.
+          fixture = Path('tests/fixtures/mesh_blend_per_pixel.gdshader')
+          fixture.parent.mkdir(parents=True, exist_ok=True)
+          fixture.write_text(
+              'shader_type spatial;\n\n'
+              'uniform sampler2D blend_noise;\n'
+              'uniform float blend_strength : hint_range(0.0, 1.0) = 1.0;\n\n'
+              'void fragment() {\n'
+              '\tMESH_BLEND = texture(blend_noise, UV * 4.0).r * blend_strength;\n'
+              '}\n',
+              encoding='utf-8',
+          )
+
+          Path('.github/workflows/pr_apply_mesh_blend_per_pixel.yml').unlink()
+          PY
+
+          git diff --check
+          grep -n 'built_ins\["MESH_BLEND"\]' servers/rendering/shader_types.cpp
+          grep -n 'actions.renames\["MESH_BLEND"\]' servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
+          grep -n 'float mesh_blend_out =' servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          grep -n 'MESH_BLEND =' tests/fixtures/mesh_blend_per_pixel.gdshader
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Expose per-pixel MESH_BLEND output to spatial shaders'
+          git push origin HEAD
