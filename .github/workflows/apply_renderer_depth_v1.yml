@@ -1,0 +1,131 @@
+name: Apply renderer depth optimization v1
+
+on:
+  push:
+    branches:
+      - "opt/4.7.2-renderer-depth-v1"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply safe renderer changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected exactly one match, found {count}: {old!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          # Fix the workgroup-lane predicates used while producing the smaller
+          # linear-depth mips. The old Y clauses were tautologies and kept too
+          # many lanes active, causing redundant stores.
+          depth_shader = "servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl"
+          replace_once(
+              depth_shader,
+              "still_alive = p_gtid.x % 8 == depth_array_offset.x && depth_array_offset.y % 8 == depth_array_offset.y;",
+              "still_alive = p_gtid.x % 8 == depth_array_offset.x && p_gtid.y % 8 == depth_array_offset.y;",
+          )
+          replace_once(
+              depth_shader,
+              "still_alive = p_gtid.x % 16 == depth_array_offset.x && depth_array_offset.y % 16 == depth_array_offset.y;",
+              "still_alive = p_gtid.x % 16 == depth_array_offset.x && p_gtid.y % 16 == depth_array_offset.y;",
+          )
+
+          # Mesh Blend only samples depth. Bind it as a sampled texture instead
+          # of requiring STORAGE usage, which is the prerequisite for reusing
+          # the renderer's main resolved depth in the next patch.
+          mask_shader = "servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl"
+          replace_once(
+              mask_shader,
+              "layout(r32f, set = 0, binding = 4) uniform readonly image2D mesh_depth;",
+              "layout(set = 0, binding = 4) uniform sampler2D mesh_depth;",
+          )
+          replace_once(
+              mask_shader,
+              "float depth_value = imageLoad(mesh_depth, sample_pixel).x;",
+              "float depth_value = texelFetch(mesh_depth, sample_pixel, 0).x;",
+          )
+
+          mesh_cpp = "servers/rendering/renderer_rd/effects/mesh_blend.cpp"
+          replace_once(
+              mesh_cpp,
+              "\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n\n\tRD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();",
+              "\tUniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();\n\tERR_FAIL_NULL(uniform_cache);\n\tMaterialStorage *material_storage = MaterialStorage::get_singleton();\n\tERR_FAIL_NULL(material_storage);\n\n\tRID sampler_nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);\n\n\tRD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();",
+          )
+          replace_once(
+              mesh_cpp,
+              "\tRD::Uniform u_depth(RD::UNIFORM_TYPE_IMAGE, 4, Vector<RID>({ p_vb_depth }));",
+              "\tRD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ sampler_nearest, p_vb_depth }));",
+          )
+
+          # Run the expensive Termux build on renderer pull requests before merge.
+          termux = Path(".github/workflows/termux_build.yml")
+          termux_text = termux.read_text(encoding="utf-8")
+          if "  pull_request:\n    branches:\n      - \"4.7\"" not in termux_text:
+              needle = "on:\n  workflow_dispatch:\n  push:\n"
+              replacement = (
+                  "on:\n"
+                  "  workflow_dispatch:\n"
+                  "  pull_request:\n"
+                  "    branches:\n"
+                  "      - \"4.7\"\n"
+                  "    paths:\n"
+                  "      - \"core/**\"\n"
+                  "      - \"drivers/**\"\n"
+                  "      - \"editor/**\"\n"
+                  "      - \"main/**\"\n"
+                  "      - \"modules/**\"\n"
+                  "      - \"platform/**\"\n"
+                  "      - \"scene/**\"\n"
+                  "      - \"servers/**\"\n"
+                  "      - \"thirdparty/**\"\n"
+                  "      - \"SConstruct\"\n"
+                  "      - \"version.py\"\n"
+                  "      - \".github/workflows/termux_build.yml\"\n"
+                  "  push:\n"
+              )
+              if termux_text.count(needle) != 1:
+                  raise RuntimeError("Unable to add pull_request trigger to Termux workflow")
+              termux.write_text(termux_text.replace(needle, replacement, 1), encoding="utf-8")
+
+          # Clean up the temporary permission probe if it was ever created.
+          Path("zz_permission_probe.tmp").unlink(missing_ok=True)
+          PY
+
+          rm -f .github/workflows/apply_renderer_depth_v1.yml
+
+      - name: Validate patch shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -n "p_gtid.y % 8" servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -n "p_gtid.y % 16" servers/rendering/renderer_rd/shaders/effects/ss_effects_downsample.glsl
+          grep -n "sampler2D mesh_depth" servers/rendering/renderer_rd/shaders/effects/mesh_blend_mask.glsl
+          grep -n "SAMPLER_WITH_TEXTURE, 4" servers/rendering/renderer_rd/effects/mesh_blend.cpp
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Optimize screen-space depth prep and Mesh Blend depth sampling"
+          git push origin HEAD
