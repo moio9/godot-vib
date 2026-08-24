@@ -1,1 +1,1 @@
-Trusted same-repository renderer optimization patch trigger.
+Trusted renderer patch trigger, revision 2.
