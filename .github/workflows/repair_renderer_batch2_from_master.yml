@@ -1,0 +1,97 @@
+name: Repair renderer batch from master
+
+on:
+  push:
+    branches:
+      - "master"
+    paths:
+      - ".github/workflows/repair_renderer_batch2_from_master.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-renderer-batch-from-master
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout renderer optimization branch
+        uses: actions/checkout@v7
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+
+      - name: Repair Visibility allocator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          header = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h")
+          text = header.read_text(encoding="utf-8")
+          bad = "bool ensure_visibility_textures(true, bool p_need_aux = true, bool p_need_depth = true);"
+          good = "bool ensure_visibility_textures(bool p_need_full_visibility = true, bool p_need_aux = true, bool p_need_depth = true);"
+          if bad in text:
+              text = text.replace(bad, good, 1)
+          elif good not in text:
+              raise RuntimeError("Unknown ensure_visibility_textures declaration")
+          text = text.replace(
+              '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // RG16F',
+              '#define RB_TEX_VB_AUX      SNAME("vb_aux")      // R16_UINT: packed group and strength',
+              1,
+          )
+          text = text.replace(
+              '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R32G32_UINT: edge coords',
+              '#define RB_TEX_MESH_BLEND_EDGE0 SNAME("mesh_blend_edge0")     // R16G16_UINT: edge coords',
+              1,
+          )
+          text = text.replace(
+              '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R32G32_UINT: ping/pong',
+              '#define RB_TEX_MESH_BLEND_EDGE1 SNAME("mesh_blend_edge1")     // R16G16_UINT: ping/pong',
+              1,
+          )
+          header.write_text(text, encoding="utf-8")
+
+          source = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp")
+          text = source.read_text(encoding="utf-8")
+          bad_return = "\treturn has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);"
+          good_return = """\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
+\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+\treturn visibility_ready && aux_ready && depth_ready;"""
+          if bad_return in text:
+              text = text.replace(bad_return, good_return, 1)
+          elif good_return not in text:
+              raise RuntimeError("Unknown ensure_visibility_textures result")
+          source.write_text(text, encoding="utf-8")
+          PY
+
+          ! grep -R -n 'ensure_visibility_textures(true,' servers/rendering
+          grep -q 'bool ensure_visibility_textures(bool p_need_full_visibility = true' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h
+          grep -q 'p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT' \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          git diff --check
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h \
+            servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
+          if git diff --cached --quiet; then
+            echo "Nothing to repair."
+            exit 0
+          fi
+          git commit -m "Fix Visibility texture allocator declaration and readiness"
+          git push origin HEAD:opt/renderer-batch2
