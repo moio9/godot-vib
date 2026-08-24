@@ -1,0 +1,222 @@
+name: Validate per-pixel Mesh Blend shader API v2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/mesh-blend-per-pixel
+    paths:
+      - .github/workflows/apply_mesh_blend_per_pixel_v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-test-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/mesh-blend-per-pixel
+          fetch-depth: 0
+
+      - name: Apply idempotent per-pixel API patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def add_after_line(path: Path, anchor_fragment: str, additions: list[str], guard: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              if guard in text:
+                  return
+              lines = text.splitlines(keepends=True)
+              index = next((i for i, line in enumerate(lines) if anchor_fragment in line), None)
+              if index is None:
+                  raise RuntimeError(f"{path}: anchor not found: {anchor_fragment}")
+              indent = re.match(r"\s*", lines[index]).group(0)
+              lines[index + 1:index + 1] = [indent + item + "\n" for item in additions]
+              path.write_text("".join(lines), encoding="utf-8")
+
+          shader_types = Path("servers/rendering/shader_types.cpp")
+          text = shader_types.read_text(encoding="utf-8")
+          if 'built_ins["MESH_BLEND"]' not in text:
+              lines = text.splitlines(keepends=True)
+              idx = next((i for i, line in enumerate(lines) if 'functions["fragment"].built_ins["ALBEDO"]' in line), None)
+              if idx is None:
+                  raise RuntimeError("Spatial ALBEDO built-in registration not found")
+              blend = lines[idx].replace('["ALBEDO"]', '["MESH_BLEND"]').replace("TYPE_VEC3", "TYPE_FLOAT")
+              group = lines[idx].replace('["ALBEDO"]', '["MESH_BLEND_GROUP"]').replace("TYPE_VEC3", "TYPE_UINT")
+              lines[idx + 1:idx + 1] = [blend, group]
+              shader_types.write_text("".join(lines), encoding="utf-8")
+
+          clustered_cpp = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp")
+          add_after_line(
+              clustered_cpp,
+              'actions.renames["ALBEDO"]',
+              [
+                  'actions.renames["MESH_BLEND"] = "mesh_blend_output";',
+                  'actions.renames["MESH_BLEND_GROUP"] = "mesh_blend_group_output";',
+              ],
+              'actions.renames["MESH_BLEND"]',
+          )
+          add_after_line(
+              clustered_cpp,
+              'actions.usage_defines["ALBEDO"]',
+              [
+                  'actions.usage_defines["MESH_BLEND"] = "#define MESH_BLEND_OUTPUT_USED\\n";',
+                  'actions.usage_defines["MESH_BLEND_GROUP"] = "#define MESH_BLEND_GROUP_OUTPUT_USED\\n";',
+              ],
+              'actions.usage_defines["MESH_BLEND"]',
+          )
+
+          mobile_cpp = Path("servers/rendering/renderer_rd/forward_mobile/scene_shader_forward_mobile.cpp")
+          if mobile_cpp.exists():
+              add_after_line(
+                  mobile_cpp,
+                  'actions.renames["ALBEDO"]',
+                  [
+                      'actions.renames["MESH_BLEND"] = "mesh_blend_output";',
+                      'actions.renames["MESH_BLEND_GROUP"] = "mesh_blend_group_output";',
+                  ],
+                  'actions.renames["MESH_BLEND"]',
+              )
+
+          def add_shader_declarations(path: Path) -> None:
+              text = path.read_text(encoding="utf-8")
+              if "float mesh_blend_output" in text:
+                  return
+              marker = "#CODE : FRAGMENT"
+              if text.count(marker) != 1:
+                  raise RuntimeError(f"{path}: expected one fragment code marker")
+              text = text.replace(
+                  marker,
+                  "float mesh_blend_output = 0.0;\nuint mesh_blend_group_output = 0u;\n\n" + marker,
+                  1,
+              )
+              path.write_text(text, encoding="utf-8")
+
+          clustered_glsl = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          add_shader_declarations(clustered_glsl)
+          text = clustered_glsl.read_text(encoding="utf-8")
+          if "MESH_BLEND_OUTPUT_USED" not in text:
+              matches = list(re.finditer(r"^[\t ]*frag_visibility_aux[\t ]*=.*?;[\t ]*$", text, flags=re.MULTILINE))
+              if not matches:
+                  raise RuntimeError("Visibility auxiliary output assignment not found")
+              match = matches[-1]
+              indent = re.match(r"[\t ]*", match.group(0)).group(0)
+              override = (
+                  "\n#ifdef MESH_BLEND_OUTPUT_USED\n"
+                  + indent + "frag_visibility_aux.x = clamp(mesh_blend_output, 0.0, 1.0);\n"
+                  + "#endif\n#ifdef MESH_BLEND_GROUP_OUTPUT_USED\n"
+                  + indent + "frag_visibility_aux.y = float(min(mesh_blend_group_output, 255u)) / 255.0;\n"
+                  + "#endif"
+              )
+              text = text[:match.end()] + override + text[match.end():]
+              clustered_glsl.write_text(text, encoding="utf-8")
+
+          mobile_glsl = Path("servers/rendering/renderer_rd/shaders/forward_mobile/scene_forward_mobile.glsl")
+          if mobile_glsl.exists():
+              add_shader_declarations(mobile_glsl)
+
+          # Assertions for both the functional Forward+ path and the inert mobile path.
+          required = {
+              shader_types: ['built_ins["MESH_BLEND"]', 'built_ins["MESH_BLEND_GROUP"]'],
+              clustered_cpp: ['actions.renames["MESH_BLEND"]', 'actions.usage_defines["MESH_BLEND"]'],
+              clustered_glsl: ["mesh_blend_output", "MESH_BLEND_GROUP_OUTPUT_USED"],
+          }
+          if mobile_cpp.exists():
+              required[mobile_cpp] = ['actions.renames["MESH_BLEND"]']
+          if mobile_glsl.exists():
+              required[mobile_glsl] = ["mesh_blend_output"]
+          for path, needles in required.items():
+              content = path.read_text(encoding="utf-8")
+              for needle in needles:
+                  if needle not in content:
+                      raise RuntimeError(f"{path}: missing {needle}")
+          PY
+          git diff --check
+
+      - name: Set up Godot build dependencies
+        uses: ./.github/actions/godot-deps
+
+      - name: Compile Linux editor
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            tests=no
+
+      - name: Create shader parser smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mesh-blend-shader-test
+          cat > /tmp/mesh-blend-shader-test/project.godot <<'EOF'
+          [application]
+          config/name="Mesh Blend Shader API Test"
+          run/main_scene="res://main.tscn"
+
+          [rendering]
+          renderer/rendering_method="gl_compatibility"
+          renderer/rendering_method.mobile="gl_compatibility"
+          EOF
+          cat > /tmp/mesh-blend-shader-test/mesh_blend.gdshader <<'EOF'
+          shader_type spatial;
+          uniform sampler2D noise_texture;
+          void fragment() {
+              float n = texture(noise_texture, UV * 4.0).r;
+              MESH_BLEND = n;
+              MESH_BLEND_GROUP = 7u;
+              ALBEDO = vec3(n);
+          }
+          EOF
+          cat > /tmp/mesh-blend-shader-test/main.tscn <<'EOF'
+          [gd_scene load_steps=3 format=3]
+
+          [ext_resource type="Shader" path="res://mesh_blend.gdshader" id="1"]
+          [sub_resource type="ShaderMaterial" id="ShaderMaterial_test"]
+          shader = ExtResource("1")
+
+          [node name="Root" type="Node3D"]
+          [node name="Mesh" type="MeshInstance3D" parent="."]
+          material_override = SubResource("ShaderMaterial_test")
+          EOF
+
+      - name: Parse test shader in editor
+        shell: bash
+        run: |
+          set -euo pipefail
+          GODOT_BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.*' | head -n1)"
+          test -n "$GODOT_BIN"
+          set +e
+          "$GODOT_BIN" --headless --path /tmp/mesh-blend-shader-test --editor --quit > /tmp/mesh-blend-shader-test.log 2>&1
+          result=$?
+          set -e
+          cat /tmp/mesh-blend-shader-test.log
+          if grep -Eqi 'unknown identifier.*MESH_BLEND|shader compilation failed|error.*mesh_blend\.gdshader' /tmp/mesh-blend-shader-test.log; then
+              exit 1
+          fi
+          exit "$result"
+
+      - name: Remove temporary workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply_mesh_blend_per_pixel.yml
+          rm -f .github/workflows/apply_mesh_blend_per_pixel_v2.yml
+
+      - name: Commit validated shader API
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add per-pixel Mesh Blend outputs to spatial shaders"
+          git push origin HEAD:feature/mesh-blend-per-pixel
