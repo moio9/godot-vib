@@ -66,12 +66,16 @@ jobs:
           branch_marker = '    if branch == "opt/mesh-blend-main-pass-metadata":\n'
           compatibility = (
               '        # The historical exact-string invariant is replaced by a structural fixer.\n'
-              '        body = body.replace(\n'
-              '            \'    "color, specular, velocity_buffer, mesh_blend_aux, depth",\\n\',\n'
+              '        body, removed_attachment_invariant = re.subn(\n'
+              '            r\'(?m)^\\s*"color, specular, velocity_buffer, mesh_blend_aux, depth",\\s*$\\n?\',\n'
               '            \'\',\n'
+              '            body,\n'
+              '            count=1,\n'
               '        )\n'
+              '        if removed_attachment_invariant != 1:\n'
+              '            raise RuntimeError("The historical framebuffer attachment invariant was not found")\n'
           )
-          if "historical exact-string invariant" not in text:
+          if "removed_attachment_invariant" not in text:
               if branch_marker not in text:
                   raise RuntimeError("Main-pass compatibility branch was not found")
               text = text.replace(branch_marker, branch_marker + compatibility, 1)
@@ -99,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          git config user.name "github-actions[bot]"
+          git config user.name "github-actions[bot]]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           rm -f .github/workflows/renderer_batch2_apply.yml
