@@ -1,0 +1,79 @@
+name: Repair Mesh Blend shader guards
+
+on:
+  push:
+    branches:
+      - opt/renderer-batch2
+    paths:
+      - .github/workflows/repair_mesh_blend_shader.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    name: Repair Forward+ Mesh Blend shader
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/opt/renderer-batch2'
+
+    steps:
+      - name: Check out the tested branch
+        uses: actions/checkout@v4
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 0
+
+      - name: Apply the exact GLSL guard and scope repair
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          text = path.read_text(encoding="utf-8")
+
+          old_main = "vec2 mesh_blend_main_aux_value = vec2(material_mesh_blend, blend_id);"
+          new_main = """vec2 mesh_blend_main_aux_value = vec2(
+                  clamp(sc_get_material_mesh_blend(), -1.0, 1.0),
+                  sc_instance_hash(instance_index + 1u));"""
+
+          if text.count(old_main) != 1:
+              raise SystemExit(f"Expected exactly one broken main-pass expression, found {text.count(old_main)}")
+          text = text.replace(old_main, new_main, 1)
+
+          old_visibility = """#ifdef MODE_RENDER_VISIBILITY
+          \tfloat material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+          \tfloat blend_id = sc_instance_hash(packed_ids.y);"""
+          new_visibility = """#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)
+          \tfloat material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+          \tfloat blend_id = sc_instance_hash(packed_ids.y);"""
+
+          if text.count(old_visibility) != 1:
+              raise SystemExit(f"Expected exactly one unguarded visibility block, found {text.count(old_visibility)}")
+          text = text.replace(old_visibility, new_visibility, 1)
+
+          if old_main in text:
+              raise SystemExit("Broken main-pass expression is still present")
+          if old_visibility in text:
+              raise SystemExit("Unguarded visibility block is still present")
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+          git diff -- servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+
+      - name: Commit the runtime shader repair
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Shader was already repaired."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          git commit -m "Fix Mesh Blend shader guards and variable scope"
+          git push origin HEAD:opt/renderer-batch2
