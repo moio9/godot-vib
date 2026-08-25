@@ -554,7 +554,7 @@ bool RendererSceneRenderRD::_mesh_blend_enabled() const {
 }
 
 void RendererSceneRenderRD::copy_depth_to_vb_depth(Ref<RenderSceneBuffersRD> rb, const RenderDataRD *p_render_data) {
-	ERR_FAIL_NULL(rb);
+	ERR_FAIL_COND(rb.is_null());
 	ERR_FAIL_NULL(p_render_data);
 
 	RID vb_depth_tex = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
@@ -718,18 +718,18 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		RID color_source = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_MESH_BLEND_SOURCE, v, 0);
 
 		if (vb_vis_slice.is_null() || vb_aux_slice.is_null() || vb_depth_slice.is_null() ||
-				mask_slice.is_null() || edge_ping.is_null() || edge_pong.is_null() || color_source.is_null()) {
+				edge_ping.is_null() || edge_pong.is_null() || color_source.is_null()) {
 			if (v == 0) {
-				WARN_PRINT_ONCE(vformat("Mesh blend: null textures for view %d: vis=%d aux=%d depth=%d mask=%d edge=%d color=%d",
+				WARN_PRINT_ONCE(vformat("Mesh blend: null textures for view %d: vis=%d aux=%d depth=%d edge=%d color=%d",
 						v, vb_vis_slice.is_valid(), vb_aux_slice.is_valid(), vb_depth_slice.is_valid(),
-						mask_slice.is_valid(), edge_ping.is_valid(), color_source.is_valid()));
+						edge_ping.is_valid(), color_source.is_valid()));
 			}
 			continue;
 		}
 		mesh_blend->generate_mask(vb_aux_slice, vb_depth_slice, edge_ping, size, depth_tolerance, neighbor_blend);
 
-	int spread = 1;
-	while (spread < int(edge_radius_pixels)) {
+		int spread = 1;
+		while (spread < int(edge_radius_pixels)) {
 			spread <<= 1;
 		}
 		if (spread < 1) {
@@ -739,7 +739,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		RID current_edge = edge_ping;
 		RID next_edge = edge_pong;
 		while (spread >= 1) {
-			mesh_blend->jump_flood(current_edge, next_edge, tex_aux, size, spread);
+			mesh_blend->jump_flood(current_edge, next_edge, vb_aux_slice, size, spread);
 			SWAP(current_edge, next_edge);
 			spread >>= 1;
 		}
@@ -752,7 +752,7 @@ void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_dat
 		if (blend_depth.is_null() || framebuffer.is_null()) {
 			continue;
 		}
-		mesh_blend->blend(color_source, blend_depth, tex_aux, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);
+		mesh_blend->blend(color_source, blend_depth, vb_aux_slice, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);
 	}
 
 	RD::get_singleton()->draw_command_end_label();
