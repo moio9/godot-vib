@@ -75,7 +75,6 @@ jobs:
           \tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
           \tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
           \treturn visibility_ready && aux_ready && depth_ready;"""
-          # Remove indentation introduced by the YAML/Python heredoc while retaining C++ tabs.
           good_return = "\n".join(line.lstrip(" ") for line in good_return.splitlines())
           if bad_return in text:
               text = text.replace(bad_return, good_return, 1)
@@ -98,6 +97,54 @@ jobs:
           elif assignment not in text:
               raise RuntimeError("Could not find Mesh Blend main-pass assignment")
           forward.write_text(text, encoding="utf-8")
+
+          scene = Path("servers/rendering/renderer_rd/renderer_scene_render_rd.cpp")
+          text = scene.read_text(encoding="utf-8")
+          bad_ref_guard = "\tERR_FAIL_NULL(rb);\n\tERR_FAIL_NULL(p_render_data);"
+          good_ref_guard = "\tERR_FAIL_COND(rb.is_null());\n\tERR_FAIL_NULL(p_render_data);"
+          if bad_ref_guard in text:
+              text = text.replace(bad_ref_guard, good_ref_guard, 1)
+          elif good_ref_guard not in text:
+              raise RuntimeError("Could not repair the RenderSceneBuffersRD Ref guard")
+
+          fn_start = text.find("void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_data)")
+          fn_end = text.find("// ——— VISIBILITY FILL", fn_start)
+          if fn_start < 0 or fn_end < 0:
+              raise RuntimeError("Could not locate _process_mesh_blend")
+          fn = text[fn_start:fn_end]
+
+          fn = fn.replace("\t\t\t\tmask_slice.is_null() || edge_ping.is_null()", "\t\t\t\tedge_ping.is_null()", 1)
+          fn = fn.replace(
+              'depth=%d mask=%d edge=%d color=%d",',
+              'depth=%d edge=%d color=%d",',
+              1,
+          )
+          fn = fn.replace(
+              "\t\t\t\t\t\tmask_slice.is_valid(), edge_ping.is_valid(), color_source.is_valid()));",
+              "\t\t\t\t\t\tedge_ping.is_valid(), color_source.is_valid()));",
+              1,
+          )
+          fn = fn.replace(
+              "mesh_blend->jump_flood(current_edge, next_edge, tex_aux, size, spread);",
+              "mesh_blend->jump_flood(current_edge, next_edge, vb_aux_slice, size, spread);",
+              1,
+          )
+          fn = fn.replace(
+              "mesh_blend->blend(color_source, blend_depth, tex_aux, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);",
+              "mesh_blend->blend(color_source, blend_depth, vb_aux_slice, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);",
+              1,
+          )
+          fn = fn.replace("\n\tint spread = 1;\n\twhile (spread < int(edge_radius_pixels)) {", "\n\t\tint spread = 1;\n\t\twhile (spread < int(edge_radius_pixels)) {", 1)
+
+          if "mask_slice" in fn or "tex_aux" in fn:
+              raise RuntimeError("Stale Mesh Blend mask aliases remain in _process_mesh_blend")
+          if "jump_flood(current_edge, next_edge, vb_aux_slice" not in fn:
+              raise RuntimeError("Jump Flood is not using packed VB_AUX")
+          if "blend(color_source, blend_depth, vb_aux_slice" not in fn:
+              raise RuntimeError("Final Mesh Blend pass is not using packed VB_AUX")
+
+          text = text[:fn_start] + fn + text[fn_end:]
+          scene.write_text(text, encoding="utf-8")
           PY
 
           rm -f site_scons/site_init.py
@@ -109,6 +156,12 @@ jobs:
             servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp
           grep -q '^\tbool mesh_blend_main_pass = false;' \
             servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp
+          grep -q 'ERR_FAIL_COND(rb.is_null());' \
+            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          grep -q 'jump_flood(current_edge, next_edge, vb_aux_slice' \
+            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          grep -q 'blend(color_source, blend_depth, vb_aux_slice' \
+            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
           test ! -e site_scons/site_init.py
           git diff --check
 
@@ -122,10 +175,11 @@ jobs:
             servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h \
             servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp \
             servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp \
+            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp \
             site_scons/site_init.py
           git diff --cached --check
           if ! git diff --cached --quiet; then
-            git commit -m "Persist renderer Visibility and main-pass fixes"
+            git commit -m "Fix renderer scene Mesh Blend compile errors"
             git push origin HEAD:opt/renderer-batch2
           fi
 
