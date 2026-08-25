@@ -1404,7 +1404,9 @@ uint mesh_blend_group_output = 0u;
 
 #CODE : FRAGMENT
 #ifdef MESH_BLEND_MAIN_PASS_OUTPUT
-vec2 mesh_blend_main_aux_value = vec2(material_mesh_blend, blend_id);
+vec2 mesh_blend_main_aux_value = vec2(
+        clamp(sc_get_material_mesh_blend(), -1.0, 1.0),
+        sc_instance_hash(instance_index + 1u));
 #ifdef MESH_BLEND_OUTPUT_USED
 	mesh_blend_main_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
 #endif
@@ -1414,7 +1416,7 @@ vec2 mesh_blend_main_aux_value = vec2(material_mesh_blend, blend_id);
 	frag_mesh_blend_aux = pack_visibility_aux(mesh_blend_main_aux_value);
 #endif
 
-#ifdef MODE_RENDER_VISIBILITY
+#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)
 	float material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
 	float blend_id = sc_instance_hash(packed_ids.y);
 	vec2 mesh_blend_aux_value = vec2(material_mesh_blend, blend_id);
