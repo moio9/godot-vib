@@ -22,6 +22,7 @@ on:
     branches:
       - "4.7"
       - "sync/4.7.2"
+      - "opt/renderer-batch2"
     paths:
       - "core/**"
       - "drivers/**"
@@ -39,7 +40,6 @@ on:
 permissions:
   contents: read
 
-# Keep only the newest package build for each PR or branch.
 concurrency:
   group: ${{ github.workflow }}|${{ github.ref }}
   cancel-in-progress: true
@@ -48,27 +48,40 @@ jobs:
   build-termux-aarch64:
     name: Termux aarch64
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     steps:
-      - name: Checkout fork
+      - name: Select the exact fork commit
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            SOURCE_COMMIT="${{ github.event.pull_request.head.sha }}"
+          else
+            SOURCE_COMMIT="${GITHUB_SHA}"
+          fi
+          test -n "$SOURCE_COMMIT"
+          echo "SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
+          echo "SOURCE_URL=https://github.com/${GITHUB_REPOSITORY}/archive/${SOURCE_COMMIT}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Checkout fork head
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
 
       - name: Clone Termux package builder
+        shell: bash
         run: |
           set -euxo pipefail
           git clone --depth 1 https://github.com/termux/termux-packages.git "$RUNNER_TEMP/termux-packages"
 
-      - name: Point Termux Godot recipe at this fork commit
-        env:
-          SOURCE_URL: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.tar.gz
+      - name: Point the Termux Godot recipe at this fork commit
+        shell: bash
         run: |
           set -euxo pipefail
           RECIPE="$RUNNER_TEMP/termux-packages/x11-packages/godot/build.sh"
 
-          # Use the exact fork commit being tested rather than stock Godot sources.
           curl -L --fail --retry 3 "$SOURCE_URL" -o "$RUNNER_TEMP/godot-vib.tar.gz"
           SOURCE_SHA256="$(sha256sum "$RUNNER_TEMP/godot-vib.tar.gz" | awk '{print $1}')"
 
@@ -87,36 +100,50 @@ jobs:
           sed -i '/^TERMUX_PKG_REVISION=/d' "$RECIPE"
           sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=99" "$RECIPE"
 
-          echo "Building Godot ${VERSION} fork commit ${{ github.sha }} for Termux/aarch64"
+          echo "Building Godot ${VERSION} fork commit ${SOURCE_COMMIT} for Termux/aarch64"
           grep -E '^TERMUX_PKG_(VERSION|REVISION|SRCURL|SHA256|DEPENDS|BUILD_DEPENDS)=' "$RECIPE"
 
       - name: Free disk space
         working-directory: ${{ runner.temp }}/termux-packages
+        shell: bash
         run: |
           set -euxo pipefail
           ./scripts/free-space.sh
 
       - name: Build Godot package for Termux
         working-directory: ${{ runner.temp }}/termux-packages
+        shell: bash
         run: |
-          set -euxo pipefail
-          ./scripts/run-docker.sh -d ./build-package.sh -I -C -f -a aarch64 godot
+          set -o pipefail
+          ./scripts/run-docker.sh -d \
+            ./build-package.sh -I -C -f -a aarch64 godot \
+            2>&1 | tee "$GITHUB_WORKSPACE/termux-build.log"
 
-      - name: Collect packages
-        if: always()
+      - name: Collect package
+        if: success()
+        shell: bash
         run: |
           set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/termux-artifacts"
-          if [ -d "$RUNNER_TEMP/termux-packages/output" ]; then
-            find "$RUNNER_TEMP/termux-packages/output" -maxdepth 1 -type f -name 'godot*.deb' -exec cp -v {} "$GITHUB_WORKSPACE/termux-artifacts/" \;
-          fi
+          find "$RUNNER_TEMP/termux-packages/output" -maxdepth 1 -type f -name 'godot*.deb' \
+            -exec cp -v {} "$GITHUB_WORKSPACE/termux-artifacts/" \;
+          test -n "$(find "$GITHUB_WORKSPACE/termux-artifacts" -maxdepth 1 -type f -name 'godot*.deb' -print -quit)"
           ls -lah "$GITHUB_WORKSPACE/termux-artifacts"
 
       - name: Upload Termux package
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: godot-vib-termux-aarch64-${{ env.SOURCE_COMMIT }}
+          path: termux-artifacts/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Termux build log
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: godot-vib-termux-aarch64-${{ github.sha }}
-          path: termux-artifacts/*.deb
-          if-no-files-found: error
+          name: godot-vib-termux-build-log-${{ env.SOURCE_COMMIT }}
+          path: termux-build.log
+          if-no-files-found: warn
           retention-days: 14
