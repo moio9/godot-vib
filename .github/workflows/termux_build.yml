@@ -150,3 +150,5 @@ jobs:
           path: termux-build.log
           if-no-files-found: warn
           retention-days: 14
+
+# Rebuild marker: Mesh Blend shader guard fix a4af073a2eb0fc3e334df7d10fd6b4ea05093058
