@@ -5,7 +5,8 @@ on:
     branches:
       - master
     paths:
-      - ".github/workflows/repair_renderer_on_comment.yml"
+      - .github/workflows/repair_renderer_on_comment.yml
+      - .github/scripts/repair_renderer_scene.py
   workflow_dispatch:
 
 permissions:
@@ -21,121 +22,52 @@ jobs:
     timeout-minutes: 240
 
     steps:
+      - name: Checkout trusted automation
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          path: automation
+          fetch-depth: 1
+
       - name: Checkout renderer optimization branch
         uses: actions/checkout@v6
         with:
           ref: opt/renderer-batch2
+          path: source
           fetch-depth: 1
 
-      - name: Repair current renderer compiler errors
+      - name: Repair renderer source
+        run: python3 automation/.github/scripts/repair_renderer_scene.py source
+
+      - name: Validate and persist repairs
+        working-directory: source
         shell: bash
         run: |
           set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("servers/rendering/renderer_rd/renderer_scene_render_rd.cpp")
-          text = path.read_text(encoding="utf-8")
-
-          copy_start = text.find("void RendererSceneRenderRD::copy_depth_to_vb_depth(")
-          copy_end = text.find("void RendererSceneRenderRD::_ensure_mesh_blend_textures", copy_start)
-          if copy_start < 0 or copy_end < 0:
-              raise RuntimeError("Could not locate copy_depth_to_vb_depth")
-          copy_fn = text[copy_start:copy_end]
-          if "\tERR_FAIL_NULL(rb);" in copy_fn:
-              copy_fn = copy_fn.replace("\tERR_FAIL_NULL(rb);", "\tERR_FAIL_COND(rb.is_null());", 1)
-          elif "\tERR_FAIL_COND(rb.is_null());" not in copy_fn:
-              raise RuntimeError("Unexpected RenderSceneBuffersRD Ref guard")
-          text = text[:copy_start] + copy_fn + text[copy_end:]
-
-          fn_start = text.find("void RendererSceneRenderRD::_process_mesh_blend(const RenderDataRD *p_render_data)")
-          fn_end = text.find("// ——— VISIBILITY FILL", fn_start)
-          if fn_start < 0 or fn_end < 0:
-              raise RuntimeError("Could not locate _process_mesh_blend")
-          fn = text[fn_start:fn_end]
-
-          old_null = """\t\tif (vb_vis_slice.is_null() || vb_aux_slice.is_null() || vb_depth_slice.is_null() ||
-\t\t\t\tmask_slice.is_null() || edge_ping.is_null() || edge_pong.is_null() || color_source.is_null()) {"""
-          new_null = """\t\tif (vb_vis_slice.is_null() || vb_aux_slice.is_null() || vb_depth_slice.is_null() ||
-\t\t\t\tedge_ping.is_null() || edge_pong.is_null() || color_source.is_null()) {"""
-          if old_null in fn:
-              fn = fn.replace(old_null, new_null, 1)
-          elif new_null not in fn:
-              raise RuntimeError("Unexpected Mesh Blend null-texture guard")
-
-          old_warning = """\t\t\t\tWARN_PRINT_ONCE(vformat("Mesh blend: null textures for view %d: vis=%d aux=%d depth=%d mask=%d edge=%d color=%d",
-\t\t\t\t\t\tv, vb_vis_slice.is_valid(), vb_aux_slice.is_valid(), vb_depth_slice.is_valid(),
-\t\t\t\t\t\tmask_slice.is_valid(), edge_ping.is_valid(), color_source.is_valid()));"""
-          new_warning = """\t\t\t\tWARN_PRINT_ONCE(vformat("Mesh blend: null textures for view %d: vis=%d aux=%d depth=%d edge=%d color=%d",
-\t\t\t\t\t\tv, vb_vis_slice.is_valid(), vb_aux_slice.is_valid(), vb_depth_slice.is_valid(),
-\t\t\t\t\t\tedge_ping.is_valid(), color_source.is_valid()));"""
-          if old_warning in fn:
-              fn = fn.replace(old_warning, new_warning, 1)
-          elif new_warning not in fn:
-              raise RuntimeError("Unexpected Mesh Blend null-texture warning")
-
-          old_spread = "\n\tint spread = 1;\n\twhile (spread < int(edge_radius_pixels)) {"
-          new_spread = "\n\t\tint spread = 1;\n\t\twhile (spread < int(edge_radius_pixels)) {"
-          if old_spread in fn:
-              fn = fn.replace(old_spread, new_spread, 1)
-          elif new_spread not in fn:
-              raise RuntimeError("Unexpected Jump Flood spread indentation")
-
-          fn = fn.replace(
-              "mesh_blend->jump_flood(current_edge, next_edge, tex_aux, size, spread);",
-              "mesh_blend->jump_flood(current_edge, next_edge, vb_aux_slice, size, spread);",
-              1,
-          )
-          fn = fn.replace(
-              "mesh_blend->blend(color_source, blend_depth, tex_aux, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);",
-              "mesh_blend->blend(color_source, blend_depth, vb_aux_slice, current_edge, framebuffer, size, effective_radius, view_slot, use_world_radius, neighbor_blend);",
-              1,
-          )
-
-          if "mask_slice" in fn or "tex_aux" in fn:
-              raise RuntimeError("Stale Mesh Blend mask aliases remain")
-          if "jump_flood(current_edge, next_edge, vb_aux_slice" not in fn:
-              raise RuntimeError("Jump Flood is not using packed VB_AUX")
-          if "blend(color_source, blend_depth, vb_aux_slice" not in fn:
-              raise RuntimeError("Final blend is not using packed VB_AUX")
-
-          text = text[:fn_start] + fn + text[fn_end:]
-          path.write_text(text, encoding="utf-8")
-          PY
-
-          rm -f site_scons/site_init.py
-
-          grep -Fq 'ERR_FAIL_COND(rb.is_null());' \
-            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
-          grep -Fq 'jump_flood(current_edge, next_edge, vb_aux_slice' \
-            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
-          grep -Fq 'blend(color_source, blend_depth, vb_aux_slice' \
-            servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
-          if sed -n '/void RendererSceneRenderRD::_process_mesh_blend/,/VISIBILITY FILL/p' \
-              servers/rendering/renderer_rd/renderer_scene_render_rd.cpp | grep -E 'mask_slice|tex_aux'; then
-            echo "::error::Stale Mesh Blend aliases remain"
-            exit 1
-          fi
+          grep -Fq 'ERR_FAIL_COND(rb.is_null());' servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          grep -Fq 'jump_flood(current_edge, next_edge, vb_aux_slice' servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
+          grep -Fq 'blend(color_source, blend_depth, vb_aux_slice' servers/rendering/renderer_rd/renderer_scene_render_rd.cpp
           test ! -e site_scons/site_init.py
           git diff --check
 
-      - name: Commit repaired source before compiling
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git diff --cached --check
           if ! git diff --cached --quiet; then
-            git commit -m "Fix renderer scene Mesh Blend compile errors"
+            git commit -m 'Fix renderer scene Mesh Blend compile errors'
             git push origin HEAD:opt/renderer-batch2
           fi
 
-      - name: Set up Godot build dependencies
-        uses: ./.github/actions/godot-deps
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.x
 
-      - name: Compile Linux Forward+ editor
+      - name: Install SCons
+        run: python -m pip install scons==4.10.1
+
+      - name: Compile Linux Forward Plus editor
+        working-directory: source
         shell: bash
         run: |
           set -o pipefail
@@ -148,7 +80,8 @@ jobs:
             tests=no \
             2>&1 | tee renderer-repair-build.log
 
-      - name: Smoke-test editor
+      - name: Smoke test editor
+        working-directory: source
         shell: bash
         run: |
           set -euxo pipefail
@@ -157,6 +90,7 @@ jobs:
           "$binary" --headless --version | tee renderer-version.txt
 
       - name: Package Linux editor
+        working-directory: source
         shell: bash
         run: |
           set -euxo pipefail
@@ -172,7 +106,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: godot-vib-4.7.2-renderer-linux-x86_64
-          path: artifacts/godot-vib-4.7.2-renderer-linux-x86_64.tar.xz
+          path: source/artifacts/godot-vib-4.7.2-renderer-linux-x86_64.tar.xz
           if-no-files-found: error
           retention-days: 14
 
@@ -181,6 +115,6 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: renderer-repair-build-log
-          path: renderer-repair-build.log
+          path: source/renderer-repair-build.log
           if-no-files-found: ignore
           retention-days: 14
