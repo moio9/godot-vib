@@ -58,18 +58,40 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
-      - name: Verify repaired Mesh Blend source
+      - name: Verify Mesh Blend shader/framebuffer contract
         shell: bash
         run: |
           set -euxo pipefail
-          grep -Fq '#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)' \
-            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
-          grep -Fq 'clamp(sc_get_material_mesh_blend(), -1.0, 1.0)' \
-            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          python3 - <<'PY'
+          from pathlib import Path
+
+          shader = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl").read_text(encoding="utf-8")
+          shader_header = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h").read_text(encoding="utf-8")
+          shader_cpp = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp").read_text(encoding="utf-8")
+          renderer = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp").read_text(encoding="utf-8")
+
+          assert shader.count("layout(location = 3) out uint frag_mesh_blend_aux;") == 1
+          assert "#ifdef MESH_BLEND_MAIN_PASS_OUTPUT\nlayout(location = 3) out uint frag_mesh_blend_aux;\n#endif" in shader
+          assert "layout(location = 0) out vec4 frag_color;\n#define MESH_BLEND_MAIN_PASS_OUTPUT" not in shader
+          assert "SHADER_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header
+          assert "PIPELINE_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header
+          assert "SHADER_COLOR_PASS_FLAG_COUNT = 1 << 6" in shader_header
+          assert '"\\n#define MESH_BLEND_MAIN_PASS_OUTPUT\\n"' in shader_cpp
+          assert "color_attachment_count = (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) ? 4 : 3" in shader_cpp
+          assert renderer.count("VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND") == 8
+          assert "transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MESH_BLEND);" in renderer
+          PY
           git diff --check
 
       - name: Set up Python and SCons
         uses: ./.github/actions/godot-deps
+
+      - name: Install Vulkan runtime test dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers vulkan-tools xvfb xauth
 
       - name: Compile Linux x86_64 Forward+ editor
         shell: bash
@@ -90,11 +112,104 @@ jobs:
           set -euxo pipefail
           BIN="$(find bin -maxdepth 1 -type f -name 'godot.linuxbsd.editor.x86_64*' -perm -111 | head -n 1)"
           test -n "$BIN"
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
           "$BIN" --headless --version | tee linux-x86_64-version.txt
 
+      - name: Exercise Mesh Blend on Vulkan
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p runtime-test
+          cat > runtime-test/project.godot <<'EOF'
+          [application]
+          config/name="Mesh Blend Pipeline Contract Test"
+          run/main_scene="res://main.tscn"
+
+          [display]
+          window/size/viewport_width=320
+          window/size/viewport_height=240
+          window/size/window_width_override=320
+          window/size/window_height_override=240
+
+          [rendering]
+          renderer/rendering_method="forward_plus"
+          renderer/rendering_method.mobile="forward_plus"
+          mesh_blend/enabled=true
+          EOF
+
+          cat > runtime-test/main.tscn <<'EOF'
+          [gd_scene load_steps=2 format=3]
+
+          [ext_resource type="Script" path="res://main.gd" id="1"]
+
+          [node name="Main" type="Node3D"]
+          script = ExtResource("1")
+          EOF
+
+          cat > runtime-test/main.gd <<'EOF'
+          extends Node3D
+
+          func _ready() -> void:
+              var camera := Camera3D.new()
+              camera.position = Vector3(0.0, 0.0, 4.0)
+              camera.current = true
+              add_child(camera)
+
+              var light := DirectionalLight3D.new()
+              light.rotation_degrees = Vector3(-35.0, -25.0, 0.0)
+              light.shadow_enabled = true
+              add_child(light)
+
+              var mesh_instance := MeshInstance3D.new()
+              mesh_instance.mesh = BoxMesh.new()
+              var shader := Shader.new()
+              shader.code = """
+          shader_type spatial;
+          render_mode cull_back;
+          void fragment() {
+              ALBEDO = vec3(0.35, 0.7, 0.25);
+              ROUGHNESS = 0.8;
+              MESH_BLEND = 0.75;
+              MESH_BLEND_GROUP = 1u;
+          }
+          """
+              var material := ShaderMaterial.new()
+              material.shader = shader
+              mesh_instance.material_override = material
+              add_child(mesh_instance)
+          EOF
+
+          LVP_ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name 'lvp_icd*.json' | head -n 1)"
+          test -n "$LVP_ICD"
+          vulkaninfo --summary | tee vulkan-summary.txt
+
+          set +e
+          timeout 120s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
+            "$BIN" --path runtime-test --rendering-method forward_plus --rendering-driver vulkan \
+            --quit-after 60 --verbose 2>&1 | tee linux-x86_64-vulkan-runtime.log
+          runtime_status=${PIPESTATUS[0]}
+          set -e
+          test "$runtime_status" -eq 0
+
+          grep -Fq "Vulkan" linux-x86_64-vulkan-runtime.log
+          if grep -E -q \
+            'Mismatch fragment shader output mask|Invalid color pass flag combination|pipeline\.is_null\(\)|Error compiling (Fragment|Vertex|Compute) shader|Failed parse' \
+            linux-x86_64-vulkan-runtime.log; then
+            echo "::error::Mesh Blend Vulkan runtime validation found a shader/framebuffer contract failure"
+            grep -E -n -B3 -A8 \
+              'Mismatch fragment shader output mask|Invalid color pass flag combination|pipeline\.is_null\(\)|Error compiling (Fragment|Vertex|Compute) shader|Failed parse' \
+              linux-x86_64-vulkan-runtime.log || true
+            exit 1
+          fi
+
+      - name: Package Linux x86_64 editor
+        shell: bash
+        run: |
+          set -euxo pipefail
           mkdir -p package
           install -m 0755 "$BIN" package/godot-vib-4.7.2-linux-x86_64
           cp linux-x86_64-version.txt package/
+          cp linux-x86_64-vulkan-runtime.log package/
           printf '%s\n' "${GITHUB_SHA}" > package/commit.txt
           tar -C package -cJf godot-vib-4.7.2-linux-x86_64.tar.xz .
           sha256sum godot-vib-4.7.2-linux-x86_64.tar.xz > godot-vib-4.7.2-linux-x86_64.tar.xz.sha256
@@ -109,11 +224,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload Linux build log
+      - name: Upload Linux validation logs
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: godot-vib-linux-x86_64-build-log-${{ github.sha }}
-          path: linux-x86_64-build.log
+          name: godot-vib-linux-x86_64-validation-${{ github.sha }}
+          path: |
+            linux-x86_64-build.log
+            linux-x86_64-vulkan-runtime.log
+            linux-x86_64-version.txt
+            vulkan-summary.txt
           if-no-files-found: warn
           retention-days: 14
+
+# Runtime rebuild marker: Mesh Blend output contract f697b49a2ec39dd6c0844e9ce40ef5730accd19e
