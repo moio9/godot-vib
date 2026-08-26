@@ -1,0 +1,101 @@
+name: Repair Visibility shader preprocessor path
+
+on:
+  push:
+    branches:
+      - "opt/renderer-batch2"
+    paths:
+      - ".github/workflows/repair_visibility_shader_preprocessor.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-visibility-shader-preprocessor
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-slim
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout renderer branch
+        uses: actions/checkout@v7
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+
+      - name: Repair Visibility and no-AUX control flow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)
+\tfloat material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+\tfloat blend_id = sc_instance_hash(packed_ids.y);
+\tvec2 mesh_blend_aux_value = vec2(material_mesh_blend, blend_id);
+#ifdef MESH_BLEND_OUTPUT_USED
+\tmesh_blend_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
+#endif
+#ifdef MESH_BLEND_GROUP_OUTPUT_USED
+\tmesh_blend_aux_value.y = float(min(mesh_blend_group_output, 255u)) / 255.0;
+#endif
+\tfrag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);
+\treturn;
+#endif'''
+
+          new = '''#ifdef MODE_RENDER_VISIBILITY
+#ifndef MODE_RENDER_VISIBILITY_NO_AUX
+\tvec2 mesh_blend_aux_value = vec2(
+\t\t\tclamp(sc_get_material_mesh_blend(), -1.0, 1.0),
+\t\t\tsc_instance_hash(packed_ids.y));
+#ifdef MESH_BLEND_OUTPUT_USED
+\tmesh_blend_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
+#endif
+#ifdef MESH_BLEND_GROUP_OUTPUT_USED
+\tmesh_blend_aux_value.y = float(min(mesh_blend_group_output, 255u)) / 255.0;
+#endif
+\tfrag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);
+#endif
+\treturn;
+#endif'''
+
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise RuntimeError("The expected Visibility AUX shader block was not found")
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          grep -Fq '#ifdef MODE_RENDER_VISIBILITY' \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          grep -Fq '#ifndef MODE_RENDER_VISIBILITY_NO_AUX' \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          ! grep -Fq '#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)' \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          ! grep -Fq 'float material_mesh_blend =' \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          git diff --check
+
+      - name: Commit shader repair and remove this workflow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          rm -f .github/workflows/repair_visibility_shader_preprocessor.yml
+          git add -A \
+            .github/workflows/repair_visibility_shader_preprocessor.yml \
+            servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl
+          git diff --cached --check
+          git commit -m "Fix Visibility no-AUX shader control flow"
+          git push origin HEAD:opt/renderer-batch2
