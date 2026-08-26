@@ -1,0 +1,226 @@
+name: Fix Mesh Blend pipeline output contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "opt/renderer-batch2"
+    paths:
+      - ".github/workflows/fix_mesh_blend_pipeline_contract.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-mesh-blend-pipeline-contract
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout renderer branch
+        uses: actions/checkout@v6
+        with:
+          ref: opt/renderer-batch2
+          fetch-depth: 1
+
+      - name: Repair shader and framebuffer output contract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str, label: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              if new in text:
+                  return
+              if text.count(old) != 1:
+                  raise RuntimeError(f"{label}: expected one old block, found {text.count(old)}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          shader = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl")
+          replace_once(
+              shader,
+              '''#ifdef MODE_SEPARATE_SPECULAR
+
+          layout(location = 0) out vec4 diffuse_buffer; //diffuse (rgb) and roughness
+          layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface scatter)
+          #else
+
+          layout(location = 0) out vec4 frag_color;
+          #define MESH_BLEND_MAIN_PASS_OUTPUT
+          layout(location = 3) out uint frag_mesh_blend_aux;
+          #endif // MODE_SEPARATE_SPECULAR
+
+          #endif // RENDER DEPTH''',
+              '''#ifdef MODE_SEPARATE_SPECULAR
+
+          layout(location = 0) out vec4 diffuse_buffer; //diffuse (rgb) and roughness
+          layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface scatter)
+          #else
+
+          layout(location = 0) out vec4 frag_color;
+          #endif // MODE_SEPARATE_SPECULAR
+
+          #ifdef MESH_BLEND_MAIN_PASS_OUTPUT
+          layout(location = 3) out uint frag_mesh_blend_aux;
+          #endif
+
+          #endif // RENDER DEPTH''',
+              "conditional Mesh Blend fragment output",
+          )
+
+          shader_header = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h")
+          replace_once(
+              shader_header,
+              '''\t\tSHADER_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
+          \t\tSHADER_COLOR_PASS_FLAG_COUNT = 1 << 5''',
+              '''\t\tSHADER_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
+          \t\tSHADER_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5,
+          \t\tSHADER_COLOR_PASS_FLAG_COUNT = 1 << 6''',
+              "shader Mesh Blend variant bit",
+          )
+          replace_once(
+              shader_header,
+              '''\t\tPIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
+          \t\tPIPELINE_COLOR_PASS_FLAG_OPTIONS = 5,
+          \t\tPIPELINE_COLOR_PASS_FLAG_COMBINATIONS = 1 << PIPELINE_COLOR_PASS_FLAG_OPTIONS,''',
+              '''\t\tPIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
+          \t\tPIPELINE_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5,
+          \t\tPIPELINE_COLOR_PASS_FLAG_OPTIONS = 6,
+          \t\tPIPELINE_COLOR_PASS_FLAG_COMBINATIONS = 1 << PIPELINE_COLOR_PASS_FLAG_OPTIONS,''',
+              "pipeline Mesh Blend variant bit",
+          )
+
+          shader_cpp = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp")
+          replace_once(
+              shader_cpp,
+              '''\t\t\tif (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS) {
+          \t\t\t\tshader_flags |= SHADER_COLOR_PASS_FLAG_MOTION_VECTORS;
+          \t\t\t}
+
+          \t\t\tif (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_LIGHTMAP) {''',
+              '''\t\t\tif (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS) {
+          \t\t\t\tshader_flags |= SHADER_COLOR_PASS_FLAG_MOTION_VECTORS;
+          \t\t\t}
+
+          \t\t\tif (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) {
+          \t\t\t\tshader_flags |= SHADER_COLOR_PASS_FLAG_MESH_BLEND;
+          \t\t\t}
+
+          \t\t\tif (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_LIGHTMAP) {''',
+              "pipeline-to-shader Mesh Blend flag",
+          )
+          replace_once(
+              shader_cpp,
+              '''\tRD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(3);''',
+              '''\tconst uint32_t color_attachment_count = (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) ? 4 : 3;
+          \tRD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(color_attachment_count);''',
+              "four-slot Mesh Blend blend state",
+          )
+          replace_once(
+              shader_cpp,
+              '''\t\t\t"\\n#define MOTION_VECTORS\\n", // SHADER_COLOR_PASS_FLAG_MOTION_VECTORS
+          \t\t};''',
+              '''\t\t\t"\\n#define MOTION_VECTORS\\n", // SHADER_COLOR_PASS_FLAG_MOTION_VECTORS
+          \t\t\t"\\n#define MESH_BLEND_MAIN_PASS_OUTPUT\\n", // SHADER_COLOR_PASS_FLAG_MESH_BLEND
+          \t\t};''',
+              "Mesh Blend shader define",
+          )
+
+          renderer = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp")
+          replace_once(
+              renderer,
+              '''\t\t\t\tif constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_MOTION_VECTORS) != 0) {
+          \t\t\t\t\tpipeline_key.color_pass_flags |= SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
+          \t\t\t\t}
+
+          \t\t\t\tif constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_TRANSPARENT) != 0) {''',
+              '''\t\t\t\tif constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_MOTION_VECTORS) != 0) {
+          \t\t\t\t\tpipeline_key.color_pass_flags |= SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
+          \t\t\t\t}
+
+          \t\t\t\tif constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_MESH_BLEND) != 0) {
+          \t\t\t\t\tpipeline_key.color_pass_flags |= SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MESH_BLEND;
+          \t\t\t\t}
+
+          \t\t\t\tif constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_TRANSPARENT) != 0) {''',
+              "renderer-to-pipeline Mesh Blend flag",
+          )
+          replace_once(
+              renderer,
+              '''\t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_TRANSPARENT | COLOR_PASS_FLAG_MULTIVIEW | COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\t\t\tdefault: {''',
+              '''\t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_TRANSPARENT | COLOR_PASS_FLAG_MULTIVIEW | COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_MULTIVIEW);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_MULTIVIEW | COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_SEPARATE_SPECULAR);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_SEPARATE_SPECULAR | COLOR_PASS_FLAG_MULTIVIEW);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_SEPARATE_SPECULAR | COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\t\t\tVALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND | COLOR_PASS_FLAG_SEPARATE_SPECULAR | COLOR_PASS_FLAG_MULTIVIEW | COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\t\t\tdefault: {''',
+              "valid Mesh Blend pass combinations",
+          )
+          replace_once(
+              renderer,
+              '''\t\t\t\tif (rb_data.is_valid()) {
+          \t\t\t\t\tc.push_back(Color(0, 0, 0, 0)); // Separate specular.
+          \t\t\t\t\tc.push_back(Color(0, 0, 0, 0)); // Motion vector. Pushed to the clear color vector even if the framebuffer isn't bound.
+          \t\t\t\t}
+          \t\t\t}''',
+              '''\t\t\t\tif (rb_data.is_valid()) {
+          \t\t\t\t\tc.push_back(Color(0, 0, 0, 0)); // Separate specular.
+          \t\t\t\t\tc.push_back(Color(0, 0, 0, 0)); // Motion vector. Pushed to the clear color vector even if the framebuffer isn't bound.
+          \t\t\t\t}
+          \t\t\t\tif (mesh_blend_main_pass) {
+          \t\t\t\t\tc.push_back(Color(0, 0, 0, 0)); // Packed Mesh Blend metadata.
+          \t\t\t\t}
+          \t\t\t}''',
+              "Mesh Blend attachment clear value",
+          )
+          replace_once(
+              renderer,
+              '''\t\t// Motion vectors should not be overwritten by transparent objects.
+          \t\ttransparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);''',
+              '''\t\t// Motion vectors and opaque Mesh Blend metadata should not be overwritten by transparent objects.
+          \t\ttransparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
+          \t\ttransparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MESH_BLEND);''',
+              "transparent pass Mesh Blend exclusion",
+          )
+
+          # Structural invariants for the repaired contract.
+          shader_text = shader.read_text(encoding="utf-8")
+          shader_header_text = shader_header.read_text(encoding="utf-8")
+          shader_cpp_text = shader_cpp.read_text(encoding="utf-8")
+          renderer_text = renderer.read_text(encoding="utf-8")
+
+          assert shader_text.count("layout(location = 3) out uint frag_mesh_blend_aux;") == 1
+          assert "#ifdef MESH_BLEND_MAIN_PASS_OUTPUT\nlayout(location = 3) out uint frag_mesh_blend_aux;" in shader_text
+          assert "#define MESH_BLEND_MAIN_PASS_OUTPUT\nlayout(location = 3)" not in shader_text
+          assert "SHADER_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header_text
+          assert "PIPELINE_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header_text
+          assert "#define MESH_BLEND_MAIN_PASS_OUTPUT" in shader_cpp_text
+          assert "PIPELINE_COLOR_PASS_FLAG_MESH_BLEND" in shader_cpp_text
+          assert renderer_text.count("VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND") == 8
+          assert "transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MESH_BLEND);" in renderer_text
+          PY
+
+          git diff --check
+
+      - name: Commit source repair and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/fix_mesh_blend_pipeline_contract.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix Mesh Blend shader and framebuffer output contract"
+          git push origin HEAD:opt/renderer-batch2
