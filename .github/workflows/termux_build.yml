@@ -70,6 +70,30 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
 
+      - name: Verify repaired Mesh Blend output contract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          shader = Path("servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl").read_text(encoding="utf-8")
+          shader_header = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h").read_text(encoding="utf-8")
+          shader_cpp = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp").read_text(encoding="utf-8")
+          renderer = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp").read_text(encoding="utf-8")
+
+          assert shader.count("layout(location = 3) out uint frag_mesh_blend_aux;") == 1
+          assert "#ifdef MESH_BLEND_MAIN_PASS_OUTPUT\nlayout(location = 3) out uint frag_mesh_blend_aux;\n#endif" in shader
+          assert "layout(location = 0) out vec4 frag_color;\n#define MESH_BLEND_MAIN_PASS_OUTPUT" not in shader
+          assert "SHADER_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header
+          assert "PIPELINE_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header
+          assert '"\\n#define MESH_BLEND_MAIN_PASS_OUTPUT\\n"' in shader_cpp
+          assert "color_attachment_count = (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) ? 4 : 3" in shader_cpp
+          assert renderer.count("VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND") == 8
+          assert "transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MESH_BLEND);" in renderer
+          PY
+          git diff --check
+
       - name: Clone Termux package builder
         shell: bash
         run: |
@@ -99,7 +123,7 @@ jobs:
           sed -i -E "s/^TERMUX_PKG_SHA256=.*/TERMUX_PKG_SHA256=${SOURCE_SHA256}/" "$RECIPE"
           sed -i -E 's/^TERMUX_PKG_AUTO_UPDATE=.*/TERMUX_PKG_AUTO_UPDATE=false/' "$RECIPE"
           sed -i '/^TERMUX_PKG_REVISION=/d' "$RECIPE"
-          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=99" "$RECIPE"
+          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=100" "$RECIPE"
           sed -i '/^TERMUX_PKG_LICENSE_FILE=/d' "$RECIPE"
           sed -i '/^TERMUX_PKG_LICENSE=/a TERMUX_PKG_LICENSE_FILE="LICENSE.txt"' "$RECIPE"
 
@@ -151,4 +175,4 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-# Rebuild marker: Mesh Blend shader guard fix a4af073a2eb0fc3e334df7d10fd6b4ea05093058
+# Rebuild marker: Mesh Blend shader/framebuffer output contract f697b49a2ec39dd6c0844e9ce40ef5730accd19e
