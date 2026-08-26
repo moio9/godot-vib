@@ -123,7 +123,7 @@ jobs:
           sed -i -E "s/^TERMUX_PKG_SHA256=.*/TERMUX_PKG_SHA256=${SOURCE_SHA256}/" "$RECIPE"
           sed -i -E 's/^TERMUX_PKG_AUTO_UPDATE=.*/TERMUX_PKG_AUTO_UPDATE=false/' "$RECIPE"
           sed -i '/^TERMUX_PKG_REVISION=/d' "$RECIPE"
-          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=100" "$RECIPE"
+          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=101" "$RECIPE"
           sed -i '/^TERMUX_PKG_LICENSE_FILE=/d' "$RECIPE"
           sed -i '/^TERMUX_PKG_LICENSE=/a TERMUX_PKG_LICENSE_FILE="LICENSE.txt"' "$RECIPE"
 
@@ -175,4 +175,4 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-# Rebuild marker: Mesh Blend shader/framebuffer output contract f697b49a2ec39dd6c0844e9ce40ef5730accd19e
+# Rebuild marker: final transparent Mesh Blend + Visibility no-AUX repair, revision 101
