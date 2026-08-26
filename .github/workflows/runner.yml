@@ -1,53 +1,56 @@
 name: 🔗 GHA
-on: [push, workflow_dispatch]
-
-permissions:
-  contents: write
+on: [push, pull_request, merge_group, workflow_dispatch]
 
 concurrency:
-  group: repair-transparent-mesh-blend-${{ github.ref_name }}
+  group: ${{ github.workflow }}|${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
-  repair-transparent-mesh-blend:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/opt/renderer-batch2'
-    name: Repair transparent Mesh Blend source
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout renderer branch
-        uses: actions/checkout@v6
-        with:
-          ref: opt/renderer-batch2
-          fetch-depth: 2
+  # First stage: Only static checks, fast and prevent expensive builds from running.
 
-      - name: Patch and push renderer source
-        shell: bash
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
+  static-checks:
+    if: ${{ !vars.DISABLE_GODOT_CI || github.run_attempt > 1 || github.event_name == 'workflow_dispatch' }}
+    name: 📊 Static checks
+    uses: ./.github/workflows/static_checks.yml
 
-          source_path = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp")
-          source = source_path.read_text(encoding="utf-8")
-          old_initializer = "blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };"
-          new_initializer = "blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };"
+  # Second stage: Run all the builds and some of the tests.
 
-          if source.count(new_initializer) == 1 and source.count(old_initializer) == 0:
-              print("Transparent Mesh Blend source is already repaired.")
-          elif source.count(old_initializer) == 1 and source.count(new_initializer) == 0:
-              source_path.write_text(source.replace(old_initializer, new_initializer, 1), encoding="utf-8")
-          else:
-              raise SystemExit("Unexpected transparent blend-state source layout")
-          PY
+  android-build:
+    name: 🤖 Android
+    needs: static-checks
+    if: needs.static-checks.outputs.sources-changed == 'true' || github.event_name != 'pull_request'
+    uses: ./.github/workflows/android_builds.yml
+    secrets:
+      SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
 
-          git diff --check
-          if git diff --quiet -- servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp; then
-            exit 0
-          fi
+  ios-build:
+    name: 🍏 iOS
+    needs: static-checks
+    if: needs.static-checks.outputs.sources-changed == 'true' || github.event_name != 'pull_request'
+    uses: ./.github/workflows/ios_builds.yml
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
-          git commit -m "Fix transparent Mesh Blend pipeline attachment count"
-          git push origin HEAD:opt/renderer-batch2
+  linux-build:
+    name: 🐧 Linux
+    needs: static-checks
+    if: needs.static-checks.outputs.sources-changed == 'true' || github.event_name != 'pull_request'
+    uses: ./.github/workflows/linux_builds.yml
+    with:
+      changed-files: ${{ needs.static-checks.outputs.changed-files }}
+
+  macos-build:
+    name: 🍎 macOS
+    needs: static-checks
+    if: needs.static-checks.outputs.sources-changed == 'true' || github.event_name != 'pull_request'
+    uses: ./.github/workflows/macos_builds.yml
+
+  windows-build:
+    name: 🏁 Windows
+    needs: static-checks
+    if: needs.static-checks.outputs.sources-changed == 'true' || github.event_name != 'pull_request'
+    uses: ./.github/workflows/windows_builds.yml
+
+  web-build:
+    name: 🌐 Web
+    needs: static-checks
+    if: needs.static-checks.outputs.sources-changed == 'true' || github.event_name != 'pull_request'
+    uses: ./.github/workflows/web_builds.yml
