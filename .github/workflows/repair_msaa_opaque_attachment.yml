@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   repair:
-    name: Patch opaque pipeline and add MSAA regression coverage
+    name: Patch MSAA opaque pipeline source
     runs-on: ubuntu-22.04
     timeout-minutes: 15
 
@@ -28,7 +28,7 @@ jobs:
           ref: opt/renderer-batch2
           fetch-depth: 1
 
-      - name: Apply focused renderer repair
+      - name: Apply and publish renderer repair
         shell: bash
         run: |
           set -euxo pipefail
@@ -45,68 +45,25 @@ jobs:
               "\t// get_color_pass_fb() keeps all four color positions. With MSAA, Mesh Blend moves "
               "to the Visibility pass, so slot 3 is ATTACHMENT_UNUSED but remains part of the render pass.\n"
           )
-          if source.count(old_comment) != 1:
-              raise SystemExit(f"Expected one color attachment comment, found {source.count(old_comment)}")
-          source = source.replace(old_comment, new_comment, 1)
-
           old_count = "\tconst uint32_t color_attachment_count = (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) ? 4 : 3;\n"
           new_count = "\tconst uint32_t color_attachment_count = 4;\n"
+
+          if old_comment not in source:
+              raise SystemExit("Expected opaque color-pass attachment comment was not found")
           if source.count(old_count) != 1:
               raise SystemExit(f"Expected one conditional opaque attachment count, found {source.count(old_count)}")
+
+          source = source.replace(old_comment, new_comment, 1)
           source = source.replace(old_count, new_count, 1)
           source_path.write_text(source, encoding="utf-8")
-
-          linux_path = Path(".github/workflows/renderer_batch2_compile_fixed.yml")
-          linux = linux_path.read_text(encoding="utf-8")
-          old_assert = '          assert "color_attachment_count = (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) ? 4 : 3" in shader_cpp\n'
-          new_assert = '          assert "const uint32_t color_attachment_count = 4;" in shader_cpp\n'
-          if linux.count(old_assert) != 1:
-              raise SystemExit(f"Expected one Linux contract assertion, found {linux.count(old_assert)}")
-          linux = linux.replace(old_assert, new_assert, 1)
-
-          old_ready = "          func _ready() -> void:\n              var camera := Camera3D.new()\n"
-          new_ready = "          func _ready() -> void:\n              get_viewport().msaa_3d = Viewport.MSAA_2X\n\n              var camera := Camera3D.new()\n"
-          if linux.count(old_ready) != 1:
-              raise SystemExit(f"Expected one runtime test _ready block, found {linux.count(old_ready)}")
-          linux = linux.replace(old_ready, new_ready, 1)
-          linux = linux.replace(
-              "# Runtime rebuild marker: Mesh Blend output contract f697b49a2ec39dd6c0844e9ce40ef5730accd19e",
-              "# Runtime rebuild marker: MSAA opaque attachment contract revision 102",
-              1,
-          )
-          linux_path.write_text(linux, encoding="utf-8")
-
-          termux_path = Path(".github/workflows/termux_build.yml")
-          termux = termux_path.read_text(encoding="utf-8")
-          if termux.count(old_assert) != 1:
-              raise SystemExit(f"Expected one Termux contract assertion, found {termux.count(old_assert)}")
-          termux = termux.replace(old_assert, new_assert, 1)
-          if termux.count("TERMUX_PKG_REVISION=101") != 1:
-              raise SystemExit("Expected Termux package revision 101 exactly once")
-          termux = termux.replace("TERMUX_PKG_REVISION=101", "TERMUX_PKG_REVISION=102", 1)
-          termux = termux.replace(
-              "# Rebuild marker: final transparent Mesh Blend + Visibility no-AUX repair, revision 101",
-              "# Rebuild marker: MSAA opaque attachment contract repair, revision 102",
-              1,
-          )
-          termux_path.write_text(termux, encoding="utf-8")
           PY
 
           git diff --check
           grep -F "const uint32_t color_attachment_count = 4;" servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
-          grep -F "get_viewport().msaa_3d = Viewport.MSAA_2X" .github/workflows/renderer_batch2_compile_fixed.yml
-          grep -F "TERMUX_PKG_REVISION=102" .github/workflows/termux_build.yml
-          git diff -- servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp .github/workflows/renderer_batch2_compile_fixed.yml .github/workflows/termux_build.yml
+          git diff -- servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
 
-      - name: Commit repaired source and validation
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git rm .github/workflows/repair_msaa_opaque_attachment.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp
-          git add .github/workflows/renderer_batch2_compile_fixed.yml
-          git add .github/workflows/termux_build.yml
           git commit -m "Fix MSAA opaque color attachment count"
           git push origin HEAD:opt/renderer-batch2
