@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: repair-msaa-opaque-attachment-contract
@@ -70,12 +69,6 @@ jobs:
           if linux.count(old_ready) != 1:
               raise SystemExit(f"Expected one runtime test _ready block, found {linux.count(old_ready)}")
           linux = linux.replace(old_ready, new_ready, 1)
-
-          old_error_pattern = r'pipeline\\.is_null\\(\\)|Error compiling'
-          new_error_pattern = r'p_blend_state\\.attachments\\.size\\(\\) < pass\\.color_attachments\\.size\\(\\)|pipeline\\.is_null\\(\\)|Error compiling'
-          if linux.count(old_error_pattern) != 2:
-              raise SystemExit(f"Expected two Linux runtime error patterns, found {linux.count(old_error_pattern)}")
-          linux = linux.replace(old_error_pattern, new_error_pattern)
           linux = linux.replace(
               "# Runtime rebuild marker: Mesh Blend output contract f697b49a2ec39dd6c0844e9ce40ef5730accd19e",
               "# Runtime rebuild marker: MSAA opaque attachment contract revision 102",
@@ -117,15 +110,3 @@ jobs:
           git add .github/workflows/termux_build.yml
           git commit -m "Fix MSAA opaque color attachment count"
           git push origin HEAD:opt/renderer-batch2
-          echo "PATCH_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      - name: Dispatch rebuilt Linux and Termux packages
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euxo pipefail
-          gh workflow run renderer_batch2_compile_fixed.yml --ref opt/renderer-batch2
-          gh workflow run termux_build.yml --ref opt/renderer-batch2
-          echo "Dispatched builds for ${PATCH_COMMIT}"
