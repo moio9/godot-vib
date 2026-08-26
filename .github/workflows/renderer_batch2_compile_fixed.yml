@@ -77,7 +77,7 @@ jobs:
           assert "PIPELINE_COLOR_PASS_FLAG_MESH_BLEND = 1 << 5" in shader_header
           assert "SHADER_COLOR_PASS_FLAG_COUNT = 1 << 6" in shader_header
           assert '"\\n#define MESH_BLEND_MAIN_PASS_OUTPUT\\n"' in shader_cpp
-          assert "color_attachment_count = (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) ? 4 : 3" in shader_cpp
+          assert "const uint32_t color_attachment_count = 4;" in shader_cpp
           assert renderer.count("VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND") == 8
           assert "transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MESH_BLEND);" in renderer
           PY
@@ -115,14 +115,14 @@ jobs:
           echo "BIN=$BIN" >> "$GITHUB_ENV"
           "$BIN" --headless --version | tee linux-x86_64-version.txt
 
-      - name: Exercise Mesh Blend on Vulkan
+      - name: Exercise Mesh Blend with MSAA on Vulkan
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p runtime-test
           cat > runtime-test/project.godot <<'EOF'
           [application]
-          config/name="Mesh Blend Pipeline Contract Test"
+          config/name="MSAA Mesh Blend Pipeline Contract Test"
           run/main_scene="res://main.tscn"
 
           [display]
@@ -150,6 +150,8 @@ jobs:
           extends Node3D
 
           func _ready() -> void:
+              get_viewport().msaa_3d = Viewport.MSAA_2X
+
               var camera := Camera3D.new()
               camera.position = Vector3(0.0, 0.0, 4.0)
               camera.current = true
@@ -193,11 +195,11 @@ jobs:
 
           grep -Fq "Vulkan" linux-x86_64-vulkan-runtime.log
           if grep -E -q \
-            'Mismatch fragment shader output mask|Invalid color pass flag combination|pipeline\.is_null\(\)|Error compiling (Fragment|Vertex|Compute) shader|Failed parse' \
+            'p_blend_state\.attachments\.size\(\) < pass\.color_attachments\.size\(\)|Mismatch fragment shader output mask|Invalid color pass flag combination|pipeline\.is_null\(\)|Error compiling (Fragment|Vertex|Compute) shader|Failed parse' \
             linux-x86_64-vulkan-runtime.log; then
-            echo "::error::Mesh Blend Vulkan runtime validation found a shader/framebuffer contract failure"
+            echo "::error::MSAA Mesh Blend Vulkan runtime validation found a shader/framebuffer contract failure"
             grep -E -n -B3 -A8 \
-              'Mismatch fragment shader output mask|Invalid color pass flag combination|pipeline\.is_null\(\)|Error compiling (Fragment|Vertex|Compute) shader|Failed parse' \
+              'p_blend_state\.attachments\.size\(\) < pass\.color_attachments\.size\(\)|Mismatch fragment shader output mask|Invalid color pass flag combination|pipeline\.is_null\(\)|Error compiling (Fragment|Vertex|Compute) shader|Failed parse' \
               linux-x86_64-vulkan-runtime.log || true
             exit 1
           fi
@@ -237,4 +239,4 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-# Runtime rebuild marker: Mesh Blend output contract f697b49a2ec39dd6c0844e9ce40ef5730accd19e
+# Runtime rebuild marker: MSAA opaque attachment contract revision 102
