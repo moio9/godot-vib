@@ -1086,9 +1086,11 @@ layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface sc
 #else
 
 layout(location = 0) out vec4 frag_color;
-#define MESH_BLEND_MAIN_PASS_OUTPUT
-layout(location = 3) out uint frag_mesh_blend_aux;
 #endif // MODE_SEPARATE_SPECULAR
+
+#ifdef MESH_BLEND_MAIN_PASS_OUTPUT
+layout(location = 3) out uint frag_mesh_blend_aux;
+#endif
 
 #endif // RENDER DEPTH
 
