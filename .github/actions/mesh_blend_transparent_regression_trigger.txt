@@ -1,0 +1,3 @@
+Transparent Mesh Blend pipeline rebuild trigger.
+
+The renderer source now provides four blend-state entries when the main Forward+ framebuffer includes the Mesh Blend auxiliary color attachment.
