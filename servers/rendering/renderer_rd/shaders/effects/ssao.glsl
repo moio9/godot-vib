@@ -162,19 +162,13 @@ vec3 load_normal(ivec2 p_pos, ivec2 p_offset) {
 uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
 	float lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);
 	float hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);
-	float sector_count = float(VB_SECTOR_COUNT);
-	uint start = uint(clamp(floor(lo * sector_count + 0.5), 0.0, sector_count));
-	uint end = uint(clamp(floor(hi * sector_count + 0.5), 0.0, sector_count));
-	if (end <= start) {
+	uint start = min(uint(lo * float(VB_SECTOR_COUNT)), VB_SECTOR_COUNT - 1u);
+	uint count = uint(floor((hi - lo) * float(VB_SECTOR_COUNT) + 0.5));
+	count = min(count, VB_SECTOR_COUNT - start);
+	if (count == 0u) {
 		return p_mask;
 	}
-	uint count = end - start;
-	uint bits;
-	if (count >= VB_SECTOR_COUNT) {
-		bits = 0xFFFFFFFFu;
-	} else {
-		bits = (1u << count) - 1u;
-	}
+	uint bits = count >= VB_SECTOR_COUNT ? 0xFFFFFFFFu : ((1u << count) - 1u);
 	return p_mask | (bits << start);
 }
 
