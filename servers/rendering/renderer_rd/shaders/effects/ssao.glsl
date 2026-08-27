@@ -289,7 +289,11 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 	vec2 pos_rounded = trunc(p_pos);
 	uvec2 upos = uvec2(pos_rounded);
 
-	const int number_of_taps = (p_adaptive_base) ? (SSAO_ADAPTIVE_TAP_BASE_COUNT) : (num_taps[p_quality_level]);
+	// Standard Ultra remains Godot's adaptive path. Visibility Bitmask Ultra
+	// evaluates the complete official 32-tap pattern in the final gather so its
+	// directional mask is not truncated by the scalar-only adaptive base buffer.
+	const bool visibility_bitmask_enabled = params.flags.x > 0.5;
+	const int number_of_taps = (p_adaptive_base) ? (SSAO_ADAPTIVE_TAP_BASE_COUNT) : ((visibility_bitmask_enabled && p_quality_level == 3) ? SSAO_MAX_TAPS : num_taps[p_quality_level]);
 	float pix_z, pix_left_z, pix_top_z, pix_right_z, pix_bottom_z;
 
 	vec4 valuesUL = textureGather(source_depth_mipmaps, vec3(pos_rounded * params.half_screen_pixel_size, params.pass));
@@ -405,8 +409,10 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 	norm_xy /= vec2(norm_xy_length, -norm_xy_length);
 	norm_xy_length *= SSAO_TILT_SAMPLES_AMOUNT;
 
-	// standard, non-adaptive approach
-	if ((p_quality_level != 3) || p_adaptive_base) {
+	// Standard keeps the original adaptive Ultra branch. Visibility Bitmask
+	// Ultra uses the complete 32-tap path so both Uni and Bi retain their full
+	// directional information in this invocation.
+	if ((p_quality_level != 3) || p_adaptive_base || visibility_bitmask_enabled) {
 		for (int i = 0; i < number_of_taps; i++) {
 			SSAOTap(p_quality_level, obscurance_sum, weight_sum, i, rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, 1.0, norm_xy, norm_xy_length);
 		}
