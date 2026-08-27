@@ -162,16 +162,19 @@ vec3 load_normal(ivec2 p_pos, ivec2 p_offset) {
 uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
 	float lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);
 	float hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);
-	uint start = uint(floor(lo * float(VB_SECTOR_COUNT)));
-	if (start >= VB_SECTOR_COUNT) {
+	float sector_count = float(VB_SECTOR_COUNT);
+	uint start = uint(clamp(floor(lo * sector_count + 0.5), 0.0, sector_count));
+	uint end = uint(clamp(floor(hi * sector_count + 0.5), 0.0, sector_count));
+	if (end <= start) {
 		return p_mask;
 	}
-	uint count = uint(ceil((hi - lo) * float(VB_SECTOR_COUNT)));
-	count = min(count, VB_SECTOR_COUNT - start);
-	if (count == 0u) {
-		return p_mask;
+	uint count = end - start;
+	uint bits;
+	if (count >= VB_SECTOR_COUNT) {
+		bits = 0xFFFFFFFFu;
+	} else {
+		bits = (1u << count) - 1u;
 	}
-	uint bits = count == VB_SECTOR_COUNT ? 0xFFFFFFFFu : ((1u << count) - 1u);
 	return p_mask | (bits << start);
 }
 
@@ -241,6 +244,11 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 	float unused_falloff;
 	calculate_radius_parameters(length(pix_center_pos), pixel_size_at_center, pixel_lookup_radius, viewspace_radius, unused_falloff);
 	pixel_lookup_radius = max(pixel_lookup_radius, 1.0);
+	if (p_quality_level >= SSAO_REDUCE_RADIUS_NEAR_SCREEN_BORDER_ENABLE_AT_QUALITY_PRESET) {
+		float near_screen_border = min(min(normalized_screen_pos.x, 1.0 - normalized_screen_pos.x), min(normalized_screen_pos.y, 1.0 - normalized_screen_pos.y));
+		near_screen_border = clamp(10.0 * near_screen_border + 0.6, 0.0, 1.0);
+		pixel_lookup_radius *= near_screen_border;
+	}
 
 	vec4 edgesLRTB = vec4(1.0);
 	if (p_quality_level >= SSAO_DEPTH_BASED_EDGES_ENABLE_AT_QUALITY_PRESET) {
@@ -260,8 +268,8 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 	bool bidirectional = params.flags.x > 1.5;
 	int slice_count = vb_slice_count(p_quality_level, bidirectional);
 	int step_count = vb_step_count(p_quality_level);
-	float angle_span = bidirectional ? VB_PI : VB_TAU;
-	float thickness = max(0.01, viewspace_radius * 0.12);
+	float angle_span = VB_PI;
+	float thickness = max(0.01, viewspace_radius * 0.05);
 
 	uint pseudo_random_index = uint(pos_rounded.y * 2.0 + pos_rounded.x) % 5u;
 	vec4 rotation_scale = constants.rotation_matrices[params.pass * 5 + pseudo_random_index];
@@ -298,9 +306,14 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 		projected_normal /= projected_len;
 		vec3 tangent = cross(view_dir, slice_normal);
 		float cos_n = clamp(dot(projected_normal, view_dir), 0.0, 1.0);
-		float normal_angle = sign(dot(projected_normal, tangent)) * acos(cos_n);
+		float normal_angle = -sign(dot(projected_normal, tangent)) * acos(cos_n);
 
 		uint occluded_sectors = 0u;
+		float sampled_side = 1.0;
+		if (!bidirectional) {
+			float side_noise = fract(jitter + float(slice) * 0.7548776662466927);
+			sampled_side = side_noise < 0.5 ? -1.0 : 1.0;
+		}
 		float radial_jitter = fract(jitter + float(slice) * 0.61803398875);
 		for (int step = 0; step < 6; step++) {
 			if (step >= step_count) {
@@ -315,13 +328,19 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 			}
 
 			vec2 uv_offset = omega * sample_pixels * params.half_screen_pixel_size;
-			vb_trace_sample(occluded_sectors, normalized_screen_pos + uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, 1.0, thickness, viewspace_radius);
 			if (bidirectional) {
+				vb_trace_sample(occluded_sectors, normalized_screen_pos + uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, 1.0, thickness, viewspace_radius);
 				vb_trace_sample(occluded_sectors, normalized_screen_pos - uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, -1.0, thickness, viewspace_radius);
+			} else {
+				vb_trace_sample(occluded_sectors, normalized_screen_pos + sampled_side * uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, sampled_side, thickness, viewspace_radius);
 			}
 		}
 
-		visibility_sum += 1.0 - float(bitCount(occluded_sectors)) / float(VB_SECTOR_COUNT);
+		float occluded_fraction = float(bitCount(occluded_sectors)) / float(VB_SECTOR_COUNT);
+		if (!bidirectional) {
+			occluded_fraction = min(1.0, occluded_fraction * 2.0);
+		}
+		visibility_sum += 1.0 - occluded_fraction;
 		valid_slices += 1.0;
 	}
 
