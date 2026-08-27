@@ -163,7 +163,7 @@ uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
 	float lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);
 	float hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);
 	uint start = min(uint(lo * float(VB_SECTOR_COUNT)), VB_SECTOR_COUNT - 1u);
-	uint count = uint(floor((hi - lo) * float(VB_SECTOR_COUNT) + 0.5));
+	uint count = uint(ceil((hi - lo) * float(VB_SECTOR_COUNT)));
 	count = min(count, VB_SECTOR_COUNT - start);
 	if (count == 0u) {
 		return p_mask;
@@ -172,8 +172,20 @@ uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
 	return p_mask | (bits << start);
 }
 
-float vb_noise(vec2 p) {
-	return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
+uint vb_hash(uint p_value) {
+	p_value ^= p_value >> 16;
+	p_value *= 0x7FEB352Du;
+	p_value ^= p_value >> 15;
+	p_value *= 0x846CA68Bu;
+	p_value ^= p_value >> 16;
+	return p_value;
+}
+
+float vb_random(uvec2 p_pixel, uint p_seed) {
+	uint value = p_pixel.x * 0x9E3779B9u;
+	value ^= p_pixel.y * 0x85EBCA6Bu;
+	value ^= p_seed;
+	return float(vb_hash(value)) * (1.0 / 4294967296.0);
 }
 
 int vb_step_count(int p_quality_level) {
@@ -265,11 +277,13 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 	float angle_span = VB_PI;
 	float thickness = max(0.01, viewspace_radius * 0.05);
 
-	uint pseudo_random_index = uint(pos_rounded.y * 2.0 + pos_rounded.x) % 5u;
-	vec4 rotation_scale = constants.rotation_matrices[params.pass * 5 + pseudo_random_index];
-	float base_phase = atan(rotation_scale.y, rotation_scale.x);
-	float jitter = vb_noise(pos_rounded + vec2(float(params.pass) * 19.19, float(pseudo_random_index) * 7.13));
-	base_phase += (jitter - 0.5) * angle_span / float(slice_count);
+	// Do not reuse the 5-state Intel SSAO rotation pattern here. With the low VB
+	// sample count it becomes visible as diagonal x + 2*y bands. Use a stable
+	// full-resolution integer hash and only rotate within one slice interval so
+	// slices stay evenly distributed around the view vector.
+	uint pixel_seed = uint(params.pass) * 0xA511E9B3u;
+	float phase_jitter = vb_random(upos, pixel_seed ^ 0x63D83595u);
+	float base_phase = phase_jitter * angle_span / float(slice_count);
 
 	float visibility_sum = 0.0;
 	float valid_slices = 0.0;
@@ -303,12 +317,13 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 		float normal_angle = -sign(dot(projected_normal, tangent)) * acos(cos_n);
 
 		uint occluded_sectors = 0u;
+		uint slice_seed = pixel_seed ^ (uint(slice) * 0xC2B2AE35u);
 		float sampled_side = 1.0;
 		if (!bidirectional) {
-			float side_noise = fract(jitter + float(slice) * 0.7548776662466927);
+			float side_noise = vb_random(upos, slice_seed ^ 0x27D4EB2Fu);
 			sampled_side = side_noise < 0.5 ? -1.0 : 1.0;
 		}
-		float radial_jitter = fract(jitter + float(slice) * 0.61803398875);
+		float radial_jitter = vb_random(upos, slice_seed ^ 0x165667B1u);
 		for (int step = 0; step < 6; step++) {
 			if (step >= step_count) {
 				break;
