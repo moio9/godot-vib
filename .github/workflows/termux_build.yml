@@ -21,8 +21,7 @@ on:
   push:
     branches:
       - "4.7"
-      - "sync/4.7.2"
-      - "opt/renderer-batch2"
+      - "renderer-batch2-stable"
     paths:
       - "core/**"
       - "drivers/**"
@@ -70,7 +69,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
 
-      - name: Verify repaired Mesh Blend output contract
+      - name: Verify renderer and SSAO contracts
         shell: bash
         run: |
           set -euxo pipefail
@@ -81,6 +80,7 @@ jobs:
           shader_header = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h").read_text(encoding="utf-8")
           shader_cpp = Path("servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp").read_text(encoding="utf-8")
           renderer = Path("servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp").read_text(encoding="utf-8")
+          ssao = Path("servers/rendering/renderer_rd/shaders/effects/ssao.glsl").read_text(encoding="utf-8")
 
           assert shader.count("layout(location = 3) out uint frag_mesh_blend_aux;") == 1
           assert "#ifdef MESH_BLEND_MAIN_PASS_OUTPUT\nlayout(location = 3) out uint frag_mesh_blend_aux;\n#endif" in shader
@@ -91,6 +91,14 @@ jobs:
           assert "const uint32_t color_attachment_count = 4;" in shader_cpp
           assert renderer.count("VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MESH_BLEND") == 8
           assert "transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MESH_BLEND);" in renderer
+
+          assert "INTELSSAO_MAIN_DISK_SAMPLE_COUNT" in ssao
+          assert "#define VB_SECTOR_COUNT 32u" in ssao
+          assert "vb_update_sectors" in ssao
+          assert "delta_back = delta_pos - p_view_dir * p_thickness" in ssao
+          assert "bidirectional = params.flags.x > 1.5" in ssao
+          for bad in ("GT-VBAO implementation", "integrate_slice(", "Simplified GTAO", "This is not quite right"):
+              assert bad not in ssao
           PY
           git diff --check
 
@@ -123,7 +131,7 @@ jobs:
           sed -i -E "s/^TERMUX_PKG_SHA256=.*/TERMUX_PKG_SHA256=${SOURCE_SHA256}/" "$RECIPE"
           sed -i -E 's/^TERMUX_PKG_AUTO_UPDATE=.*/TERMUX_PKG_AUTO_UPDATE=false/' "$RECIPE"
           sed -i '/^TERMUX_PKG_REVISION=/d' "$RECIPE"
-          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=102" "$RECIPE"
+          sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=103" "$RECIPE"
           sed -i '/^TERMUX_PKG_LICENSE_FILE=/d' "$RECIPE"
           sed -i '/^TERMUX_PKG_LICENSE=/a TERMUX_PKG_LICENSE_FILE="LICENSE.txt"' "$RECIPE"
 
@@ -175,4 +183,4 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-# Rebuild marker: MSAA opaque attachment contract repair, revision 102
+# Rebuild marker: SSAO repair + MSAA opaque attachment contract, revision 103
