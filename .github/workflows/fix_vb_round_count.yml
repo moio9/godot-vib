@@ -26,25 +26,27 @@ jobs:
           from pathlib import Path
           import re
 
-          p = Path('servers/rendering/renderer_rd/shaders/effects/ssao.glsl')
-          s = p.read_text(encoding='utf-8')
-          pattern = re.compile(r'uint vb_update_sectors\(float p_min_horizon, float p_max_horizon, uint p_mask\) \{.*?\n\}', re.S)
-          replacement = '''uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
-\tfloat lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);
-\tfloat hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);
-\tuint start = min(uint(lo * float(VB_SECTOR_COUNT)), VB_SECTOR_COUNT - 1u);
-\tuint count = uint(floor((hi - lo) * float(VB_SECTOR_COUNT) + 0.5));
-\tcount = min(count, VB_SECTOR_COUNT - start);
-\tif (count == 0u) {
-\t\treturn p_mask;
-\t}
-\tuint bits = count >= VB_SECTOR_COUNT ? 0xFFFFFFFFu : ((1u << count) - 1u);
-\treturn p_mask | (bits << start);
-}'''
+          p = Path("servers/rendering/renderer_rd/shaders/effects/ssao.glsl")
+          s = p.read_text(encoding="utf-8")
+          pattern = re.compile(r"uint vb_update_sectors\(float p_min_horizon, float p_max_horizon, uint p_mask\) \{.*?\n\}", re.S)
+          replacement = "\n".join([
+              "uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {",
+              "\tfloat lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);",
+              "\tfloat hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);",
+              "\tuint start = min(uint(lo * float(VB_SECTOR_COUNT)), VB_SECTOR_COUNT - 1u);",
+              "\tuint count = uint(floor((hi - lo) * float(VB_SECTOR_COUNT) + 0.5));",
+              "\tcount = min(count, VB_SECTOR_COUNT - start);",
+              "\tif (count == 0u) {",
+              "\t\treturn p_mask;",
+              "\t}",
+              "\tuint bits = count >= VB_SECTOR_COUNT ? 0xFFFFFFFFu : ((1u << count) - 1u);",
+              "\treturn p_mask | (bits << start);",
+              "}",
+          ])
           s2, n = pattern.subn(replacement, s, count=1)
           if n != 1:
-              raise RuntimeError(f'expected one vb_update_sectors, got {n}')
-          p.write_text(s2, encoding='utf-8')
+              raise RuntimeError(f"expected one vb_update_sectors, got {n}")
+          p.write_text(s2, encoding="utf-8")
           PY
           git diff --check
           grep -Fq 'uint count = uint(floor((hi - lo) * float(VB_SECTOR_COUNT) + 0.5));' servers/rendering/renderer_rd/shaders/effects/ssao.glsl
