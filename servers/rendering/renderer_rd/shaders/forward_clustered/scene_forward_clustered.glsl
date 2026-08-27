@@ -876,6 +876,14 @@ void main() {
 
 #VERSION_DEFINES
 
+uint pack_visibility_aux(vec2 value) {
+	uint group_id = uint(round(clamp(value.y, 0.0, 1.0) * 255.0));
+	int weight_snorm = int(round(clamp(value.x, -1.0, 1.0) * 127.0));
+	uint weight_bits = uint(weight_snorm) & 0xFFu;
+	return (group_id << 8u) | weight_bits;
+}
+
+
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
 
@@ -1057,7 +1065,7 @@ layout(location = 4) out float depth_output_buffer;
 #elif defined(MODE_RENDER_VISIBILITY)
 layout(location = 0) out uvec4 visibility_id_output;
 #ifndef MODE_RENDER_VISIBILITY_NO_AUX
-layout(location = 1) out vec4 visibility_aux_output;
+layout(location = 1) out uint frag_visibility_aux;
 #endif
 #endif // MODE_RENDER_MATERIAL
 
@@ -1079,6 +1087,10 @@ layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface sc
 
 layout(location = 0) out vec4 frag_color;
 #endif // MODE_SEPARATE_SPECULAR
+
+#ifdef MESH_BLEND_MAIN_PASS_OUTPUT
+layout(location = 3) out uint frag_mesh_blend_aux;
+#endif
 
 #endif // RENDER DEPTH
 
@@ -1236,14 +1248,9 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef MODE_RENDER_VISIBILITY
 	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
 	visibility_id_output = uvec4(packed_ids, 0u, 0u);
-
-#ifndef MODE_RENDER_VISIBILITY_NO_AUX
-	float material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
-	float blend_id = sc_instance_hash(packed_ids.y);
-	vec2 aux = vec2(material_mesh_blend, blend_id);
-	visibility_aux_output = vec4(aux, 0.0, 0.0);
-#endif
+#ifdef MODE_RENDER_VISIBILITY_NO_AUX
 	return;
+#endif
 #endif
 
 #ifdef PREMUL_ALPHA_USED
@@ -1394,7 +1401,37 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 	{
+float mesh_blend_output = 0.0;
+uint mesh_blend_group_output = 0u;
+
 #CODE : FRAGMENT
+#ifdef MESH_BLEND_MAIN_PASS_OUTPUT
+vec2 mesh_blend_main_aux_value = vec2(
+        clamp(sc_get_material_mesh_blend(), -1.0, 1.0),
+        sc_instance_hash(instance_index + 1u));
+#ifdef MESH_BLEND_OUTPUT_USED
+	mesh_blend_main_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
+#endif
+#ifdef MESH_BLEND_GROUP_OUTPUT_USED
+	mesh_blend_main_aux_value.y = float(min(mesh_blend_group_output, 255u)) / 255.0;
+#endif
+	frag_mesh_blend_aux = pack_visibility_aux(mesh_blend_main_aux_value);
+#endif
+
+#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)
+	float material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+	float blend_id = sc_instance_hash(packed_ids.y);
+	vec2 mesh_blend_aux_value = vec2(material_mesh_blend, blend_id);
+#ifdef MESH_BLEND_OUTPUT_USED
+	mesh_blend_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
+#endif
+#ifdef MESH_BLEND_GROUP_OUTPUT_USED
+	mesh_blend_aux_value.y = float(min(mesh_blend_group_output, 255u)) / 255.0;
+#endif
+	frag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);
+	return;
+#endif
+
 	}
 
 	float roughness = roughness_highp;

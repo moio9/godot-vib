@@ -52,8 +52,20 @@ layout(push_constant, std430) uniform Params {
 
 layout(set = 1, binding = 0) uniform sampler2D source_color;
 layout(set = 1, binding = 1) uniform sampler2D source_depth;
-layout(set = 1, binding = 2) uniform sampler2D mask_tex;   // .x = id, .y = material_scale
+layout(set = 1, binding = 2) uniform usampler2D mask_tex;   // .x = id, .y = material_scale
 layout(set = 1, binding = 3) uniform usampler2D edge_tex;
+
+vec2 unpack_mesh_blend_mask(uint packed_value) {
+	uint group_id = (packed_value >> 8u) & 0xFFu;
+	uint weight_bits = packed_value & 0xFFu;
+	int weight_snorm = weight_bits >= 128u ? int(weight_bits) - 256 : int(weight_bits);
+	float weight = clamp(float(weight_snorm) / 127.0, -1.0, 1.0);
+	return vec2(float(group_id), weight);
+}
+
+uint unpack_mesh_blend_group(uint packed_value) {
+	return (packed_value >> 8u) & 0xFFu;
+}
 
 vec3 reconstruct_position(vec2 uv, float depth) {
 	vec4 ndc = vec4(uv * 2.0 - 1.0, depth, 1.0);
@@ -71,8 +83,9 @@ void main() {
 	vec2 resolution_rcp = vec2(1.0) / vec2(resolution);
 	vec2 pixel_uv = (vec2(pixel) + 0.5) * resolution_rcp;
 
-	vec2 mask_value = texelFetch(mask_tex, pixel, 0).xy;
-	float current_id = mask_value.x;
+	uint mask_value_packed = texelFetch(mask_tex, pixel, 0).x;
+	vec2 mask_value = unpack_mesh_blend_mask(mask_value_packed);
+	uint current_id = uint(mask_value.x);
 
 	if (current_id == 0.0) {
 		frag_color = texelFetch(source_color, pixel, 0);
@@ -80,14 +93,15 @@ void main() {
 	}
 
 	uvec2 edge_coord_u = texelFetch(edge_tex, pixel, 0).xy;
-	ivec2 edge_coord = ivec2(edge_coord_u);
-	if (edge_coord == ivec2(0)) {
+	if (all(equal(edge_coord_u, uvec2(0u)))) {
 		frag_color = texelFetch(source_color, pixel, 0);
 		return;
 	}
+	ivec2 edge_coord = ivec2(edge_coord_u) - ivec2(1);
 
-	vec2 edge_mask = texelFetch(mask_tex, edge_coord, 0).xy;
-	float edge_id = edge_mask.x;
+	uint edge_mask_packed = texelFetch(mask_tex, edge_coord, 0).x;
+	vec2 edge_mask = unpack_mesh_blend_mask(edge_mask_packed);
+	uint edge_id = uint(edge_mask.x);
 	if (edge_id == 0.0 || edge_id == current_id) {
 		frag_color = texelFetch(source_color, pixel, 0);
 		return;
@@ -122,7 +136,7 @@ void main() {
 	vec4 gather_r = textureGather(source_color, seam_uv, 0);
 	vec4 gather_g = textureGather(source_color, seam_uv, 1);
 	vec4 gather_b = textureGather(source_color, seam_uv, 2);
-	vec4 gather_mask = textureGather(mask_tex, seam_uv, 0);
+	uvec4 gather_mask = textureGather(mask_tex, seam_uv, 0);
 	vec4 gather_depth = textureGather(source_depth, seam_uv, 0);
 
 	float depth_current = texelFetch(source_depth, pixel, 0).r;
@@ -135,7 +149,7 @@ void main() {
 	float dweight = 0.0;
 
 	for (int i = 0; i < 4; i++) {
-		float sample_id = gather_mask[i];
+		uint sample_id = unpack_mesh_blend_group(gather_mask[i]);
 		if (sample_id != current_id && sample_id == edge_id) {
 			vec3 sample_pos = reconstruct_position(seam_uv, gather_depth[i]);
 			float diff = length(sample_pos - current_pos);

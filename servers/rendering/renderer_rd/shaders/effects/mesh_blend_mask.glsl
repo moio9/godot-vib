@@ -6,11 +6,10 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(rg32ui, set = 0, binding = 0) uniform readonly uimage2D vb_vis;
-layout(rg16f, set = 0, binding = 1) uniform readonly image2D vb_aux;
-layout(rg16f, set = 0, binding = 2) uniform writeonly image2D mesh_mask;
-layout(rg32ui, set = 0, binding = 3) uniform writeonly uimage2D mesh_edges;
-layout(r32f, set = 0, binding = 4) uniform readonly image2D mesh_depth;
+layout(r16ui, set = 0, binding = 0) uniform readonly uimage2D vb_aux;
+// Edge coordinates are stored as coord + 1 in RG16UI; zero is the invalid sentinel.
+layout(rg16ui, set = 0, binding = 1) uniform writeonly uimage2D mesh_edges;
+layout(set = 0, binding = 2) uniform sampler2D mesh_depth;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 resolution;
@@ -41,12 +40,18 @@ const ivec2 neighbor_offsets[8] = ivec2[8](
 		ivec2(1, -1),
 		ivec2(1, 1));
 
+vec2 unpack_visibility_aux(uint packed_value) {
+	uint group_id = (packed_value >> 8u) & 0xFFu;
+	uint weight_bits = packed_value & 0xFFu;
+	int weight_snorm = weight_bits >= 128u ? int(weight_bits) - 256 : int(weight_bits);
+	float weight = clamp(float(weight_snorm) / 127.0, -1.0, 1.0);
+	return vec2(float(group_id) / 255.0, weight);
+}
+
 void main() {
 	ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 resolution = params.resolution;
-	if (any(greaterThanEqual(pixel, resolution))) {
-		return;
-	}
+	bool pixel_in_bounds = all(lessThan(pixel, resolution));
 
 	ivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * THREADCOUNT - ivec2(TILE_BORDER);
 	ivec2 local_id = ivec2(gl_LocalInvocationID.xy);
@@ -56,14 +61,13 @@ void main() {
 			ivec2 sample_pixel = clamp(tile_origin + ivec2(x, y), ivec2(0), resolution - ivec2(1));
 			vec2 value = vec2(0.0);
 
-	uvec4 ids = imageLoad(vb_vis, sample_pixel);
-	vec2 aux = imageLoad(vb_aux, sample_pixel).xy;
-	float depth_value = imageLoad(mesh_depth, sample_pixel).x;
+	vec2 aux = unpack_visibility_aux(imageLoad(vb_aux, sample_pixel).x);
+	float depth_value = texelFetch(mesh_depth, sample_pixel, 0).x;
 
-	if (ids.x != 0u) {
-		float raw_weight = aux.x;
+	float id_quantized = aux.x;
+	if (id_quantized > 0.0) {
+		float raw_weight = aux.y;
 		float weight = min(raw_weight, 1.0);
-		float id_quantized = floor(aux.y * 255.0 + 0.5) / 255.0;
 		value = vec2(id_quantized, weight);
 	}
 
@@ -75,11 +79,14 @@ void main() {
 
 	barrier();
 
+	if (!pixel_in_bounds) {
+		return;
+	}
+
 	ivec2 local_pixel = local_id + ivec2(TILE_BORDER);
 	int current_index = coord_to_index(local_pixel);
 	vec2 current = cached_mask[current_index];
 	float current_depth = cached_depth[current_index];
-	imageStore(mesh_mask, pixel, vec4(current, 0.0, 0.0));
 
 	float current_id = current.x;
 	if (current_id <= 0.0) {
@@ -106,7 +113,7 @@ void main() {
 		}
 
 		ivec2 neighbor_pixel = clamp(pixel + neighbor_offsets[i], ivec2(0), resolution - ivec2(1));
-		edge_store.xy = uvec2(neighbor_pixel);
+		edge_store.xy = uvec2(neighbor_pixel + ivec2(1));
 		break;
 	}
 

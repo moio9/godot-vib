@@ -1269,6 +1269,9 @@ void main() {
 #endif
 
 	{
+float mesh_blend_output = 0.0;
+uint mesh_blend_group_output = 0u;
+
 #CODE : FRAGMENT
 	}
 

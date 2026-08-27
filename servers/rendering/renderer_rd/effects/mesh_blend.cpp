@@ -96,7 +96,7 @@ void MeshBlend::update_camera_data(const CameraData &p_data) {
 	RD::get_singleton()->buffer_update(camera_ubo, 0, sizeof(CameraData), &p_data);
 }
 
-void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_mask, RID p_edge_dest, const Size2i &p_size, float p_depth_tolerance, float p_neighbor_blend) {
+void MeshBlend::generate_mask(RID p_vb_aux, RID p_vb_depth, RID p_edge_dest, const Size2i &p_size, float p_depth_tolerance, float p_neighbor_blend) {
 	if (!mask_pipeline.is_valid()) {
 		return;
 	}
@@ -107,18 +107,19 @@ void MeshBlend::generate_mask(RID p_vb_vis, RID p_vb_aux, RID p_vb_depth, RID p_
 
 	UniformSetCacheRD *uniform_cache = UniformSetCacheRD::get_singleton();
 	ERR_FAIL_NULL(uniform_cache);
+	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+	ERR_FAIL_NULL(material_storage);
+	RID sampler_nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
 
 	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
 	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, mask_pipeline);
 
 	RID shader_rid = mask_shader.version_get_shader(mask_shader_version, 0);
-	RD::Uniform u_vis(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ p_vb_vis }));
-	RD::Uniform u_aux(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ p_vb_aux }));
-	RD::Uniform u_mask(RD::UNIFORM_TYPE_IMAGE, 2, Vector<RID>({ p_mask }));
-	RD::Uniform u_edge(RD::UNIFORM_TYPE_IMAGE, 3, Vector<RID>({ p_edge_dest }));
-	RD::Uniform u_depth(RD::UNIFORM_TYPE_IMAGE, 4, Vector<RID>({ p_vb_depth }));
+	RD::Uniform u_aux(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ p_vb_aux }));
+	RD::Uniform u_edge(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ p_edge_dest }));
+	RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ sampler_nearest, p_vb_depth }));
 
-	RID uniform_set = uniform_cache->get_cache(shader_rid, 0, u_vis, u_aux, u_mask, u_edge, u_depth);
+	RID uniform_set = uniform_cache->get_cache(shader_rid, 0, u_aux, u_edge, u_depth);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set, 0);
 
 	MaskPushConstant push_constant;
@@ -183,7 +184,7 @@ void MeshBlend::blend(RID p_source_color, RID p_depth, RID p_mask, RID p_edges, 
 	RD::Uniform u_camera(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, camera_ubo);
 	RD::Uniform u_color(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ sampler_linear, p_source_color }));
 	RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ sampler_linear, p_depth }));
-	RD::Uniform u_mask(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ sampler_linear, p_mask }));
+	RD::Uniform u_mask(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ sampler_nearest, p_mask }));
 	RD::Uniform u_edges(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ sampler_nearest, p_edges }));
 
 	RID set0 = uniform_cache->get_cache(shader_rid, 0, u_camera);
