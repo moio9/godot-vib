@@ -1,0 +1,116 @@
+name: Fix Visibility Bitmask math
+
+on:
+  push:
+    branches:
+      - renderer-batch2-stable
+    paths:
+      - .github/workflows/fix_vb_visibility_math.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: renderer-batch2-stable
+          fetch-depth: 0
+
+      - name: Repair Visibility Bitmask math
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('servers/rendering/renderer_rd/shaders/effects/ssao.glsl')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          # 1) Match the reference GTAO/VB slice orientation exactly.
+          old = 'float normal_angle = sign(dot(projected_normal, tangent)) * acos(cos_n);'
+          new = 'float normal_angle = -sign(dot(projected_normal, tangent)) * acos(cos_n);'
+          if old not in text:
+              raise RuntimeError('Expected VB normal-angle expression not found')
+          text = text.replace(old, new, 1)
+
+          old = 'float cos_n = clamp(dot(projected_normal, view_dir), 0.0, 1.0);'
+          new = 'float cos_n = clamp(dot(projected_normal, view_dir), -1.0, 1.0);'
+          if old not in text:
+              raise RuntimeError('Expected VB projected-normal cosine expression not found')
+          text = text.replace(old, new, 1)
+
+          # 2) Paper uses the round hit criterion: a sample must cover at least
+          # half a sector. The previous ceil rule made arbitrarily tiny intervals
+          # claim a full sector and caused quantized dark speckles/popping.
+          pattern = re.compile(
+              r'uint vb_update_sectors\(float p_min_horizon, float p_max_horizon, uint p_mask\) \{.*?\n\}',
+              re.S,
+          )
+          replacement = '''uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
+\tfloat lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);
+\tfloat hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);
+
+\t// Round hit criterion from the Visibility Bitmask paper: a sector is
+\t// activated only when at least half of it is covered by the interval.
+\tfloat scaled_lo = lo * float(VB_SECTOR_COUNT);
+\tfloat scaled_hi = hi * float(VB_SECTOR_COUNT);
+\tuint start = uint(clamp(floor(scaled_lo + 0.5), 0.0, float(VB_SECTOR_COUNT)));
+\tuint end = uint(clamp(floor(scaled_hi + 0.5), 0.0, float(VB_SECTOR_COUNT)));
+\tif (end <= start) {
+\t\treturn p_mask;
+\t}
+
+\tuint count = end - start;
+\tuint bits = count >= VB_SECTOR_COUNT ? 0xFFFFFFFFu : ((1u << count) - 1u);
+\treturn p_mask | (bits << start);
+}'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise RuntimeError('Could not replace vb_update_sectors exactly once')
+
+          # 3) Keep a small virtual thickness. 12% of radius was overly thick
+          # and made thin geometry look like broad occluders.
+          old = 'float thickness = max(0.01, viewspace_radius * 0.12);'
+          new = 'float thickness = max(0.01, viewspace_radius * 0.075);'
+          if old not in text:
+              raise RuntimeError('Expected VB thickness expression not found')
+          text = text.replace(old, new, 1)
+
+          # 4) Uni samples one side of each hemisphere slice. Compensate the
+          # Monte-Carlo estimate for the unsampled half; otherwise Uni is biased
+          # toward roughly half-strength AO and changes with slice orientation.
+          old = '\t\tvisibility_sum += 1.0 - float(bitCount(occluded_sectors)) / float(VB_SECTOR_COUNT);'
+          new = '''\t\tfloat occluded_fraction = float(bitCount(occluded_sectors)) / float(VB_SECTOR_COUNT);
+\t\tif (!bidirectional) {
+\t\t\toccluded_fraction = min(1.0, occluded_fraction * 2.0);
+\t\t}
+\t\tvisibility_sum += 1.0 - occluded_fraction;'''
+          if old not in text:
+              raise RuntimeError('Expected VB visibility accumulation not found')
+          text = text.replace(old, new, 1)
+
+          if text == original:
+              raise RuntimeError('No shader changes were made')
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -Fq 'float normal_angle = -sign(dot(projected_normal, tangent)) * acos(cos_n);' servers/rendering/renderer_rd/shaders/effects/ssao.glsl
+          grep -Fq 'floor(scaled_lo + 0.5)' servers/rendering/renderer_rd/shaders/effects/ssao.glsl
+          grep -Fq 'occluded_fraction = min(1.0, occluded_fraction * 2.0);' servers/rendering/renderer_rd/shaders/effects/ssao.glsl
+
+      - name: Commit repaired shader and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/fix_vb_visibility_math.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Fix Visibility Bitmask hemisphere and sector math'
+          git push origin HEAD:renderer-batch2-stable
