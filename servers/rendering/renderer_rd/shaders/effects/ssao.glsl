@@ -298,7 +298,7 @@ void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out 
 		projected_normal /= projected_len;
 		vec3 tangent = cross(view_dir, slice_normal);
 		float cos_n = clamp(dot(projected_normal, view_dir), 0.0, 1.0);
-		float normal_angle = -sign(dot(projected_normal, tangent)) * acos(cos_n);
+		float normal_angle = sign(dot(projected_normal, tangent)) * acos(cos_n);
 
 		uint occluded_sectors = 0u;
 		float radial_jitter = fract(jitter + float(slice) * 0.61803398875);
