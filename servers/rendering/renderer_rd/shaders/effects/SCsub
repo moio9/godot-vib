@@ -13,7 +13,7 @@ if "RD_GLSL" in env["BUILDERS"]:
     # make sure we recompile shaders if include files change
     env.Depends([f + ".gen.h" for f in glsl_files], gl_include_files + ["#glsl_builders.py"])
 
-    # compile shaders, including the Standard and Visibility Bitmask SSAO variants
+    # compile shaders, including the corrected Standard and Visibility Bitmask SSAO variants
     for glsl_file in glsl_files:
         env.RD_GLSL(glsl_file)
 
