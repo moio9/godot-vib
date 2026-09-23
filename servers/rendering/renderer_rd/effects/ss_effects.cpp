@@ -64,6 +64,7 @@ SSEffects::SSEffects() {
 		downsampler_modes.push_back("\n#define USE_HALF_BUFFERS\n");
 		downsampler_modes.push_back("\n#define USE_HALF_BUFFERS\n#define USE_HALF_SIZE\n");
 		downsampler_modes.push_back("\n#define GENERATE_MIPS\n#define GENERATE_FULL_MIPS");
+		downsampler_modes.push_back("\n#define GENERATE_MIPS\n#define GENERATE_TWO_MIPS\n");
 
 		ss_effects.downsample_shader.initialize(downsampler_modes);
 
@@ -630,6 +631,7 @@ void SSEffects::downsample_depth(Ref<RenderSceneBuffersRD> p_render_buffers, uin
 
 	bool use_half_size = false;
 	bool use_full_mips = false;
+	bool use_two_mips = false;
 
 	if (ssao_half_size && ssil_half_size) {
 		downsample_mode++;
@@ -639,10 +641,9 @@ void SSEffects::downsample_depth(Ref<RenderSceneBuffersRD> p_render_buffers, uin
 			downsample_mode = SS_EFFECTS_DOWNSAMPLE_FULL_MIPS;
 			use_full_mips = true;
 		} else {
-			// Only need the first two mipmaps, but the cost to generate the next two is trivial
-			// TODO investigate the benefit of a shader version to generate only 2 mips
-			downsample_mode = SS_EFFECTS_DOWNSAMPLE_MIPMAP;
+			downsample_mode = SS_EFFECTS_DOWNSAMPLE_TWO_MIPS;
 			use_mips = true;
+			use_two_mips = true;
 		}
 	}
 
@@ -661,7 +662,8 @@ void SSEffects::downsample_depth(Ref<RenderSceneBuffersRD> p_render_buffers, uin
 		// Note, use_full_mips is true if either SSAO or SSIL uses half size, but the other full size and we're using mips.
 		// That means we're filling all 5 levels.
 		// In this scenario `depth_index` will be 0.
-		for (int i = 0; i < (use_full_mips ? 4 : 3); i++) {
+		const int generated_mip_count = use_full_mips ? 4 : (use_two_mips ? 2 : 3);
+		for (int i = 0; i < generated_mip_count; i++) {
 			RID depth_mipmap = p_render_buffers->get_texture_slice(RB_SCOPE_SSDS, RB_LINEAR_DEPTH, p_view * 4, depth_index + i + 1, 4, 1);
 
 			if (depth_mipmap.is_null()) {

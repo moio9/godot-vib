@@ -323,6 +323,10 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 				shader_flags |= SHADER_COLOR_PASS_FLAG_MOTION_VECTORS;
 			}
 
+			if (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) {
+				shader_flags |= SHADER_COLOR_PASS_FLAG_MESH_BLEND;
+			}
+
 			if (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_LIGHTMAP) {
 				shader_flags |= SHADER_COLOR_PASS_FLAG_LIGHTMAP;
 			}
@@ -355,11 +359,13 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			"WIREFRAME:", p_pipeline_key.wireframe);
 #endif
 
-	// Color pass -> attachment 0: Color/Diffuse, attachment 1: Separate Specular, attachment 2: Motion Vectors
+	// Color pass -> attachment 0: Color/Diffuse, attachment 1: Separate Specular, attachment 2: Motion Vectors, attachment 3: Mesh Blend auxiliary/reserved.
+	// get_color_pass_fb() keeps all four color positions. With MSAA, Mesh Blend moves to the Visibility pass, so slot 3 is ATTACHMENT_UNUSED but remains part of the render pass.
 	RD::PipelineColorBlendState::Attachment blend_attachment = blend_mode_to_blend_attachment(BlendMode(blend_mode));
 	RD::PipelineColorBlendState blend_state_color_blend;
-	blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };
-	RD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(3);
+	blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };
+	const uint32_t color_attachment_count = 4;
+	RD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(color_attachment_count);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness = RD::PipelineColorBlendState::create_disabled(1);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness_giprobe = RD::PipelineColorBlendState::create_disabled(2);
 
@@ -686,6 +692,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 			"\n#define USE_LIGHTMAP\n", // SHADER_COLOR_PASS_FLAG_LIGHTMAP
 			"\n#define USE_MULTIVIEW\n", // SHADER_COLOR_PASS_FLAG_MULTIVIEW
 			"\n#define MOTION_VECTORS\n", // SHADER_COLOR_PASS_FLAG_MOTION_VECTORS
+			"\n#define MESH_BLEND_MAIN_PASS_OUTPUT\n", // SHADER_COLOR_PASS_FLAG_MESH_BLEND
 		};
 
 		for (int i = 0; i < SHADER_COLOR_PASS_FLAG_COUNT; i++) {
@@ -792,7 +799,10 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["AO"] = "ao";
 		actions.renames["AO_LIGHT_AFFECT"] = "ao_light_affect";
 		actions.renames["MICRO_SHADOWS"] = "micro_shadows";
-		actions.renames["MESH_BLEND"] = "mesh_blend_value";
+		actions.renames["MESH_BLEND"] = "mesh_blend_output";
+		actions.renames["MESH_BLEND_GROUP"] = "mesh_blend_group_output";
+		actions.usage_defines["MESH_BLEND"] = "#define MESH_BLEND_OUTPUT_USED\n";
+		actions.usage_defines["MESH_BLEND_GROUP"] = "#define MESH_BLEND_GROUP_OUTPUT_USED\n";
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["POINT_COORD"] = "point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";

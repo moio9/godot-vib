@@ -15,7 +15,7 @@
 // File changes (yyyy-mm-dd)
 // 2016-09-07: filip.strugar@intel.com: first commit
 // 2020-12-05: clayjohn: convert to Vulkan and Godot
-// 2025-12-16: GT-VBAO implementation
+// 2026-08-27: add isolated visibility-bitmask AO modes while preserving standard Godot SSAO
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[compute]
@@ -24,11 +24,47 @@
 
 #VERSION_DEFINES
 
+#define INTELSSAO_MAIN_DISK_SAMPLE_COUNT (32)
+const vec4 sample_pattern[INTELSSAO_MAIN_DISK_SAMPLE_COUNT] = {
+	vec4(0.78488064, 0.56661671, 1.500000, -0.126083), vec4(0.26022232, -0.29575172, 1.500000, -1.064030), vec4(0.10459357, 0.08372527, 1.110000, -2.730563), vec4(-0.68286800, 0.04963045, 1.090000, -0.498827),
+	vec4(-0.13570161, -0.64190155, 1.250000, -0.532765), vec4(-0.26193795, -0.08205118, 0.670000, -1.783245), vec4(-0.61177456, 0.66664219, 0.710000, -0.044234), vec4(0.43675563, 0.25119025, 0.610000, -1.167283),
+	vec4(0.07884444, 0.86618668, 0.640000, -0.459002), vec4(-0.12790935, -0.29869005, 0.600000, -1.729424), vec4(-0.04031125, 0.02413622, 0.600000, -4.792042), vec4(0.16201244, -0.52851415, 0.790000, -1.067055),
+	vec4(-0.70991218, 0.47301072, 0.640000, -0.335236), vec4(0.03277707, -0.22349690, 0.600000, -1.982384), vec4(0.68921727, 0.36800742, 0.630000, -0.266718), vec4(0.29251814, 0.37775412, 0.610000, -1.422520),
+	vec4(-0.12224089, 0.96582592, 0.600000, -0.426142), vec4(0.11071457, -0.16131058, 0.600000, -2.165947), vec4(0.46562141, -0.59747696, 0.600000, -0.189760), vec4(-0.51548797, 0.11804193, 0.600000, -1.246800),
+	vec4(0.89141309, -0.42090443, 0.600000, 0.028192), vec4(-0.32402530, -0.01591529, 0.600000, -1.543018), vec4(0.60771245, 0.41635221, 0.600000, -0.605411), vec4(0.02379565, -0.08239821, 0.600000, -3.809046),
+	vec4(0.48951152, -0.23657045, 0.600000, -1.189011), vec4(-0.17611565, -0.81696892, 0.600000, -0.513724), vec4(-0.33930185, -0.20732205, 0.600000, -1.698047), vec4(-0.91974425, 0.05403209, 0.600000, 0.062246),
+	vec4(-0.15064627, -0.14949332, 0.600000, -1.896062), vec4(0.53180975, -0.35210401, 0.600000, -0.758838), vec4(0.41487166, 0.81442589, 0.600000, -0.505648), vec4(-0.24106961, -0.32721516, 0.600000, -1.665244)
+};
+
+const int num_taps[5] = { 3, 5, 12, 0, 0 };
+
+#define SSAO_TILT_SAMPLES_ENABLE_AT_QUALITY_PRESET (99)
+#define SSAO_TILT_SAMPLES_AMOUNT (0.4)
+#define SSAO_HALOING_REDUCTION_ENABLE_AT_QUALITY_PRESET (1)
+#define SSAO_HALOING_REDUCTION_AMOUNT (0.6)
+#define SSAO_NORMAL_BASED_EDGES_ENABLE_AT_QUALITY_PRESET (2)
+#define SSAO_NORMAL_BASED_EDGES_DOT_THRESHOLD (0.5)
+#define SSAO_DETAIL_AO_ENABLE_AT_QUALITY_PRESET (1)
+#define SSAO_DEPTH_MIPS_ENABLE_AT_QUALITY_PRESET (2)
+#define SSAO_DEPTH_MIPS_GLOBAL_OFFSET (-4.3)
+#define SSAO_DEPTH_BASED_EDGES_ENABLE_AT_QUALITY_PRESET (1)
+#define SSAO_REDUCE_RADIUS_NEAR_SCREEN_BORDER_ENABLE_AT_QUALITY_PRESET (1)
+
+#define SSAO_MAX_TAPS 32
+#define SSAO_ADAPTIVE_TAP_BASE_COUNT 5
+#define SSAO_ADAPTIVE_TAP_FLEXIBLE_COUNT (SSAO_MAX_TAPS - SSAO_ADAPTIVE_TAP_BASE_COUNT)
+#define SSAO_DEPTH_MIP_LEVELS 4
+
+#define VB_SECTOR_COUNT 32u
+const float VB_PI = 3.14159265358979323846;
+const float VB_HALF_PI = 1.57079632679489661923;
+const float VB_TAU = 6.28318530717958647692;
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform sampler2DArray source_depth_mipmaps;
 layout(rgba8, set = 0, binding = 1) uniform restrict readonly image2D source_normal;
-layout(set = 0, binding = 2) uniform Constants { //get into a lower set
+layout(set = 0, binding = 2) uniform Constants {
 	vec4 rotation_matrices[20];
 }
 constants;
@@ -44,7 +80,7 @@ counter;
 
 layout(rg8, set = 2, binding = 0) uniform restrict writeonly image2D dest_image;
 
-// This push_constant is full - 128 bytes - if you need to add more data, consider adding to the uniform buffer instead
+// Keep this at 128 bytes. flags occupies the exact two-float padding slot used by upstream Godot.
 layout(push_constant, std430) uniform Params {
 	ivec2 screen_size;
 	int pass;
@@ -57,7 +93,7 @@ layout(push_constant, std430) uniform Params {
 	vec2 NDC_to_view_mul;
 	vec2 NDC_to_view_add;
 
-	vec2 flags; // x: VB mode (0 off, 1 uni, 2 bi), y: unused
+	vec2 flags; // x: 0 Standard, 1 Visibility Bitmask Uni, 2 Visibility Bitmask Bi.
 	vec2 half_screen_pixel_size_x025;
 
 	float radius;
@@ -80,7 +116,6 @@ layout(push_constant, std430) uniform Params {
 }
 params;
 
-// packing/unpacking for edges; 2 bits per edge mean 4 gradient values (0, 0.33, 0.66, 1) for smoother transitions!
 float pack_edges(vec4 p_edgesLRTB) {
 	p_edgesLRTB = round(clamp(p_edgesLRTB, 0.0, 1.0) * 3.05);
 	return dot(p_edgesLRTB, vec4(64.0 / 255.0, 16.0 / 255.0, 4.0 / 255.0, 1.0 / 255.0));
@@ -92,6 +127,21 @@ vec3 NDC_to_view_space(vec2 p_pos, float p_viewspace_depth) {
 	} else {
 		return vec3((params.NDC_to_view_mul * p_pos.xy + params.NDC_to_view_add) * p_viewspace_depth, p_viewspace_depth);
 	}
+}
+
+void calculate_radius_parameters(const float p_pix_center_length, const vec2 p_pixel_size_at_center, out float r_lookup_radius, out float r_radius, out float r_fallof_sq) {
+	r_radius = params.radius;
+	const float too_close_limit = clamp(p_pix_center_length * params.inv_radius_near_limit, 0.0, 1.0) * 0.8 + 0.2;
+	r_radius *= too_close_limit;
+	r_lookup_radius = (0.85 * r_radius) / p_pixel_size_at_center.x;
+	r_fallof_sq = -1.0 / (r_radius * r_radius);
+}
+
+vec4 calculate_edges(const float p_center_z, const float p_left_z, const float p_right_z, const float p_top_z, const float p_bottom_z) {
+	vec4 edgesLRTB = vec4(p_left_z, p_right_z, p_top_z, p_bottom_z) - p_center_z;
+	vec4 edgesLRTB_slope_adjusted = edgesLRTB + edgesLRTB.yxwz;
+	edgesLRTB = min(abs(edgesLRTB), abs(edgesLRTB_slope_adjusted));
+	return clamp((1.3 - edgesLRTB / (p_center_z * 0.040)), 0.0, 1.0);
 }
 
 vec3 load_normal(ivec2 p_pos) {
@@ -106,222 +156,83 @@ vec3 load_normal(ivec2 p_pos, ivec2 p_offset) {
 	return encoded_normal;
 }
 
-vec4 calculate_edges(const float p_center_z, const float p_left_z, const float p_right_z, const float p_top_z, const float p_bottom_z) {
-	// slope-sensitive depth-based edge detection
-	vec4 edgesLRTB = vec4(p_left_z, p_right_z, p_top_z, p_bottom_z) - p_center_z;
-	vec4 edgesLRTB_slope_adjusted = edgesLRTB + edgesLRTB.yxwz;
-	edgesLRTB = min(abs(edgesLRTB), abs(edgesLRTB_slope_adjusted));
-	return clamp((1.3 - edgesLRTB / (p_center_z * 0.040)), 0.0, 1.0);
+// Visibility Bitmask AO follows Therrien et al.: each slice stores 32 angular sectors and
+// each depth sample contributes a finite front/back interval obtained from a constant thickness.
+// Unlike the old experimental shader, this does not use an approximate maximum-horizon integral.
+uint vb_update_sectors(float p_min_horizon, float p_max_horizon, uint p_mask) {
+	float lo = clamp(min(p_min_horizon, p_max_horizon), 0.0, 1.0);
+	float hi = clamp(max(p_min_horizon, p_max_horizon), 0.0, 1.0);
+	uint start = min(uint(lo * float(VB_SECTOR_COUNT)), VB_SECTOR_COUNT - 1u);
+	uint count = uint(ceil((hi - lo) * float(VB_SECTOR_COUNT)));
+	count = min(count, VB_SECTOR_COUNT - start);
+	if (count == 0u) {
+		return p_mask;
+	}
+	uint bits = count >= VB_SECTOR_COUNT ? 0xFFFFFFFFu : ((1u << count) - 1u);
+	return p_mask | (bits << start);
 }
 
-// Interleaved Gradient Noise for jitter
-float interleaved_gradient_noise(vec2 n) {
-	return fract(52.9829189 * fract(0.06711056 * n.x + 0.00583715 * n.y));
+uint vb_hash(uint p_value) {
+	p_value ^= p_value >> 16;
+	p_value *= 0x7FEB352Du;
+	p_value ^= p_value >> 15;
+	p_value *= 0x846CA68Bu;
+	p_value ^= p_value >> 16;
+	return p_value;
 }
 
-// Slice-based horizon search (GTAO)
-void integrate_slice(vec2 direction, float viewspace_radius, vec2 screen_uv, vec3 view_pos, vec3 view_normal, float pixels_per_meter, int num_steps, inout float visibility, inout uint mask_bits, bool bi_directional) {
-	vec2 dir_uv = direction * params.half_screen_pixel_size * 2.0; // Direction in UV space (normalized roughly)
-	
-	// Project direction to screen pixels for stepping
-	// We want 'viewspace_radius' meters in view space projected to pixels.
-	// Approximate pixel length of the radius:
-	float pixel_radius = viewspace_radius * pixels_per_meter;
-	
-	// Clamp pixel radius to avoid extreme performance hits or cache trashing
-	pixel_radius = min(pixel_radius, 256.0); 
-	if (pixel_radius < 1.0) return;
-
-	// Step size
-	float step_size_px = pixel_radius / float(num_steps + 1.0);
-	vec2 step_vec = direction * step_size_px * params.half_screen_pixel_size * 2.0; // UV step
-
-	// Jitter starting position
-	// We already jittered the angle, but we can also jitter the start distance slightly if needed.
-	// For now, start at 1 step.
-	vec2 current_uv = screen_uv + step_vec;
-
-	// Horizon tracking
-	float max_horizon_cos = -1.0;
-	
-	// View direction (camera to pixel) - assumed to be (0,0,1) in view space roughly for horizon calc, 
-	// but strictly it's normalize(view_pos).
-	vec3 V = normalize(-view_pos);
-	
-	// Project view normal onto the slice plane
-	// Slice plane is defined by V and the direction 'direction' (in screen/view XY).
-	// We simplify: just check elevation angle in the slice 2D plane defined by (direction, view_z).
-	
-	// Slice direction in view space (approximate)
-	vec3 slice_dir_view = normalize(vec3(direction, 0.0)); // Z is 0 in view XY plane
-	
-	// Projected normal into slice plane
-	vec3 plane_normal = cross(slice_dir_view, vec3(0.0, 0.0, 1.0));
-	vec3 projected_normal = view_normal - dot(view_normal, plane_normal) * plane_normal;
-	float projected_normal_len = length(projected_normal);
-	
-	float n_angle = 0.0;
-	if (projected_normal_len > 0.001) {
-		// Calculate angle of normal in slice plane relative to slice direction
-		// n_angle is the angle between view_normal and the slice direction
-		// But usually GTAO uses the angle between the normal and the view vector.
-		// Let's use the standard "horizon angle" approach.
-		// Horizon angle 'h' is angle from slice vector.
-	}
-	
-	// Cosine of the angle between normal and view vector
-	float cos_n = dot(view_normal, V);
-	// Sine of that angle
-	float sin_n = sqrt(max(0.0, 1.0 - cos_n * cos_n));
-	
-	// Projected normal angle 'gamma' (n_angle) in the formula
-	// gamma = acos(dot(projected_normal, V) / len) ...
-	// Simplify: we just track the max elevation angle of the horizon.
-	
-	float h_angle_max = -1.0; // In cosine space, -1 is 180 deg (behind). Horizon is usually < 90 deg.
-	
-	for (int i = 0; i < num_steps; i++) {
-		// Sample depth
-		float sample_depth = textureLod(source_depth_mipmaps, vec3(current_uv, params.pass), 0.0).x;
-		vec3 sample_pos = NDC_to_view_space(current_uv, sample_depth);
-		
-		vec3 diff = sample_pos - view_pos;
-		float dist_sq = dot(diff, diff);
-		
-		// Horizon vector
-		vec3 H = normalize(diff);
-		
-		// Falloff
-		float falloff = max(0.0, 1.0 - dist_sq * params.neg_inv_radius * -params.neg_inv_radius); // approx falloff_sq logic
-		
-		// Horizon angle cosine
-		float h_cos = dot(H, V); // Angle with view vector?
-		// No, standard GTAO measures angle from the tangent plane or just strictly elevation.
-		
-		// Let's use the vector projection.
-		// We want angle between H and the view plane, or H and View Vector.
-		// Using H dot V gives angle relative to view line.
-		
-		// We want to maximize slope.
-		// Slope = diff.z / length(diff.xy).
-		// But in view space, negative Z is forward.
-		// diff.z is negative if sample is further.
-		
-		// Simplified GTAO:
-		// We track the sample with the "highest" elevation seen from P.
-		// Elevation can be defined by dot(H, V).
-		// But we also need to account for the Normal.
-		// Vis = integrate (cos(h) * sin(h)) dh?
-		
-		// Standard integration: 0.25 * ( -cos(2 * h) + cos(2 * n) + 2 * h * sin(2 * n) ) ... complicated.
-		
-		// Let's use the approximation: Visibility = falloff * clamp(dot(N, H), 0, 1).
-		// But we only take the MAX horizon.
-		
-		if (dist_sq < 0.0001) { current_uv += step_vec; continue; }
-
-		// Check if this sample is "above" the current horizon
-		// In view space, "above" means closer to the camera relative to the distance?
-		// No, it means the angle is larger.
-		// We project H onto the slice plane (direction, V).
-		
-		float h_val = dot(H, view_normal);
-		
-		// If this sample blocks more light...
-		// In GTAO we want the maximum angle of occlusion.
-		// Angle theta between view vector and horizon vector.
-		// theta = acos(dot(V, H)).
-		// But we need signed angle?
-		
-		// Let's stick to a simpler "Ambient Occlusion" heuristic compatible with the "Intel" loop logic but sliced.
-		// Or proper GTAO. Proper GTAO:
-		// h = atan(diff.z / length(diff.xy)).
-		// But we need to handle the Normal.
-		
-		// Let's use the "Horizon" angle approach relative to the slice direction.
-		// slice_dist = dot(diff.xy, direction).
-		// angle = atan(diff.z, slice_dist).
-		// max_angle = max(max_angle, angle).
-		
-		float dist_xy = length(diff.xy);
-		float angle = atan(diff.z, dist_xy); // diff.z is positive for objects closer to camera relative to center
-		
-		if (angle > h_angle_max) {
-			h_angle_max = angle;
-		}
-		
-		current_uv += step_vec;
-	}
-	
-	// Calculate visibility from max horizon angle
-	// Vis = integral from h_angle_max to 3.14159265359/2 of (n dot omega) d_omega
-	// In 2D slice: integrate cos(theta - gamma) d_theta
-	// Simplified: Vis = 0.25 * (cos(h_angle_max - n_angle) ...)
-	
-	// Let's use a robust approximation:
-	// Projected normal angle in this slice
-	vec3 slice_axis = vec3(direction, 0.0);
-	vec3 projected_n = view_normal - dot(view_normal, vec3(0,0,1)) * vec3(0,0,1); // Projects to XY
-	// This is not quite right. We need N projected onto the plane defined by V and Direction.
-	
-	// Let's go with the simpler "Bitmask" gathering approach which relies on sampling directions.
-	// But the user requested "GT-VBAO".
-	// The core of GTAO is the horizon search.
-	
-	// Normal angle in slice plane
-	float n_proj_len = length(vec2(dot(view_normal.xy, direction), view_normal.z));
-	float n_angle_slice = atan(view_normal.z, dot(view_normal.xy, direction)); // Angle of normal in slice
-	// Note: view_normal.z is usually negative (facing camera).
-	// We want the angle with the view plane?
-	
-	// Let's use the standard "GTAO" formula approx:
-	// h_angle_max is the horizon angle from the view vector (forward).
-	// We clamp it to be at least the surface tangent.
-	
-	h_angle_max = clamp(h_angle_max, n_angle_slice - 3.14159265359/2.0, n_angle_slice + 3.14159265359/2.0);
-	
-	// Inner integral:
-	// \int_{h_{max}}^{\pi/2} \cos(\theta - n_{slice}) d\theta
-	// = [\sin(\theta - n_{slice})]_{h_{max}}^{\pi/2}
-	// = \sin(\pi/2 - n_{slice}) - \sin(h_{max} - n_{slice})
-	// = \cos(n_{slice}) - \sin(h_{max} - n_{slice})
-	
-	// But we need to normalize this?
-	// Full hemisphere visibility is 1.
-	
-	float vis_slice = 0.25 * (cos(n_angle_slice) - sin(h_angle_max - n_angle_slice));
-	// Note: factor 0.25 is because we average 2 directions? (left/right). 
-	// If this is unidirectional, we might need 0.5.
-	// We will accumulate and average later.
-	
-	// Falloff?
-	// We didn't apply falloff in the horizon search (usually GTAO doesn't, but limits radius).
-	// We can apply a global falloff.
-	
-	visibility += clamp(vis_slice, 0.0, 1.0);
-	
-	// Bitmask update
-	// Check if horizon is significantly above the surface tangent (plus small bias)
-	if (h_angle_max > n_angle_slice + 0.05) { // Threshold relative to surface
-		float dir_ang = atan(direction.y, direction.x);
-		float ang01 = dir_ang * 0.15915494 + 0.5;
-		uint bit = uint(clamp(floor(ang01 * 32.0), 0.0, 31.0));
-		mask_bits |= (1u << bit);
-	}
-	
-	// Bi-directional support handled by caller?
-	// If we do bi-directional in the caller, we call this twice.
-	// Or we can do it here.
+float vb_random(uvec2 p_pixel, uint p_seed) {
+	uint value = p_pixel.x * 0x9E3779B9u;
+	value ^= p_pixel.y * 0x85EBCA6Bu;
+	value ^= p_seed;
+	return float(vb_hash(value)) * (1.0 / 4294967296.0);
 }
 
-void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, out float r_weight, const vec2 p_pos, int p_quality_level, bool p_adaptive_base, const bool p_use_vb, const bool p_vb_bi, out uint r_mask) {
+int vb_step_count(int p_quality_level) {
+	return p_quality_level <= 0 ? 2 : (p_quality_level == 1 ? 3 : (p_quality_level == 2 ? 4 : 6));
+}
+
+int vb_slice_count(int p_quality_level, bool p_bidirectional) {
+	if (p_bidirectional) {
+		return p_quality_level <= 0 ? 1 : (p_quality_level == 1 ? 2 : (p_quality_level == 2 ? 3 : 4));
+	}
+	return p_quality_level <= 0 ? 2 : (p_quality_level == 1 ? 3 : (p_quality_level == 2 ? 4 : 6));
+}
+
+void vb_trace_sample(inout uint r_mask, const vec2 p_sample_uv, float p_mip_level, const vec3 p_center_pos, const vec3 p_view_dir, float p_normal_angle, float p_sampling_direction, float p_thickness, float p_radius) {
+	if (any(lessThan(p_sample_uv, vec2(0.0))) || any(greaterThan(p_sample_uv, vec2(1.0)))) {
+		return;
+	}
+
+	float sample_depth = textureLod(source_depth_mipmaps, vec3(p_sample_uv, params.pass), p_mip_level).x;
+	vec3 sample_pos = NDC_to_view_space(p_sample_uv, sample_depth);
+	vec3 delta_pos = sample_pos - p_center_pos;
+	float delta_len = length(delta_pos);
+	if (delta_len <= 0.0001 || delta_len > p_radius * 1.15) {
+		return;
+	}
+
+	vec3 delta_back = delta_pos - p_view_dir * p_thickness;
+	float back_len = length(delta_back);
+	if (back_len <= 0.0001) {
+		return;
+	}
+
+	vec2 front_back_horizon = acos(clamp(vec2(dot(delta_pos / delta_len, p_view_dir), dot(delta_back / back_len, p_view_dir)), vec2(-1.0), vec2(1.0)));
+	front_back_horizon = clamp(((-p_sampling_direction * front_back_horizon) - p_normal_angle + VB_HALF_PI) / VB_PI, vec2(0.0), vec2(1.0));
+	if (p_sampling_direction >= 0.0) {
+		front_back_horizon = front_back_horizon.yx;
+	}
+
+	r_mask = vb_update_sectors(front_back_horizon.x, front_back_horizon.y, r_mask);
+}
+
+void generate_visibility_bitmask(out float r_shadow_term, out vec4 r_edges, out float r_weight, const vec2 p_pos, int p_quality_level) {
 	vec2 pos_rounded = trunc(p_pos);
 	uvec2 upos = uvec2(pos_rounded);
 
-	// Fetch 4 depths for edge detection
 	vec4 valuesUL = textureGather(source_depth_mipmaps, vec3(pos_rounded * params.half_screen_pixel_size, params.pass));
 	vec4 valuesBR = textureGather(source_depth_mipmaps, vec3((pos_rounded + vec2(1.0)) * params.half_screen_pixel_size, params.pass));
-
 	float pix_z = valuesUL.y;
 	float pix_left_z = valuesUL.x;
 	float pix_top_z = valuesUL.z;
@@ -330,153 +241,334 @@ void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, o
 
 	vec2 normalized_screen_pos = pos_rounded * params.half_screen_pixel_size + params.half_screen_pixel_size_x025;
 	vec3 pix_center_pos = NDC_to_view_space(normalized_screen_pos, pix_z);
-
-	// Normal
 	uvec2 full_res_coord = upos * 2 * params.size_multiplier + params.pass_coord_offset.xy;
 	vec3 pixel_normal = load_normal(ivec2(full_res_coord));
-
-	const vec2 pixel_size_at_center = NDC_to_view_space(normalized_screen_pos.xy + params.half_screen_pixel_size, pix_center_pos.z).xy - pix_center_pos.xy;
+	vec2 pixel_size_at_center = NDC_to_view_space(normalized_screen_pos + params.half_screen_pixel_size, pix_center_pos.z).xy - pix_center_pos.xy;
 
 	float pixel_lookup_radius;
-	float fallof_sq;
 	float viewspace_radius;
-	// Calculate radius logic reused (it's good)
-	{
-		viewspace_radius = params.radius;
-		const float too_close_limit = clamp(length(pix_center_pos) * params.inv_radius_near_limit, 0.0, 1.0) * 0.8 + 0.2;
-		viewspace_radius *= too_close_limit;
-		pixel_lookup_radius = (0.85 * viewspace_radius) / pixel_size_at_center.x;
-		fallof_sq = -1.0 / (viewspace_radius * viewspace_radius);
+	float unused_falloff;
+	calculate_radius_parameters(length(pix_center_pos), pixel_size_at_center, pixel_lookup_radius, viewspace_radius, unused_falloff);
+	pixel_lookup_radius = max(pixel_lookup_radius, 1.0);
+	if (p_quality_level >= SSAO_REDUCE_RADIUS_NEAR_SCREEN_BORDER_ENABLE_AT_QUALITY_PRESET) {
+		float near_screen_border = min(min(normalized_screen_pos.x, 1.0 - normalized_screen_pos.x), min(normalized_screen_pos.y, 1.0 - normalized_screen_pos.y));
+		near_screen_border = clamp(10.0 * near_screen_border + 0.6, 0.0, 1.0);
+		pixel_lookup_radius *= near_screen_border;
 	}
 
-	// Edges
 	vec4 edgesLRTB = vec4(1.0);
-	if (!p_adaptive_base && (p_quality_level >= 1)) {
+	if (p_quality_level >= SSAO_DEPTH_BASED_EDGES_ENABLE_AT_QUALITY_PRESET) {
 		edgesLRTB = calculate_edges(pix_z, pix_left_z, pix_right_z, pix_top_z, pix_bottom_z);
 	}
-
-	// Normal edges (optional quality feature)
-	if (!p_adaptive_base && (p_quality_level >= 2)) {
-		// ... (keep existing normal edge logic if desired, or skip for perf. Let's skip to save instruction space for GTAO)
+	if (p_quality_level >= SSAO_NORMAL_BASED_EDGES_ENABLE_AT_QUALITY_PRESET) {
+		vec3 neighbour_normal_left = load_normal(ivec2(full_res_coord), ivec2(-2, 0));
+		vec3 neighbour_normal_right = load_normal(ivec2(full_res_coord), ivec2(2, 0));
+		vec3 neighbour_normal_top = load_normal(ivec2(full_res_coord), ivec2(0, -2));
+		vec3 neighbour_normal_bottom = load_normal(ivec2(full_res_coord), ivec2(0, 2));
+		const float dot_threshold = SSAO_NORMAL_BASED_EDGES_DOT_THRESHOLD;
+		edgesLRTB *= clamp(vec4(dot(pixel_normal, neighbour_normal_left), dot(pixel_normal, neighbour_normal_right), dot(pixel_normal, neighbour_normal_top), dot(pixel_normal, neighbour_normal_bottom)) + vec4(dot_threshold), 0.0, 1.0);
 	}
 
-	// GT-VBAO GATHER
-	float total_visibility = 0.0;
-	uint mask_bits = 0u;
-	
-	// Configuration based on quality
-	// Low: 1 slice, 2 directions (bi), 2 steps
-	// Med: 2 slices, 4 directions, 3 steps
-	// High: 3 slices, 6 directions, 4 steps
-	// Ultra: 4 slices, 8 directions, 6 steps
-	int num_slices = (p_quality_level == 0) ? 1 : ((p_quality_level == 1) ? 2 : ((p_quality_level == 2) ? 3 : 4));
-	int steps_per_slice = (p_quality_level == 0) ? 2 : ((p_quality_level == 1) ? 3 : ((p_quality_level == 2) ? 4 : 6));
-	
-	// Use Interleaved Gradient Noise for temporal/spatial jitter
-	float noise_val = interleaved_gradient_noise(vec2(gl_GlobalInvocationID.xy) + vec2(params.pass * 5.588));
-	float spatial_offset = noise_val;
-	
-	// Also use the rotation matrix for the "phase" to keep compatibility with the temporal filter's expectation?
-	// The C++ side feeds rotation matrices. We can use the first component as an angle offset.
-	// But IGN is better for GTAO.
-	
-	float pixels_per_meter = 1.0 / pixel_size_at_center.x; // approx
+	pix_center_pos *= 0.99;
+	vec3 view_dir = normalize(-pix_center_pos);
+	bool bidirectional = params.flags.x > 1.5;
+	int slice_count = vb_slice_count(p_quality_level, bidirectional);
+	int step_count = vb_step_count(p_quality_level);
+	float angle_span = VB_PI;
+	float thickness = max(0.01, viewspace_radius * 0.05);
 
-	for (int i = 0; i < num_slices; i++) {
-		float slice_angle = (float(i) + spatial_offset) * (3.14159265359 / float(num_slices));
-		vec2 direction = vec2(cos(slice_angle), sin(slice_angle));
-		
-		// Integrate primary direction
-		integrate_slice(direction, viewspace_radius, normalized_screen_pos, pix_center_pos, pixel_normal, pixels_per_meter, steps_per_slice, total_visibility, mask_bits, false);
-		
-		// Integrate opposite direction (always needed for correct GTAO integral)
-		integrate_slice(-direction, viewspace_radius, normalized_screen_pos, pix_center_pos, pixel_normal, pixels_per_meter, steps_per_slice, total_visibility, mask_bits, false);
+	// Do not reuse the 5-state Intel SSAO rotation pattern here. With the low VB
+	// sample count it becomes visible as diagonal x + 2*y bands. Use a stable
+	// full-resolution integer hash and only rotate within one slice interval so
+	// slices stay evenly distributed around the view vector.
+	uint pixel_seed = uint(params.pass) * 0xA511E9B3u;
+	float phase_jitter = vb_random(upos, pixel_seed ^ 0x63D83595u);
+	float base_phase = phase_jitter * angle_span / float(slice_count);
+
+	float visibility_sum = 0.0;
+	float valid_slices = 0.0;
+	for (int slice = 0; slice < 6; slice++) {
+		if (slice >= slice_count) {
+			break;
+		}
+		float phi = base_phase + (float(slice) + 0.5) * angle_span / float(slice_count);
+		vec2 omega = vec2(cos(phi), sin(phi));
+		vec3 direction_vec = vec3(omega, 0.0);
+		vec3 ortho_direction = direction_vec - dot(direction_vec, view_dir) * view_dir;
+		float ortho_len = length(ortho_direction);
+		vec3 slice_normal = cross(direction_vec, view_dir);
+		float slice_normal_len = length(slice_normal);
+		if (ortho_len <= 0.0001 || slice_normal_len <= 0.0001) {
+			continue;
+		}
+		ortho_direction /= ortho_len;
+		slice_normal /= slice_normal_len;
+
+		vec3 projected_normal = pixel_normal - slice_normal * dot(pixel_normal, slice_normal);
+		float projected_len = length(projected_normal);
+		if (projected_len <= 0.0001) {
+			visibility_sum += 1.0;
+			valid_slices += 1.0;
+			continue;
+		}
+		projected_normal /= projected_len;
+		vec3 tangent = cross(view_dir, slice_normal);
+		float cos_n = clamp(dot(projected_normal, view_dir), 0.0, 1.0);
+		float normal_angle = -sign(dot(projected_normal, tangent)) * acos(cos_n);
+
+		uint occluded_sectors = 0u;
+		uint slice_seed = pixel_seed ^ (uint(slice) * 0xC2B2AE35u);
+		float sampled_side = 1.0;
+		if (!bidirectional) {
+			float side_noise = vb_random(upos, slice_seed ^ 0x27D4EB2Fu);
+			sampled_side = side_noise < 0.5 ? -1.0 : 1.0;
+		}
+		float radial_jitter = vb_random(upos, slice_seed ^ 0x165667B1u);
+		for (int step = 0; step < 6; step++) {
+			if (step >= step_count) {
+				break;
+			}
+			float radial = (float(step) + 0.5 + radial_jitter * 0.5) / float(step_count);
+			radial = pow(clamp(radial, 0.0, 1.0), 1.35);
+			float sample_pixels = max(1.0, radial * pixel_lookup_radius);
+			float mip_level = 0.0;
+			if (p_quality_level >= SSAO_DEPTH_MIPS_ENABLE_AT_QUALITY_PRESET) {
+				mip_level = clamp(log2(sample_pixels) - 1.5, 0.0, float(SSAO_DEPTH_MIP_LEVELS - 1));
+			}
+
+			vec2 uv_offset = omega * sample_pixels * params.half_screen_pixel_size;
+			if (bidirectional) {
+				vb_trace_sample(occluded_sectors, normalized_screen_pos + uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, 1.0, thickness, viewspace_radius);
+				vb_trace_sample(occluded_sectors, normalized_screen_pos - uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, -1.0, thickness, viewspace_radius);
+			} else {
+				vb_trace_sample(occluded_sectors, normalized_screen_pos + sampled_side * uv_offset, mip_level, pix_center_pos, view_dir, normal_angle, sampled_side, thickness, viewspace_radius);
+			}
+		}
+
+		float occluded_fraction = float(bitCount(occluded_sectors)) / float(VB_SECTOR_COUNT);
+		if (!bidirectional) {
+			occluded_fraction = min(1.0, occluded_fraction * 2.0);
+		}
+		visibility_sum += 1.0 - occluded_fraction;
+		valid_slices += 1.0;
 	}
-	
-	// Normalize visibility
-	// We summed (0.25 * ...) for 2*num_slices directions.
-	// Total weight should be 1.0.
-	// Each slice pair (dir, -dir) contributes roughly to the integral across PI.
-	// We have num_slices.
-	// Average it.
-	total_visibility /= float(num_slices); // Since we summed 0.25 * term, and we did 2 directions...
-	// Wait, term is \cos(n) - \sin(h - n).
-	// \int_{-\pi}^{\pi} ... = \pi * AO.
-	// We want normalized AO [0,1].
-	// GTAO paper says average the terms.
-	// If flat surface, h = 0 (relative to tangent). n_slice = 0. 
-	// vis = 0.25 * (1 - sin(0)) = 0.25.
-	// 2 directions -> 0.5.
-	// So for 1 slice (2 dirs), we get 0.5.
-	// We need to multiply by 2?
-	
-	total_visibility *= 2.0; 
-	// Clamp
-	float occlusion = 1.0 - clamp(total_visibility, 0.0, 1.0);
 
-	// Fade out
+	float visibility = valid_slices > 0.0 ? visibility_sum / valid_slices : 1.0;
 	float fade_out = clamp(pix_center_pos.z * params.fade_out_mul + params.fade_out_add, 0.0, 1.0);
-	if (!p_adaptive_base && (p_quality_level >= 1)) {
+	if (p_quality_level >= SSAO_DEPTH_BASED_EDGES_ENABLE_AT_QUALITY_PRESET) {
 		float edge_fadeout_factor = clamp((1.0 - edgesLRTB.x - edgesLRTB.y) * 0.35, 0.0, 1.0) + clamp((1.0 - edgesLRTB.z - edgesLRTB.w) * 0.35, 0.0, 1.0);
 		fade_out *= clamp(1.0 - edge_fadeout_factor, 0.0, 1.0);
 	}
-	
-	occlusion = params.intensity * occlusion;
-	occlusion = min(occlusion, params.shadow_clamp);
-	occlusion *= fade_out;
-	
-	float final_val = 1.0 - occlusion;
-	final_val = pow(clamp(final_val, 0.0, 1.0), params.shadow_power);
 
-	r_shadow_term = final_val;
+	float obscurance = min((1.0 - visibility) * params.intensity, params.shadow_clamp);
+	obscurance *= fade_out;
+	float occlusion = pow(clamp(1.0 - obscurance, 0.0, 1.0), params.shadow_power);
+
+	r_shadow_term = occlusion;
 	r_edges = edgesLRTB;
-	r_weight = 1.0; // Uniform weight for now
-	r_mask = mask_bits;
+	r_weight = 1.0;
+}
+
+// Everything below this point is Godot's standard SSAO path. When flags.x == 0,
+// its arithmetic and adaptive Ultra path are unchanged from Godot 4.7.2.
+float calculate_pixel_obscurance(vec3 p_pixel_normal, vec3 p_hit_delta, float p_fallof_sq) {
+	float length_sq = dot(p_hit_delta, p_hit_delta);
+	float NdotD = dot(p_pixel_normal, p_hit_delta) / sqrt(length_sq);
+	float falloff_mult = max(0.0, length_sq * p_fallof_sq + 1.0);
+	return max(0, NdotD - params.horizon_angle_threshold) * falloff_mult;
+}
+
+void SSAO_tap_inner(const int p_quality_level, inout float r_obscurance_sum, inout float r_weight_sum, const vec2 p_sampling_uv, const float p_mip_level, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const float p_fallof_sq, const float p_weight_mod) {
+	float viewspace_sample_z = textureLod(source_depth_mipmaps, vec3(p_sampling_uv, params.pass), p_mip_level).x;
+	vec3 hit_pos = NDC_to_view_space(p_sampling_uv.xy, viewspace_sample_z).xyz;
+	vec3 hit_delta = hit_pos - p_pix_center_pos;
+	float obscurance = calculate_pixel_obscurance(p_pixel_normal, hit_delta, p_fallof_sq);
+	float weight = 1.0;
+	if (p_quality_level >= SSAO_HALOING_REDUCTION_ENABLE_AT_QUALITY_PRESET) {
+		float reduce = max(0, -hit_delta.z);
+		reduce = clamp(reduce * params.neg_inv_radius + 2.0, 0.0, 1.0);
+		weight = SSAO_HALOING_REDUCTION_AMOUNT * reduce + (1.0 - SSAO_HALOING_REDUCTION_AMOUNT);
+	}
+	weight *= p_weight_mod;
+	r_obscurance_sum += obscurance * weight;
+	r_weight_sum += weight;
+}
+
+void SSAOTap(const int p_quality_level, inout float r_obscurance_sum, inout float r_weight_sum, const int p_tap_index, const mat2 p_rot_scale, const vec3 p_pix_center_pos, vec3 p_pixel_normal, const vec2 p_normalized_screen_pos, const float p_mip_offset, const float p_fallof_sq, float p_weight_mod, vec2 p_norm_xy, float p_norm_xy_length) {
+	vec2 sample_offset;
+	float sample_pow_2_len;
+	{
+		vec4 new_sample = sample_pattern[p_tap_index];
+		sample_offset = new_sample.xy * p_rot_scale;
+		sample_pow_2_len = new_sample.w;
+		p_weight_mod *= new_sample.z;
+	}
+	sample_offset = round(sample_offset);
+	float mip_level = (p_quality_level < SSAO_DEPTH_MIPS_ENABLE_AT_QUALITY_PRESET) ? (0) : (sample_pow_2_len + p_mip_offset);
+	vec2 sampling_uv = sample_offset * params.half_screen_pixel_size + p_normalized_screen_pos;
+	SSAO_tap_inner(p_quality_level, r_obscurance_sum, r_weight_sum, sampling_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod);
+	vec2 sample_offset_mirrored_uv = -sample_offset;
+	if (p_quality_level >= SSAO_TILT_SAMPLES_ENABLE_AT_QUALITY_PRESET) {
+		float dot_norm = dot(sample_offset_mirrored_uv, p_norm_xy);
+		sample_offset_mirrored_uv -= dot_norm * p_norm_xy_length * p_norm_xy;
+		sample_offset_mirrored_uv = round(sample_offset_mirrored_uv);
+	}
+	vec2 sampling_mirrored_uv = sample_offset_mirrored_uv * params.half_screen_pixel_size + p_normalized_screen_pos;
+	SSAO_tap_inner(p_quality_level, r_obscurance_sum, r_weight_sum, sampling_mirrored_uv, mip_level, p_pix_center_pos, p_pixel_normal, p_fallof_sq, p_weight_mod);
+}
+
+void generate_SSAO_shadows_internal(out float r_shadow_term, out vec4 r_edges, out float r_weight, const vec2 p_pos, int p_quality_level, bool p_adaptive_base) {
+	if (!p_adaptive_base && params.flags.x > 0.5) {
+		generate_visibility_bitmask(r_shadow_term, r_edges, r_weight, p_pos, p_quality_level);
+		return;
+	}
+
+	vec2 pos_rounded = trunc(p_pos);
+	uvec2 upos = uvec2(pos_rounded);
+	const int number_of_taps = (p_adaptive_base) ? (SSAO_ADAPTIVE_TAP_BASE_COUNT) : (num_taps[p_quality_level]);
+	float pix_z, pix_left_z, pix_top_z, pix_right_z, pix_bottom_z;
+	vec4 valuesUL = textureGather(source_depth_mipmaps, vec3(pos_rounded * params.half_screen_pixel_size, params.pass));
+	vec4 valuesBR = textureGather(source_depth_mipmaps, vec3((pos_rounded + vec2(1.0)) * params.half_screen_pixel_size, params.pass));
+	pix_z = valuesUL.y;
+	pix_left_z = valuesUL.x;
+	pix_top_z = valuesUL.z;
+	pix_right_z = valuesBR.z;
+	pix_bottom_z = valuesBR.x;
+	vec2 normalized_screen_pos = pos_rounded * params.half_screen_pixel_size + params.half_screen_pixel_size_x025;
+	vec3 pix_center_pos = NDC_to_view_space(normalized_screen_pos, pix_z);
+	uvec2 full_res_coord = upos * 2 * params.size_multiplier + params.pass_coord_offset.xy;
+	vec3 pixel_normal = load_normal(ivec2(full_res_coord));
+	const vec2 pixel_size_at_center = NDC_to_view_space(normalized_screen_pos.xy + params.half_screen_pixel_size, pix_center_pos.z).xy - pix_center_pos.xy;
+	float pixel_lookup_radius;
+	float fallof_sq;
+	float viewspace_radius;
+	calculate_radius_parameters(length(pix_center_pos), pixel_size_at_center, pixel_lookup_radius, viewspace_radius, fallof_sq);
+	mat2 rot_scale_matrix;
+	uint pseudo_random_index;
+	{
+		vec4 rotation_scale;
+		if (!p_adaptive_base && (p_quality_level >= SSAO_REDUCE_RADIUS_NEAR_SCREEN_BORDER_ENABLE_AT_QUALITY_PRESET)) {
+			float near_screen_border = min(min(normalized_screen_pos.x, 1.0 - normalized_screen_pos.x), min(normalized_screen_pos.y, 1.0 - normalized_screen_pos.y));
+			near_screen_border = clamp(10.0 * near_screen_border + 0.6, 0.0, 1.0);
+			pixel_lookup_radius *= near_screen_border;
+		}
+		pseudo_random_index = uint(pos_rounded.y * 2 + pos_rounded.x) % 5;
+		rotation_scale = constants.rotation_matrices[params.pass * 5 + pseudo_random_index];
+		rot_scale_matrix = mat2(rotation_scale.x * pixel_lookup_radius, rotation_scale.y * pixel_lookup_radius, rotation_scale.z * pixel_lookup_radius, rotation_scale.w * pixel_lookup_radius);
+	}
+	float obscurance_sum = 0.0;
+	float weight_sum = 0.0;
+	vec4 edgesLRTB = vec4(1.0, 1.0, 1.0, 1.0);
+	pix_center_pos *= 0.99;
+	if (!p_adaptive_base && (p_quality_level >= SSAO_DEPTH_BASED_EDGES_ENABLE_AT_QUALITY_PRESET)) {
+		edgesLRTB = calculate_edges(pix_z, pix_left_z, pix_right_z, pix_top_z, pix_bottom_z);
+	}
+	if (!p_adaptive_base && (p_quality_level >= SSAO_DETAIL_AO_ENABLE_AT_QUALITY_PRESET)) {
+		if (p_quality_level != 4) {
+			vec3 normalized_viewspace_dir = vec3(pix_center_pos.xy / pix_center_pos.zz, 1.0);
+			vec3 pixel_left_delta = vec3(-pixel_size_at_center.x, 0.0, 0.0) + normalized_viewspace_dir * (pix_left_z - pix_center_pos.z);
+			vec3 pixel_right_delta = vec3(+pixel_size_at_center.x, 0.0, 0.0) + normalized_viewspace_dir * (pix_right_z - pix_center_pos.z);
+			vec3 pixel_top_delta = vec3(0.0, -pixel_size_at_center.y, 0.0) + normalized_viewspace_dir * (pix_top_z - pix_center_pos.z);
+			vec3 pixel_bottom_delta = vec3(0.0, +pixel_size_at_center.y, 0.0) + normalized_viewspace_dir * (pix_bottom_z - pix_center_pos.z);
+			const float range_reduction = 4.0f;
+			const float modified_fallof_sq = range_reduction * fallof_sq;
+			vec4 additional_obscurance;
+			additional_obscurance.x = calculate_pixel_obscurance(pixel_normal, pixel_left_delta, modified_fallof_sq);
+			additional_obscurance.y = calculate_pixel_obscurance(pixel_normal, pixel_right_delta, modified_fallof_sq);
+			additional_obscurance.z = calculate_pixel_obscurance(pixel_normal, pixel_top_delta, modified_fallof_sq);
+			additional_obscurance.w = calculate_pixel_obscurance(pixel_normal, pixel_bottom_delta, modified_fallof_sq);
+			obscurance_sum += params.detail_intensity * dot(additional_obscurance, edgesLRTB);
+		}
+	}
+	if (!p_adaptive_base && (p_quality_level >= SSAO_NORMAL_BASED_EDGES_ENABLE_AT_QUALITY_PRESET)) {
+		vec3 neighbour_normal_left = load_normal(ivec2(full_res_coord), ivec2(-2, 0));
+		vec3 neighbour_normal_right = load_normal(ivec2(full_res_coord), ivec2(2, 0));
+		vec3 neighbour_normal_top = load_normal(ivec2(full_res_coord), ivec2(0, -2));
+		vec3 neighbour_normal_bottom = load_normal(ivec2(full_res_coord), ivec2(0, 2));
+		const float dot_threshold = SSAO_NORMAL_BASED_EDGES_DOT_THRESHOLD;
+		vec4 normal_edgesLRTB;
+		normal_edgesLRTB.x = clamp((dot(pixel_normal, neighbour_normal_left) + dot_threshold), 0.0, 1.0);
+		normal_edgesLRTB.y = clamp((dot(pixel_normal, neighbour_normal_right) + dot_threshold), 0.0, 1.0);
+		normal_edgesLRTB.z = clamp((dot(pixel_normal, neighbour_normal_top) + dot_threshold), 0.0, 1.0);
+		normal_edgesLRTB.w = clamp((dot(pixel_normal, neighbour_normal_bottom) + dot_threshold), 0.0, 1.0);
+		edgesLRTB *= normal_edgesLRTB;
+	}
+	const float global_mip_offset = SSAO_DEPTH_MIPS_GLOBAL_OFFSET;
+	float mip_offset = (p_quality_level < SSAO_DEPTH_MIPS_ENABLE_AT_QUALITY_PRESET) ? (0) : (log2(pixel_lookup_radius) + global_mip_offset);
+	vec2 norm_xy = vec2(pixel_normal.x, pixel_normal.y);
+	float norm_xy_length = length(norm_xy);
+	norm_xy /= vec2(norm_xy_length, -norm_xy_length);
+	norm_xy_length *= SSAO_TILT_SAMPLES_AMOUNT;
+	if ((p_quality_level != 3) || p_adaptive_base) {
+		for (int i = 0; i < number_of_taps; i++) {
+			SSAOTap(p_quality_level, obscurance_sum, weight_sum, i, rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, 1.0, norm_xy, norm_xy_length);
+		}
+	}
+#ifdef ADAPTIVE
+	else {
+		vec2 full_res_uv = normalized_screen_pos + params.pass_uv_offset.xy;
+		float importance = textureLod(source_importance, full_res_uv, 0.0).x;
+		obscurance_sum *= (SSAO_ADAPTIVE_TAP_BASE_COUNT / float(SSAO_MAX_TAPS)) + (importance * SSAO_ADAPTIVE_TAP_FLEXIBLE_COUNT / float(SSAO_MAX_TAPS));
+		vec2 base_values = imageLoad(source_ssao, ivec3(upos, params.pass)).xy;
+		weight_sum += base_values.y * float(SSAO_ADAPTIVE_TAP_BASE_COUNT * 4.0);
+		obscurance_sum += (base_values.x) * weight_sum;
+		float edge_count = dot(1.0 - edgesLRTB, vec4(1.0, 1.0, 1.0, 1.0));
+		float avg_total_importance = float(counter.sum) * params.load_counter_avg_div;
+		float importance_limiter = clamp(params.adaptive_sample_limit / avg_total_importance, 0.0, 1.0);
+		importance *= importance_limiter;
+		float additional_sample_count = SSAO_ADAPTIVE_TAP_FLEXIBLE_COUNT * importance;
+		const float blend_range = 3.0;
+		const float blend_range_inv = 1.0 / blend_range;
+		additional_sample_count += 0.5;
+		uint additional_samples = uint(additional_sample_count);
+		uint additional_samples_to = min(SSAO_MAX_TAPS, additional_samples + SSAO_ADAPTIVE_TAP_BASE_COUNT);
+		for (uint i = SSAO_ADAPTIVE_TAP_BASE_COUNT; i < additional_samples_to; i++) {
+			additional_sample_count -= 1.0f;
+			float weight_mod = clamp(additional_sample_count * blend_range_inv, 0.0, 1.0);
+			SSAOTap(p_quality_level, obscurance_sum, weight_sum, int(i), rot_scale_matrix, pix_center_pos, pixel_normal, normalized_screen_pos, mip_offset, fallof_sq, weight_mod, norm_xy, norm_xy_length);
+		}
+	}
+#endif
+	if (p_adaptive_base) {
+		float obscurance = obscurance_sum / weight_sum;
+		r_shadow_term = obscurance;
+		r_edges = vec4(0.0);
+		r_weight = weight_sum;
+		return;
+	}
+	float obscurance = obscurance_sum / weight_sum;
+	float fade_out = clamp(pix_center_pos.z * params.fade_out_mul + params.fade_out_add, 0.0, 1.0);
+	if (!p_adaptive_base && (p_quality_level >= SSAO_DEPTH_BASED_EDGES_ENABLE_AT_QUALITY_PRESET)) {
+		float edge_fadeout_factor = clamp((1.0 - edgesLRTB.x - edgesLRTB.y) * 0.35, 0.0, 1.0) + clamp((1.0 - edgesLRTB.z - edgesLRTB.w) * 0.35, 0.0, 1.0);
+		fade_out *= clamp(1.0 - edge_fadeout_factor, 0.0, 1.0);
+	}
+	obscurance = params.intensity * obscurance;
+	obscurance = min(obscurance, params.shadow_clamp);
+	obscurance *= fade_out;
+	float occlusion = 1.0 - obscurance;
+	occlusion = pow(clamp(occlusion, 0.0, 1.0), params.shadow_power);
+	r_shadow_term = occlusion;
+	r_edges = edgesLRTB;
+	r_weight = weight_sum;
 }
 
 void main() {
 	float out_shadow_term;
 	float out_weight;
 	vec4 out_edges;
-	uint out_mask = 0u;
 	ivec2 ssC = ivec2(gl_GlobalInvocationID.xy);
-	if (any(greaterThanEqual(ssC, params.screen_size))) { //too large, do nothing
+	if (any(greaterThanEqual(ssC, params.screen_size))) {
 		return;
 	}
-
 	vec2 uv = vec2(gl_GlobalInvocationID) + vec2(0.5);
-	float vb_mode = params.flags.x;
-	bool use_gtao_vb = vb_mode > 0.5;
-	bool vb_bi = vb_mode > 1.5;
-
-	// Note: We use the same GTAO gather for BASE and final pass to ensure consistency.
-	// Adaptive logic could be re-enabled if we implement the 'importance' sampling for slices.
-	// For now, we use standard gather for all.
-	
-	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, false, use_gtao_vb, vb_bi, out_mask);
-	
 #ifdef SSAO_BASE
-	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), vec4(out_shadow_term, 1.0, 0.0, 0.0));
+	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, true);
+	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), vec4(out_shadow_term, out_weight / (float(SSAO_ADAPTIVE_TAP_BASE_COUNT) * 4.0), 0.0, 0.0));
 #else
+	generate_SSAO_shadows_internal(out_shadow_term, out_edges, out_weight, uv, params.quality, false);
 	if (params.quality == 0) {
 		out_edges = vec4(1.0);
 	}
-
-	if (use_gtao_vb) {
-		// Derive visibility from the quantized bitmask (32 directions); fewer set bits = more occlusion.
-		float vb_visibility = 1.0 - float(bitCount(out_mask)) * (1.0 / 32.0);
-		vb_visibility = clamp(vb_visibility, 0.0, 1.0);
-
-		// Blend strategy:
-		// - Bi-directional: lean more on the bitmask result for stability across slices.
-		// - Uni-directional: keep more of the classic SSAO term to avoid over-darkening.
-		if (vb_bi) {
-			out_shadow_term = mix(out_shadow_term, vb_visibility, 0.7);
-		} else {
-			out_shadow_term *= mix(1.0, vb_visibility, 0.6);
-		}
-	}
-
 	imageStore(dest_image, ivec2(gl_GlobalInvocationID.xy), vec4(out_shadow_term, pack_edges(out_edges), 0.0, 0.0));
 #endif
 }

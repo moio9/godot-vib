@@ -252,31 +252,39 @@ void RenderSceneBuffersRD::set_anisotropic_filtering_level(RSE::ViewportAnisotro
 	update_samplers();
 }
 
-bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_with_aux, bool p_create_depth) {
+bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_need_full_visibility, bool p_need_aux, bool p_need_depth) {
 	if (internal_size.x <= 0 || internal_size.y <= 0) {
 		return false;
 	}
 
-	if (!has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS)) {
-		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R32G32_UINT;
-		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
-		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+	if (p_need_full_visibility) {
+		if (!has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS)) {
+			const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R32G32_UINT;
+			const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+		}
+	} else {
+		if (!has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_COMPACT)) {
+			const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R8_UINT;
+			const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+			create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_COMPACT, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
+		}
 	}
 
-	if (p_with_aux && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX)) {
-		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R16G16_SFLOAT;
-		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT;
+	if (p_need_aux && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX)) {
+		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R16_UINT;
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT;
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
 	}
 
-	if (p_create_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH)) {
+	if (p_need_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH)) {
 		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R32_SFLOAT;
 		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_STORAGE_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
 	}
 
 	// D32_SFLOAT with DEPTH_STENCIL_ATTACHMENT for the VB pass framebuffer (depth testing).
-	if (p_create_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH)) {
+	if (p_need_depth && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_FBO_DEPTH)) {
 		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_D32_SFLOAT;
 		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT;
 		if (RD::get_singleton()->texture_is_format_supported_for_usage(fmt, usage)) {
@@ -284,7 +292,10 @@ bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_with_aux, bool p_cr
 		}
 	}
 
-	return has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_create_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);
+	const bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
+	const bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
+	const bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
+	return visibility_ready && aux_ready && depth_ready;
 }
 
 void RenderSceneBuffersRD::set_use_debanding(bool p_use_debanding) {
