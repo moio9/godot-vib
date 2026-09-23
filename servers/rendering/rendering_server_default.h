@@ -566,6 +566,7 @@ public:
 	FUNC3(decal_set_texture, RID, RSE::DecalTexture, RID)
 	FUNC2(decal_set_emission_energy, RID, float)
 	FUNC2(decal_set_albedo_mix, RID, float)
+	FUNC4(decal_set_orm_mix, RID, float, float, float)
 	FUNC2(decal_set_modulate, RID, const Color &)
 	FUNC2(decal_set_cull_mask, RID, uint32_t)
 	FUNC4(decal_set_distance_fade, RID, bool, float, float)

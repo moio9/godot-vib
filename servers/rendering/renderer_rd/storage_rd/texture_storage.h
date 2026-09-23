@@ -335,6 +335,9 @@ private:
 		RID textures[RSE::DECAL_TEXTURE_MAX];
 		float emission_energy = 1.0;
 		float albedo_mix = 1.0;
+		float ao_mix = 1.0;
+		float roughness_mix = 1.0;
+		float metallic_mix = 1.0;
 		Color modulate = Color(1, 1, 1, 1);
 		uint32_t cull_mask = (1 << 20) - 1;
 		float upper_fade = 0.3;
@@ -379,6 +382,8 @@ private:
 		float normal_xform[12];
 		float normal[3];
 		float normal_fade;
+		float orm_mix[3];
+		float pad;
 	};
 
 	struct DecalInstanceSort {
@@ -726,6 +731,7 @@ public:
 	virtual void decal_set_texture(RID p_decal, RSE::DecalTexture p_type, RID p_texture) override;
 	virtual void decal_set_emission_energy(RID p_decal, float p_energy) override;
 	virtual void decal_set_albedo_mix(RID p_decal, float p_mix) override;
+	virtual void decal_set_orm_mix(RID p_decal, float p_ao_mix, float p_roughness_mix, float p_metallic_mix) override;
 	virtual void decal_set_modulate(RID p_decal, const Color &p_modulate) override;
 	virtual void decal_set_cull_mask(RID p_decal, uint32_t p_layers) override;
 	virtual void decal_set_distance_fade(RID p_decal, bool p_enabled, float p_begin, float p_length) override;

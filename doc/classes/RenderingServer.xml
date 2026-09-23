@@ -1212,6 +1212,16 @@
 				Sets the normal [param fade] in the decal specified by the [param decal] RID. Equivalent to [member Decal.normal_fade].
 			</description>
 		</method>
+		<method name="decal_set_orm_mix">
+			<return type="void" />
+			<param index="0" name="decal" type="RID" />
+			<param index="1" name="ao_mix" type="float" />
+			<param index="2" name="roughness_mix" type="float" />
+			<param index="3" name="metallic_mix" type="float" />
+			<description>
+				Sets independent blend factors for the ambient occlusion, roughness, and metallic channels of the decal's ORM texture. Equivalent to [member Decal.ao_mix], [member Decal.roughness_mix], and [member Decal.metallic_mix]. Values are clamped between [code]0.0[/code] and [code]1.0[/code].
+			</description>
+		</method>
 		<method name="decal_set_size">
 			<return type="void" />
 			<param index="0" name="decal" type="RID" />

@@ -3678,6 +3678,14 @@ void TextureStorage::decal_set_albedo_mix(RID p_decal, float p_mix) {
 	decal->albedo_mix = p_mix;
 }
 
+void TextureStorage::decal_set_orm_mix(RID p_decal, float p_ao_mix, float p_roughness_mix, float p_metallic_mix) {
+	Decal *decal = decal_owner.get_or_null(p_decal);
+	ERR_FAIL_NULL(decal);
+	decal->ao_mix = CLAMP(p_ao_mix, 0.0f, 1.0f);
+	decal->roughness_mix = CLAMP(p_roughness_mix, 0.0f, 1.0f);
+	decal->metallic_mix = CLAMP(p_metallic_mix, 0.0f, 1.0f);
+}
+
 void TextureStorage::decal_set_modulate(RID p_decal, const Color &p_modulate) {
 	Decal *decal = decal_owner.get_or_null(p_decal);
 	ERR_FAIL_NULL(decal);
@@ -4192,6 +4200,10 @@ void TextureStorage::update_decal_buffer(const PagedArray<RID> &p_decals, const 
 		dd.modulate[3] = modulate.a * fade;
 		dd.emission_energy = decal->emission_energy * fade;
 		dd.albedo_mix = decal->albedo_mix;
+		dd.orm_mix[0] = decal->ao_mix;
+		dd.orm_mix[1] = decal->roughness_mix;
+		dd.orm_mix[2] = decal->metallic_mix;
+		dd.pad = 0.0;
 		dd.mask = decal->cull_mask;
 		dd.upper_fade = decal->upper_fade;
 		dd.lower_fade = decal->lower_fade;

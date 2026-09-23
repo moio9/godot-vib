@@ -644,6 +644,7 @@ public:
 	virtual void decal_set_texture(RID p_decal, RSE::DecalTexture p_type, RID p_texture) override;
 	virtual void decal_set_emission_energy(RID p_decal, float p_energy) override;
 	virtual void decal_set_albedo_mix(RID p_decal, float p_mix) override;
+	virtual void decal_set_orm_mix(RID p_decal, float p_ao_mix, float p_roughness_mix, float p_metallic_mix) override;
 	virtual void decal_set_modulate(RID p_decal, const Color &p_modulate) override;
 	virtual void decal_set_cull_mask(RID p_decal, uint32_t p_layers) override;
 	virtual void decal_set_distance_fade(RID p_decal, bool p_enabled, float p_begin, float p_length) override;

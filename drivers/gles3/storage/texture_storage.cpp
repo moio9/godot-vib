@@ -2514,6 +2514,9 @@ void TextureStorage::decal_set_emission_energy(RID p_decal, float p_energy) {
 void TextureStorage::decal_set_albedo_mix(RID p_decal, float p_mix) {
 }
 
+void TextureStorage::decal_set_orm_mix(RID p_decal, float p_ao_mix, float p_roughness_mix, float p_metallic_mix) {
+}
+
 void TextureStorage::decal_set_modulate(RID p_decal, const Color &p_modulate) {
 }
 

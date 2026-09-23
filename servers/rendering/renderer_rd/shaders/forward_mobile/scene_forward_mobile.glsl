@@ -1538,9 +1538,9 @@ void main() {
 				} else {
 					decal_orm = textureLod(sampler2D(decal_atlas, decal_sampler), uv_local.xz * decals.data[decal_index].orm_rect.zw + decals.data[decal_index].orm_rect.xy, 0.0).xyz;
 				}
-				ao = half(mix(float(ao), decal_orm.r, decal_albedo.a));
-				roughness = half(mix(float(roughness), decal_orm.g, decal_albedo.a));
-				metallic = half(mix(float(metallic), decal_orm.b, decal_albedo.a));
+				ao = half(mix(float(ao), decal_orm.r, decal_albedo.a * decals.data[decal_index].orm_mix.r));
+				roughness = half(mix(float(roughness), decal_orm.g, decal_albedo.a * decals.data[decal_index].orm_mix.g));
+				metallic = half(mix(float(metallic), decal_orm.b, decal_albedo.a * decals.data[decal_index].orm_mix.b));
 			}
 		}
 
