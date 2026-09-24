@@ -18,6 +18,7 @@ on:
       - "SConstruct"
       - "version.py"
       - ".github/workflows/termux_build.yml"
+      - ".github/scripts/termux_template_recipe.py"
   push:
     branches:
       - "4.7"
@@ -35,6 +36,7 @@ on:
       - "SConstruct"
       - "version.py"
       - ".github/workflows/termux_build.yml"
+      - ".github/scripts/termux_template_recipe.py"
 
 permissions:
   contents: read
@@ -97,10 +99,12 @@ jobs:
           source = Path("servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.cpp")
           text = source.read_text(encoding="utf-8")
           bad_return = "\treturn has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_VIS) && (p_need_depth ? has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH) : true);"
-          good_return = """\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);
-\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);
-\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);
-\treturn visibility_ready && aux_ready && depth_ready;"""
+          good_return = (
+              "\tconst bool visibility_ready = has_texture(RB_SCOPE_BUFFERS, p_need_full_visibility ? RB_TEX_VB_VIS : RB_TEX_VB_COMPACT);\n"
+              "\tconst bool aux_ready = !p_need_aux || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX);\n"
+              "\tconst bool depth_ready = !p_need_depth || has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_DEPTH);\n"
+              "\treturn visibility_ready && aux_ready && depth_ready;"
+          )
           if bad_return in text:
               text = text.replace(bad_return, good_return, 1)
           elif good_return not in text:
@@ -202,6 +206,9 @@ jobs:
           sed -i '/^TERMUX_PKG_REVISION=/d' "$RECIPE"
           sed -i "/^TERMUX_PKG_VERSION=/a TERMUX_PKG_REVISION=99" "$RECIPE"
 
+          # Build native templates with the same Termux toolchain and source as the editor.
+          python3 .github/scripts/termux_template_recipe.py "$RECIPE"
+
           echo "Building Godot ${VERSION} fork commit ${{ github.sha }} for Termux/aarch64"
           grep -E '^TERMUX_PKG_(VERSION|REVISION|SRCURL|SHA256|DEPENDS|BUILD_DEPENDS)=' "$RECIPE"
 
@@ -227,11 +234,28 @@ jobs:
           fi
           ls -lah "$GITHUB_WORKSPACE/termux-artifacts"
 
+          mkdir -p "$GITHUB_WORKSPACE/termux-template-artifacts" "$RUNNER_TEMP/termux-deb-extracted"
+          for package in "$GITHUB_WORKSPACE"/termux-artifacts/godot*.deb; do
+            [ -f "$package" ] || continue
+            dpkg-deb -x "$package" "$RUNNER_TEMP/termux-deb-extracted"
+          done
+          find "$RUNNER_TEMP/termux-deb-extracted" -type f -name 'godot.linuxbsd.template_*.arm64.llvm' -exec cp -v {} "$GITHUB_WORKSPACE/termux-template-artifacts/" \;
+          ls -lah "$GITHUB_WORKSPACE/termux-template-artifacts"
+
       - name: Upload Termux package
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: godot-vib-termux-aarch64-${{ github.sha }}
           path: termux-artifacts/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload native Termux export templates
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: godot-vib-termux-templates-aarch64-${{ github.sha }}
+          path: termux-template-artifacts/*
           if-no-files-found: error
           retention-days: 14
