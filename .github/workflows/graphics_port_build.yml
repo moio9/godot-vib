@@ -91,6 +91,19 @@ jobs:
           if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|RID.*leaked|ObjectDB.*leaked' shader-version-runtime.log; then
             exit 1
           fi
+      - name: Run shared SSR history and threaded shutdown regression
+        run: |
+          set -euxo pipefail
+          BIN=bin/godot.linuxbsd.editor.x86_64
+          LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$LVP_ICD"
+          timeout 180s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
+            "$BIN" --path tests/rendering/ssr_history --rendering-method forward_plus \
+            --rendering-driver vulkan --audio-driver Dummy --verbose 2>&1 | tee ssr-history-runtime.log
+          grep -Fq 'SSR_HISTORY_RESULT checks=10 failures=0' ssr-history-runtime.log
+          if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' ssr-history-runtime.log; then
+            exit 1
+          fi
       - name: Package Linux editor
         run: |
           tar -cJf godot-vib-4.8-dev-linux-x86_64.tar.xz \
@@ -112,6 +125,7 @@ jobs:
             vulkan-runtime.log
             resource-lifecycle-runtime.log
             shader-version-runtime.log
+            ssr-history-runtime.log
             version.txt
 
   windows:

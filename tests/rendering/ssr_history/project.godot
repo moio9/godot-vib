@@ -1,0 +1,16 @@
+config_version=5
+
+[application]
+config/name="SSR Shared History Regression"
+run/main_scene="res://main.tscn"
+
+[display]
+window/size/viewport_width=320
+window/size/viewport_height=180
+window/size/no_focus=true
+window/vsync/vsync_mode=0
+
+[rendering]
+renderer/rendering_method="forward_plus"
+driver/threads/thread_model=2
+environment/screen_space_reflection/half_size=true

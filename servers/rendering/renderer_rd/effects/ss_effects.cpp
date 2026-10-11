@@ -467,7 +467,7 @@ bool SSEffects::allocate_last_frame_buffer(Ref<RenderSceneBuffersRD> p_render_bu
 
 	if (p_use_ssil) {
 		mipmaps = 6;
-	} else if (p_use_hddagi_screen_radiance && p_use_ssr && ssr_half_size) {
+	} else if ((p_use_ssgi || p_use_hddagi_screen_radiance) && p_use_ssr && ssr_half_size) {
 		mipmaps = 2;
 	}
 
