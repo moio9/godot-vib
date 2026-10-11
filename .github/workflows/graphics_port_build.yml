@@ -35,7 +35,7 @@ jobs:
       - name: Run Vulkan graphics combinations
         run: |
           set -euxo pipefail
-          BIN=bin/godot.linuxbsd.editor.dev.x86_64
+          BIN=bin/godot.linuxbsd.editor.x86_64
           test -x "$BIN"
           "$BIN" --headless --version | tee version.txt
           LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
@@ -52,7 +52,7 @@ jobs:
       - name: Package Linux editor
         run: |
           tar -cJf godot-vib-4.8-dev-linux-x86_64.tar.xz \
-            bin/godot.linuxbsd.editor.dev.x86_64 LICENSE.txt COPYRIGHT.txt version.txt
+            bin/godot.linuxbsd.editor.x86_64 LICENSE.txt COPYRIGHT.txt version.txt
           sha256sum godot-vib-4.8-dev-linux-x86_64.tar.xz > SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:
