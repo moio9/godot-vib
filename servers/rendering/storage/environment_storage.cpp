@@ -765,18 +765,6 @@ float RendererEnvironmentStorage::environment_get_ssao_ao_channel_affect(RID p_e
 	return env->ssao_ao_channel_affect;
 }
 
-void RendererEnvironmentStorage::environment_set_ssao_algorithm(RID p_env, RSE::EnvironmentSSAOAlgorithm p_algorithm) {
-	Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL(env);
-	env->ssao_algorithm = p_algorithm;
-}
-
-RSE::EnvironmentSSAOAlgorithm RendererEnvironmentStorage::environment_get_ssao_algorithm(RID p_env) const {
-	const Environment *env = environment_owner.get_or_null(p_env);
-	ERR_FAIL_NULL_V(env, RSE::ENV_SSAO_ALGORITHM_STANDARD);
-	return env->ssao_algorithm;
-}
-
 // SSIL
 
 void RendererEnvironmentStorage::environment_set_ssil(RID p_env, bool p_enable, float p_radius, float p_intensity, float p_sharpness, float p_normal_rejection) {

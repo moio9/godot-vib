@@ -476,10 +476,6 @@ void RendererSceneRender::environment_set_ssao(RID p_env, bool p_enable, float p
 	environment_storage.environment_set_ssao(p_env, p_enable, p_radius, p_intensity, p_power, p_detail, p_horizon, p_sharpness, p_light_affect, p_ao_channel_affect);
 }
 
-void RendererSceneRender::environment_set_ssao_algorithm(RID p_env, RSE::EnvironmentSSAOAlgorithm p_algorithm) {
-	environment_storage.environment_set_ssao_algorithm(p_env, p_algorithm);
-}
-
 bool RendererSceneRender::environment_get_ssao_enabled(RID p_env) const {
 	return environment_storage.environment_get_ssao_enabled(p_env);
 }
@@ -514,10 +510,6 @@ float RendererSceneRender::environment_get_ssao_direct_light_affect(RID p_env) c
 
 float RendererSceneRender::environment_get_ssao_ao_channel_affect(RID p_env) const {
 	return environment_storage.environment_get_ssao_ao_channel_affect(p_env);
-}
-
-RSE::EnvironmentSSAOAlgorithm RendererSceneRender::environment_get_ssao_algorithm(RID p_env) const {
-	return environment_storage.environment_get_ssao_algorithm(p_env);
 }
 
 // SSIL

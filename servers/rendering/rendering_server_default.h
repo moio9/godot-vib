@@ -872,9 +872,7 @@ public:
 	FUNC1(environment_set_ssr_roughness_quality, RSE::EnvironmentSSRRoughnessQuality)
 
 	FUNC10(environment_set_ssao, RID, bool, float, float, float, float, float, float, float, float)
-	FUNC2(environment_set_ssao_algorithm, RID, RSE::EnvironmentSSAOAlgorithm)
 	FUNC6(environment_set_ssao_quality, RSE::EnvironmentSSAOQuality, bool, float, int, float, float)
-	FUNC1RC(RSE::EnvironmentSSAOAlgorithm, environment_get_ssao_algorithm, RID)
 
 	FUNC6(environment_set_ssil, RID, bool, float, float, float, float)
 	FUNC12(environment_set_ssgi, RID, bool, float, int, float, float, bool, int, float, float, float, float)
@@ -926,6 +924,11 @@ public:
 #define server_name RSG::camera_attributes
 
 	FUNCRIDSPLIT(camera_attributes)
+
+	FUNC1(camera_attributes_set_motion_blur_show_in_editor, bool)
+	FUNC1(camera_attributes_set_motion_blur_quality, RSE::MotionBlurQuality)
+
+	FUNC8(camera_attributes_set_motion_blur, RID, bool, float, float, float, float, float, float)
 
 	FUNC2(camera_attributes_set_dof_blur_quality, RSE::DOFBlurQuality, bool)
 	FUNC1(camera_attributes_set_dof_blur_bokeh_shape, RSE::DOFBokehShape)

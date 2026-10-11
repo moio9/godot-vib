@@ -190,8 +190,6 @@ public:
 		float detail = 0.5;
 		float horizon = 0.06;
 		float sharpness = 0.98;
-		bool use_visibility_bitmask = false;
-		int vb_mode = 0; // 0: off, 1: VB uni, 2: VB bi
 
 		Size2i full_screen_size;
 	};
@@ -497,7 +495,7 @@ private:
 		float NDC_to_view_mul[2];
 		float NDC_to_view_add[2];
 
-		float flags[2]; // x: use visibility bitmask, y: unused
+		float pad[2];
 		float half_screen_pixel_size_x025[2];
 
 		float radius;

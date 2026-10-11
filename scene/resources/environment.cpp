@@ -398,18 +398,6 @@ float Environment::get_ssao_ao_channel_affect() const {
 	return ssao_ao_channel_affect;
 }
 
-void Environment::set_ssao_algorithm(int p_algorithm) {
-	if (ssao_algorithm == p_algorithm) {
-		return;
-	}
-	ssao_algorithm = p_algorithm;
-	_update_ssao();
-}
-
-int Environment::get_ssao_algorithm() const {
-	return ssao_algorithm;
-}
-
 void Environment::_update_ssao() {
 	RS::get_singleton()->environment_set_ssao(
 			environment,
@@ -422,7 +410,6 @@ void Environment::_update_ssao() {
 			ssao_sharpness,
 			ssao_direct_light_affect,
 			ssao_ao_channel_affect);
-	RS::get_singleton()->environment_set_ssao_algorithm(environment, RSE::EnvironmentSSAOAlgorithm(ssao_algorithm));
 }
 
 // SSIL
@@ -1629,8 +1616,6 @@ void Environment::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ssao_direct_light_affect"), &Environment::get_ssao_direct_light_affect);
 	ClassDB::bind_method(D_METHOD("set_ssao_ao_channel_affect", "amount"), &Environment::set_ssao_ao_channel_affect);
 	ClassDB::bind_method(D_METHOD("get_ssao_ao_channel_affect"), &Environment::get_ssao_ao_channel_affect);
-	ClassDB::bind_method(D_METHOD("set_ssao_algorithm", "algorithm"), &Environment::set_ssao_algorithm);
-	ClassDB::bind_method(D_METHOD("get_ssao_algorithm"), &Environment::get_ssao_algorithm);
 
 	ClassDB::bind_method(D_METHOD("set_ss_shadow_enabled", "enabled"), &Environment::set_ss_shadow_enabled);
 	ClassDB::bind_method(D_METHOD("is_ss_shadow_enabled"), &Environment::is_ss_shadow_enabled);
@@ -1663,7 +1648,6 @@ void Environment::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_sharpness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ssao_sharpness", "get_ssao_sharpness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_light_affect", PROPERTY_HINT_RANGE, "0.00,1,0.01"), "set_ssao_direct_light_affect", "get_ssao_direct_light_affect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ssao_ao_channel_affect", PROPERTY_HINT_RANGE, "0.00,1,0.01"), "set_ssao_ao_channel_affect", "get_ssao_ao_channel_affect");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "ssao_algorithm", PROPERTY_HINT_ENUM, "Standard,Visibility Bitmask (Unidirectional),Visibility Bitmask (Bidirectional)"), "set_ssao_algorithm", "get_ssao_algorithm");
 
 	ADD_GROUP("SSS", "ss_shadow_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ss_shadow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_ss_shadow_enabled", "is_ss_shadow_enabled");
