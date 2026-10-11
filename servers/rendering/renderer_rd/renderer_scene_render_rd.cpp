@@ -2384,6 +2384,15 @@ void RendererSceneRenderRD::init() {
 }
 
 RendererSceneRenderRD::~RendererSceneRenderRD() {
+	if (depth_copy_pipeline.is_valid()) {
+		RD::get_singleton()->free_rid(depth_copy_pipeline);
+	}
+	if (depth_copy_shader.is_valid()) {
+		RD::get_singleton()->free_rid(depth_copy_shader);
+	}
+	if (depth_copy_sampler.is_valid()) {
+		RD::get_singleton()->free_rid(depth_copy_sampler);
+	}
 	for (int i = 0; i < vb_out_color_storage.size(); i++) {
 		if (vb_out_color_storage[i].is_valid()) {
 			RD::get_singleton()->free_rid(vb_out_color_storage[i]);
