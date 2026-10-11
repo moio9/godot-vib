@@ -1718,9 +1718,9 @@ vec2 mesh_blend_main_aux_value = vec2(
 						} else {
 							decal_orm = textureLod(sampler2D(decal_atlas, decal_sampler), uv_local.xz * decals.data[decal_index].orm_rect.zw + decals.data[decal_index].orm_rect.xy, 0.0).xyz;
 						}
-						ao = mix(ao, decal_orm.r, decal_albedo.a);
-						roughness = mix(roughness, decal_orm.g, decal_albedo.a);
-						metallic = mix(metallic, decal_orm.b, decal_albedo.a);
+						ao = mix(ao, decal_orm.r, decal_albedo.a * decals.data[decal_index].orm_mix.r);
+						roughness = mix(roughness, decal_orm.g, decal_albedo.a * decals.data[decal_index].orm_mix.g);
+						metallic = mix(metallic, decal_orm.b, decal_albedo.a * decals.data[decal_index].orm_mix.b);
 					}
 				}
 

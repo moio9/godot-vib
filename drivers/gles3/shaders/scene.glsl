@@ -1188,6 +1188,8 @@ struct DecalData {
 	mat3x4 normal_xform;
 	vec3 normal;
 	float normal_fade;
+	vec3 orm_mix;
+	float pad;
 };
 
 layout(std140) uniform DecalDataBlock { // ubo:15
@@ -2544,9 +2546,9 @@ uint mesh_blend_group_output = 0u;
 #else
 				decal_orm = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].orm_rect.zw + decal_data_block.data[decal_index].orm_rect.xy, 0.0).xyz;
 #endif // USE_DECAL_MIPMAPS
-				ao = mix(float(ao), decal_orm.r, decal_albedo.a);
-				roughness = mix(float(roughness), decal_orm.g, decal_albedo.a);
-				metallic = mix(float(metallic), decal_orm.b, decal_albedo.a);
+				ao = mix(float(ao), decal_orm.r, decal_albedo.a * decal_data_block.data[decal_index].orm_mix.r);
+				roughness = mix(float(roughness), decal_orm.g, decal_albedo.a * decal_data_block.data[decal_index].orm_mix.g);
+				metallic = mix(float(metallic), decal_orm.b, decal_albedo.a * decal_data_block.data[decal_index].orm_mix.b);
 			}
 		}
 

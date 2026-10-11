@@ -62,6 +62,9 @@
 		<member name="albedo_mix" type="float" setter="set_albedo_mix" getter="get_albedo_mix" default="1.0">
 			Blends the albedo [Color] of the decal with albedo [Color] of the underlying mesh. This can be set to [code]0.0[/code] to create a decal that only affects normal or ORM. In this case, an albedo texture is still required as its alpha channel will determine where the normal and ORM will be overridden. See also [member modulate].
 		</member>
+		<member name="ao_mix" type="float" setter="set_ao_mix" getter="get_ao_mix" default="1.0">
+			Controls how strongly the red channel of [member texture_orm] overrides the underlying surface's ambient occlusion. Set to [code]0.0[/code] to preserve the surface's ambient occlusion. For an AO-only decal, set [member albedo_mix], [member roughness_mix], and [member metallic_mix] to [code]0.0[/code], and leave [member texture_normal] and [member texture_emission] unset. An albedo texture is still required for its alpha mask. The blend is also multiplied by the albedo texture's alpha and the decal's fade. Values are clamped between [code]0.0[/code] and [code]1.0[/code].
+		</member>
 		<member name="cull_mask" type="int" setter="set_cull_mask" getter="get_cull_mask" default="1048575">
 			Specifies which [member VisualInstance3D.layers] this decal will project on. By default, Decals affect all layers. This is used so you can specify which types of objects receive the Decal and which do not. This is especially useful so you can ensure that dynamic objects don't accidentally receive a Decal intended for the terrain under them.
 		</member>
@@ -80,12 +83,18 @@
 		<member name="lower_fade" type="float" setter="set_lower_fade" getter="get_lower_fade" default="0.3">
 			Sets the curve over which the decal will fade as the surface gets further from the center of the [AABB]. Only positive values are valid (negative values will be clamped to [code]0.0[/code]). See also [member upper_fade].
 		</member>
+		<member name="metallic_mix" type="float" setter="set_metallic_mix" getter="get_metallic_mix" default="1.0">
+			Controls how strongly the blue channel of [member texture_orm] overrides the underlying surface's metallic value. Set to [code]0.0[/code] to preserve the surface's metallic value. The blend is also multiplied by the albedo texture's alpha and the decal's fade. Values are clamped between [code]0.0[/code] and [code]1.0[/code].
+		</member>
 		<member name="modulate" type="Color" setter="set_modulate" getter="get_modulate" default="Color(1, 1, 1, 1)" keywords="color, colour">
 			Changes the [Color] of the Decal by multiplying the albedo and emission colors with this value. The alpha component is only taken into account when multiplying the albedo color, not the emission color. See also [member emission_energy] and [member albedo_mix] to change the emission and albedo intensity independently of each other.
 		</member>
 		<member name="normal_fade" type="float" setter="set_normal_fade" getter="get_normal_fade" default="0.0">
 			Fades the Decal if the angle between the Decal's [AABB] and the target surface becomes too large. A value of [code]0[/code] projects the Decal regardless of angle, a value of [code]1[/code] limits the Decal to surfaces that are nearly perpendicular.
 			[b]Note:[/b] Setting [member normal_fade] to a value greater than [code]0.0[/code] has a small performance cost due to the added normal angle computations.
+		</member>
+		<member name="roughness_mix" type="float" setter="set_roughness_mix" getter="get_roughness_mix" default="1.0">
+			Controls how strongly the green channel of [member texture_orm] overrides the underlying surface's roughness. Set to [code]0.0[/code] to preserve the surface's roughness. The blend is also multiplied by the albedo texture's alpha and the decal's fade. Values are clamped between [code]0.0[/code] and [code]1.0[/code].
 		</member>
 		<member name="size" type="Vector3" setter="set_size" getter="get_size" default="Vector3(2, 2, 2)">
 			Sets the size of the [AABB] used by the decal. All dimensions must be set to a value greater than zero (they will be clamped to [code]0.001[/code] if this is not the case). The AABB goes from [code]-size/2[/code] to [code]size/2[/code].

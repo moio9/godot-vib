@@ -14,4 +14,6 @@ struct DecalData {
 	mat3x4 normal_xform;
 	vec3 normal;
 	float normal_fade;
+	vec3 orm_mix;
+	float pad;
 };

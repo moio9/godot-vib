@@ -104,6 +104,21 @@ jobs:
           if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' ssr-history-runtime.log; then
             exit 1
           fi
+      - name: Run independent decal ORM regression in all renderers
+        run: |
+          set -euxo pipefail
+          BIN=bin/godot.linuxbsd.editor.x86_64
+          LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$LVP_ICD"
+          for METHOD in forward_plus mobile gl_compatibility; do
+            timeout 180s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" LIBGL_ALWAYS_SOFTWARE=1 \
+              "$BIN" --path tests/rendering/decal_orm --script res://check.gd \
+              --rendering-method "$METHOD" --audio-driver Dummy --verbose 2>&1 | tee "decal-orm-$METHOD.log"
+            grep -Fq "DECAL_ORM_RESULT renderer=$METHOD checks=17 failures=0" "decal-orm-$METHOD.log"
+            if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' "decal-orm-$METHOD.log"; then
+              exit 1
+            fi
+          done
       - name: Package Linux editor
         run: |
           tar -cJf godot-vib-4.8-dev-linux-x86_64.tar.xz \
@@ -126,6 +141,7 @@ jobs:
             resource-lifecycle-runtime.log
             shader-version-runtime.log
             ssr-history-runtime.log
+            decal-orm-*.log
             version.txt
 
   windows:

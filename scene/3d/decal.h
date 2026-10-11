@@ -50,6 +50,9 @@ private:
 	Ref<Texture2D> textures[TEXTURE_MAX];
 	real_t emission_energy = 1.0;
 	real_t albedo_mix = 1.0;
+	real_t ao_mix = 1.0;
+	real_t roughness_mix = 1.0;
+	real_t metallic_mix = 1.0;
 	Color modulate = Color(1, 1, 1, 1);
 	uint32_t cull_mask = (1 << 20) - 1;
 	real_t normal_fade = 0.0;
@@ -81,6 +84,15 @@ public:
 
 	void set_albedo_mix(real_t p_mix);
 	real_t get_albedo_mix() const;
+
+	void set_ao_mix(real_t p_mix);
+	real_t get_ao_mix() const;
+
+	void set_roughness_mix(real_t p_mix);
+	real_t get_roughness_mix() const;
+
+	void set_metallic_mix(real_t p_mix);
+	real_t get_metallic_mix() const;
 
 	void set_modulate(Color p_modulate);
 	Color get_modulate() const;

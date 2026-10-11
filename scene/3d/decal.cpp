@@ -89,6 +89,33 @@ real_t Decal::get_albedo_mix() const {
 	return albedo_mix;
 }
 
+void Decal::set_ao_mix(real_t p_mix) {
+	ao_mix = CLAMP(p_mix, 0.0, 1.0);
+	RS::get_singleton()->decal_set_orm_mix(decal, ao_mix, roughness_mix, metallic_mix);
+}
+
+real_t Decal::get_ao_mix() const {
+	return ao_mix;
+}
+
+void Decal::set_roughness_mix(real_t p_mix) {
+	roughness_mix = CLAMP(p_mix, 0.0, 1.0);
+	RS::get_singleton()->decal_set_orm_mix(decal, ao_mix, roughness_mix, metallic_mix);
+}
+
+real_t Decal::get_roughness_mix() const {
+	return roughness_mix;
+}
+
+void Decal::set_metallic_mix(real_t p_mix) {
+	metallic_mix = CLAMP(p_mix, 0.0, 1.0);
+	RS::get_singleton()->decal_set_orm_mix(decal, ao_mix, roughness_mix, metallic_mix);
+}
+
+real_t Decal::get_metallic_mix() const {
+	return metallic_mix;
+}
+
 void Decal::set_upper_fade(real_t p_fade) {
 	upper_fade = MAX(p_fade, 0.0);
 	RS::get_singleton()->decal_set_fade(decal, upper_fade, lower_fade);
@@ -212,6 +239,15 @@ void Decal::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_albedo_mix", "energy"), &Decal::set_albedo_mix);
 	ClassDB::bind_method(D_METHOD("get_albedo_mix"), &Decal::get_albedo_mix);
 
+	ClassDB::bind_method(D_METHOD("set_ao_mix", "mix"), &Decal::set_ao_mix);
+	ClassDB::bind_method(D_METHOD("get_ao_mix"), &Decal::get_ao_mix);
+
+	ClassDB::bind_method(D_METHOD("set_roughness_mix", "mix"), &Decal::set_roughness_mix);
+	ClassDB::bind_method(D_METHOD("get_roughness_mix"), &Decal::get_roughness_mix);
+
+	ClassDB::bind_method(D_METHOD("set_metallic_mix", "mix"), &Decal::set_metallic_mix);
+	ClassDB::bind_method(D_METHOD("get_metallic_mix"), &Decal::get_metallic_mix);
+
 	ClassDB::bind_method(D_METHOD("set_modulate", "color"), &Decal::set_modulate);
 	ClassDB::bind_method(D_METHOD("get_modulate"), &Decal::get_modulate);
 
@@ -250,6 +286,9 @@ void Decal::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission_energy", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), "set_emission_energy", "get_emission_energy");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "modulate"), "set_modulate", "get_modulate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "albedo_mix", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_albedo_mix", "get_albedo_mix");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ao_mix", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ao_mix", "get_ao_mix");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness_mix", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_roughness_mix", "get_roughness_mix");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "metallic_mix", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_metallic_mix", "get_metallic_mix");
 	// A Normal Fade of 1.0 causes the decal to be invisible even if fully perpendicular to a surface.
 	// Due to this, limit Normal Fade to 0.999.
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "normal_fade", PROPERTY_HINT_RANGE, "0,0.999,0.001"), "set_normal_fade", "get_normal_fade");

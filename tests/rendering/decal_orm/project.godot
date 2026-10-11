@@ -1,0 +1,13 @@
+config_version=5
+
+[application]
+config/name="Independent Decal ORM Regression"
+
+[display]
+window/size/viewport_width=256
+window/size/viewport_height=256
+window/size/no_focus=true
+window/vsync/vsync_mode=0
+
+[rendering]
+renderer/rendering_method="forward_plus"

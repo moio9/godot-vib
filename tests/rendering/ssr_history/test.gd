@@ -62,4 +62,11 @@ func _ready() -> void:
                 failures += 1
                 print("SSR_HISTORY_FAIL msaa=%d expected=%s observed=%s" % [samples, combination, observed])
     print("SSR_HISTORY_RESULT checks=%d failures=%d" % [checks, failures])
+    # Retire the script observer before SceneTree frees its Mutex. The render
+    # thread can still have an in-flight callback when the main thread exits.
+    observer.enabled = false
+    camera.compositor = null
+    for frame in range(2):
+        await RenderingServer.frame_post_draw
+        await get_tree().process_frame
     get_tree().quit(1 if failures else 0)
