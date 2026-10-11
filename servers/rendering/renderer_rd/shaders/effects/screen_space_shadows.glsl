@@ -13,14 +13,14 @@ layout(rgba8, set = 0, binding = 0) uniform image2D color_image;
 layout(set = 1, binding = 0) uniform sampler2D depth_image;
 layout(set = 1, binding = 1) uniform sampler2D normal_image;
 layout(set = 1, binding = 2) uniform sampler2D history_image;
-layout(set = 1, binding = 3) uniform sampler2D motion_image;
-layout(set = 1, binding = 4, r8) uniform writeonly image2D history_write_image;
+layout(set = 1, binding = 4, rg32f) uniform writeonly image2D history_write_image;
 
 layout(set = 2, binding = 0, std140) uniform Params {
     mat4 proj;
     mat4 proj_inv;
     mat4 view;
     mat4 view_inv;
+    mat4 previous_view_projection;
 } params;
 
 layout(push_constant, std430) uniform PushConstant {
@@ -41,7 +41,8 @@ layout(push_constant, std430) uniform PushConstant {
     float shadow_fade_range;
     float history_blend;
     uint use_history;
-    vec2 history_pad;
+    uint write_history;
+    float history_pad;
 } push_constant;
 
 vec3 hash33(vec3 p) {
@@ -183,14 +184,15 @@ void main() {
     vec4 orig_color = imageLoad(color_image, iuv);
 
     float depth = texelFetch(depth_image, iuv, 0).r;
-    if (depth >= 0.999) {
-        if (push_constant.use_history != 0u) {
+    if (depth <= 0.0) {
+        if (push_constant.write_history != 0u) {
             imageStore(history_write_image, iuv, vec4(0.0));
         }
         return;
     }
 
     vec3 world_pos = get_world_position(uv, depth);
+    vec3 history_world_pos = world_pos;
     float linear_depth = get_linear_depth(world_pos);
     
     vec3 light_dir = normalize(push_constant.light_dir);
@@ -204,7 +206,7 @@ void main() {
             float ndotl = dot(normal_ws, -light_dir);
             
             if (ndotl <= BRDF_NDOTL_BIAS) {
-                if (push_constant.use_history != 0u) {
+                if (push_constant.write_history != 0u) {
                     imageStore(history_write_image, iuv, vec4(0.0));
                 }
                 imageStore(color_image, iuv, orig_color);
@@ -223,74 +225,28 @@ void main() {
     float current_shadow_strength = shadow * fade * push_constant.intensity;
     float final_shadow_strength = current_shadow_strength;
 
-    // ACUMULARE TEMPORALĂ OPTIMIZATĂ FINALĂ
+    // Reproject current geometry, not the previous frame's motion vectors.
     if (push_constant.use_history != 0u) {
-        vec2 velocity = textureLod(motion_image, uv, 0.0).xy;
-        vec2 prev_uv = uv - velocity;
-        bool valid_prev = is_valid_uv(prev_uv);
-
-        float history_value = valid_prev ? textureLod(history_image, prev_uv, 0.0).r : 0.0;
-        
-        // STRATEGIE AVANSATĂ DE ACUMULARE
-        float adaptive_blend = push_constant.history_blend;
-        
-        // Factor de încredere în istorie bazat pe stabilitate
-        float history_confidence = 1.0;
-        
-        // Verifică variația locală a istoriei pentru a detecta discontinuități
-        float neighborhood_min = history_value;
-        float neighborhood_max = history_value;
-        const ivec2 offsets[4] = ivec2[4](ivec2(1,0), ivec2(-1,0), ivec2(0,1), ivec2(0,-1));
-        
-        for (int i = 0; i < 4; i++) {
-            ivec2 sample_pos = iuv + offsets[i];
-            if (all(greaterThanEqual(sample_pos, ivec2(0))) && all(lessThan(sample_pos, push_constant.screen_size))) {
-                float neighbor_history = texelFetch(history_image, sample_pos, 0).r;
-                neighborhood_min = min(neighborhood_min, neighbor_history);
-                neighborhood_max = max(neighborhood_max, neighbor_history);
+        vec4 previous_clip = params.previous_view_projection * vec4(history_world_pos, 1.0);
+        vec3 previous_ndc = previous_clip.xyz / previous_clip.w;
+        vec2 previous_uv = previous_ndc.xy * 0.5 + 0.5;
+        bool valid_previous = previous_clip.w > 0.0 && is_valid_uv(previous_uv);
+        if (valid_previous) {
+            vec2 history = textureLod(history_image, previous_uv, 0.0).rg;
+            float depth_tolerance = max(0.000001, abs(previous_ndc.z) * 0.01);
+            valid_previous = history.g > 0.0 && abs(history.g - previous_ndc.z) <= depth_tolerance;
+            if (valid_previous) {
+                // Bound history against the current shadow, never the reverse.
+                // The configured history weight remains an upper bound.
+                float history_value = clamp(history.r, max(0.0, current_shadow_strength - 0.1), min(1.0, current_shadow_strength + 0.1));
+                final_shadow_strength = mix(current_shadow_strength, history_value, 1.0 - push_constant.history_blend);
             }
         }
-        
-        // Dacă istoria este inconsistentă în vecinătate, reducem încrederea
-        float neighborhood_range = neighborhood_max - neighborhood_min;
-        if (neighborhood_range > 0.3) {
-            history_confidence = 0.3;
-        } else if (neighborhood_range > 0.15) {
-            history_confidence = 0.7;
-        }
-        if (!valid_prev) {
-            history_confidence = 0.0;
-        }
-        
-        // Ajustare blend bazată pe multiple criterii
-        if (current_shadow_strength > 0.15) {
-            // Umbră puternică curentă - păstrăm mai mult istorie dacă e consistentă
-            adaptive_blend = push_constant.history_blend * (0.3 + 0.7 * history_confidence);
-        } else if (history_value > 0.25 && current_shadow_strength < 0.08) {
-            // Istorie puternică, curent slab - păstrăm istoria
-            adaptive_blend = 0.1 * history_confidence;
-        } else if (current_shadow_strength < 0.02 && history_value < 0.05) {
-            // Ambele slabe - resetare rapidă
-            adaptive_blend = 0.8;
-        }
-        
-        // Clamping inteligent al istoriei
-        float clamped_current = clamp(current_shadow_strength, 
-                                    neighborhood_min - 0.1, 
-                                    neighborhood_max + 0.1);
-        
-        // Acumulare finală
-        final_shadow_strength = mix(history_value, clamped_current, adaptive_blend);
-        
-        // Asigură-te că tranzițiile bruște sunt păstrate
-        if (abs(current_shadow_strength - history_value) > 0.4) {
-            final_shadow_strength = mix(history_value, current_shadow_strength, 0.7);
-        }
-        
-        final_shadow_strength = clamp(final_shadow_strength, 0.0, 1.0);
-        imageStore(history_write_image, iuv, vec4(final_shadow_strength, 0.0, 0.0, 0.0));
     }
-    
+    if (push_constant.write_history != 0u) {
+        imageStore(history_write_image, iuv, vec4(final_shadow_strength, depth, 0.0, 0.0));
+    }
+
     // APLICARE UMBRĂ FINALĂ
     if (final_shadow_strength > 0.008) {
         // Efect de umbră non-linear pentru rezultate mai naturale

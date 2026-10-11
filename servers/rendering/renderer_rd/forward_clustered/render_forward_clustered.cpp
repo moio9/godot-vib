@@ -118,6 +118,8 @@ void RenderForwardClustered::RenderBufferDataForwardClustered::free_data() {
 		render_buffers->clear_context(RB_SCOPE_SSGI);
 		render_buffers->clear_context(RB_SCOPE_SSAO);
 		render_buffers->clear_context(RB_SCOPE_SSR);
+		render_buffers->clear_context(RB_SCOPE_SSS);
+		ss_effects_data.screen_space_shadows = RendererRD::SSEffects::ScreenSpaceShadowsRenderBuffers();
 	}
 
 	if (cluster_builder) {
@@ -1866,11 +1868,9 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 					Projection correction;
 					correction.set_depth_correction(true);
 					correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
-					if (ss_shadow_history_weight > 0.0f) {
-						rb->ensure_velocity();
-					}
 					ss_effects->gen_screen_space_shadows(
 							rb,
+							rb_data->ss_effects_data.screen_space_shadows,
 							normal_texture,
 							ss_thickness,
 							ss_max_distance,
@@ -2039,14 +2039,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	bool using_debug_mvs = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_MOTION_VECTORS;
 	bool using_taa = rb->get_use_taa();
 
-	bool ss_shadow_enabled = false;
-	float ss_shadow_history_weight = 0.0f;
-	if (!is_reflection_probe && p_render_data->environment.is_valid()) {
-		ss_shadow_enabled = environment_get_screen_space_shadow_enabled(p_render_data->environment);
-		if (ss_shadow_enabled) {
-			ss_shadow_history_weight = environment_get_screen_space_shadow_history_weight(p_render_data->environment);
-		}
-	}
+	bool ss_shadow_enabled = !is_reflection_probe && p_render_data->environment.is_valid() && environment_get_screen_space_shadow_enabled(p_render_data->environment);
 
 	enum {
 		SCALE_NONE,
@@ -2078,8 +2071,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	} else if (ce_needs_motion_vectors) {
 		motion_vectors_required = true;
 	} else if (!is_reflection_probe && using_taa) {
-		motion_vectors_required = true;
-	} else if (ss_shadow_enabled && ss_shadow_history_weight > 0.0f && rb->get_view_count() == 1) {
 		motion_vectors_required = true;
 	} else if (!is_reflection_probe && using_upscaling) {
 		motion_vectors_required = true;
@@ -2714,7 +2705,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	RD::get_singleton()->draw_command_begin_label("Resolve");
 
 	if (rb_data.is_valid() && use_msaa) {
-		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors) && rb->has_velocity_buffer(true);
+		bool resolve_velocity_buffer = motion_vectors_required && rb->has_velocity_buffer(true);
 		for (uint32_t v = 0; v < rb->get_view_count(); v++) {
 			RD::get_singleton()->texture_resolve_multisample(rb->get_color_msaa(v), rb->get_internal_texture(v));
 			resolve_effects->resolve_depth(rb->get_depth_msaa(v), rb->get_depth_texture(v), rb->get_internal_size(), texture_multisamples[msaa]);
@@ -2732,87 +2723,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
 	}
 
-	if (!p_render_data->environment.is_valid()) {
-		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
-	} else {
-
-		RID directional_light;
-		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
-			RID li = p_render_data->render_shadows[i].light;
-			RID base = light_storage->light_instance_get_base_light(li);
-
-			if (light_storage->light_get_type(base) == RSE::LIGHT_DIRECTIONAL) {
-				directional_light = li;
-				break;
-			}
-		}
-
-		if (!directional_light.is_valid() && p_render_data->lights != nullptr) {
-			const PagedArray<RID> &scene_lights = *p_render_data->lights;
-			for (int i = 0; i < (int)scene_lights.size(); i++) {
-				RID li = scene_lights[i];
-				if (!light_storage->owns_light_instance(li)) {
-					continue;
-				}
-
-				RID base = light_storage->light_instance_get_base_light(li);
-				if (base.is_null()) {
-					continue;
-				}
-
-				if (light_storage->light_get_type(base) == RSE::LIGHT_DIRECTIONAL) {
-					directional_light = li;
-					break;
-				}
-			}
-		}
-
-		if (!directional_light.is_valid()) {
-			ERR_PRINT_ONCE("SSS: no directional light found, skipping ray marching pass.");
-		} else if (!ss_shadow_enabled) {
-			// Disabled; nothing to do.
-		} else {
-			RID normal_texture;
-			if (rb_data.is_valid() && rb_data->has_normal_roughness()) {
-				normal_texture = rb_data->get_normal_roughness();
-			}
-
-			float ss_thickness = environment_get_screen_space_shadow_thickness(p_render_data->environment);
-			float ss_max_distance = environment_get_screen_space_shadow_max_distance(p_render_data->environment);
-			float ss_intensity = environment_get_screen_space_shadow_strength(p_render_data->environment);
-			int ss_steps = environment_get_screen_space_shadow_steps(p_render_data->environment);
-			float ss_light_radius = environment_get_screen_space_shadow_light_radius(p_render_data->environment);
-			float ss_thickness_falloff = environment_get_screen_space_shadow_thickness_falloff(p_render_data->environment);
-			float ss_contact_distance = environment_get_screen_space_shadow_contact_distance(p_render_data->environment);
-			float ss_fade_range = environment_get_screen_space_shadow_fade_range(p_render_data->environment);
-			uint32_t frame_count = static_cast<uint32_t>(Engine::get_singleton()->get_frames_drawn());
-			Vector3 camera_pos = p_render_data->scene_data->cam_transform.origin;
-
-			RD::get_singleton()->draw_command_begin_label("SSS");
-			RENDER_TIMESTAMP("SSS");
-			Projection correction;
-			correction.set_depth_correction(true);
-			correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
-			ss_effects->gen_screen_space_shadows(
-					rb,
-					normal_texture,
-					ss_thickness,
-					ss_max_distance,
-					ss_intensity,
-					ss_steps,
-					ss_light_radius,
-					ss_thickness_falloff,
-					ss_contact_distance,
-					ss_fade_range,
-					ss_shadow_history_weight,
-					frame_count,
-					camera_pos,
-					light_storage->light_instance_get_base_transform(directional_light),
-					correction * p_render_data->scene_data->view_projection[0],
-					p_render_data->scene_data->cam_transform);
-			RD::get_singleton()->draw_command_end_label();
-		}
-	}
 
 	if (rb_data.is_valid() && (using_upscaling || using_taa)) {
 		if (scale_type == SCALE_FSR2) {

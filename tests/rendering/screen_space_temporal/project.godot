@@ -1,0 +1,20 @@
+config_version=5
+
+[application]
+config/name="Template Temporal Regression"
+run/main_scene="res://main.tscn"
+
+[display]
+window/size/viewport_width=640
+window/size/viewport_height=360
+window/size/window_width_override=640
+window/size/window_height_override=360
+window/size/no_focus=true
+window/vsync/vsync_mode=0
+
+[rendering]
+renderer/rendering_method="forward_plus"
+environment/ssao/quality=3
+environment/ssao/half_size=false
+environment/ssil/quality=3
+environment/ssil/half_size=false

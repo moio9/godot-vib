@@ -417,7 +417,7 @@ SSEffects::SSEffects() {
 
 	{
 		RD::TextureFormat tf;
-		tf.format = RD::DATA_FORMAT_R8_UNORM;
+		tf.format = RD::DATA_FORMAT_R32G32_SFLOAT;
 		tf.width = 1;
 		tf.height = 1;
 		tf.mipmaps = 1;
@@ -583,19 +583,13 @@ SSEffects::~SSEffects() {
 		if (screen_space_shadows.ubo.is_valid()) {
 			RD::get_singleton()->free_rid(screen_space_shadows.ubo);
 		}
-		for (int i = 0; i < 2; i++) {
-			if (screen_space_shadows.history_textures[i].is_valid()) {
-				RD::get_singleton()->free_rid(screen_space_shadows.history_textures[i]);
-			}
+		if (screen_space_shadows.history_dummy.is_valid()) {
+			RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
 		}
-			if (screen_space_shadows.history_dummy.is_valid()) {
-				RD::get_singleton()->free_rid(screen_space_shadows.history_dummy);
-			}
-
-		}
-
-		singleton = nullptr;
 	}
+
+	singleton = nullptr;
+}
 
 /* SS Downsampler */
 
@@ -1245,27 +1239,27 @@ void SSEffects::ssgi_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers
 	}
 	if (should_create) {
 		p_render_buffers->clear_context(RB_SCOPE_SSGI);
-		RID ssgi_half = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HALF, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
-		RID ssgi_input = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
+		RID ssgi_half = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HALF, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
+		RID ssgi_input = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
 		RID ssgi_input_2;
 		RID ssgi_input_4;
 		RID ssgi_input_8;
 		RID ssgi_input_16;
 		if (p_settings.multirez) {
-			ssgi_input_2 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_2, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_2, view_count);
+			ssgi_input_2 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_2, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_2, view_count);
 			if (p_settings.multirez_levels >= 4) {
-				ssgi_input_4 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_4, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_4, view_count);
+				ssgi_input_4 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_4, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_4, view_count);
 			}
 			if (p_settings.multirez_levels >= 8) {
-				ssgi_input_8 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_8, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_8, view_count);
+				ssgi_input_8 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_8, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_8, view_count);
 			}
 			if (p_settings.multirez_levels >= 16) {
-				ssgi_input_16 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_16, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_16, view_count);
+				ssgi_input_16 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_16, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_16, view_count);
 			}
 		}
-		RID ssgi_pong = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
-		RID ssgi_history = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
-		RID final = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_FINAL, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RID ssgi_pong = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RID ssgi_history = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RID final = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_FINAL, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
 		RD::get_singleton()->texture_clear(ssgi_half, Color(0, 0, 0, 0), 0, 1, 0, view_count);
 		RD::get_singleton()->texture_clear(ssgi_input, Color(0, 0, 0, 0), 0, 1, 0, view_count);
 		if (ssgi_input_2.is_valid()) {
@@ -2520,7 +2514,7 @@ void SSEffects::sub_surface_scattering(Ref<RenderSceneBuffersRD> p_render_buffer
 	}
 }
 
-void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_depth_threshold, float p_trace_distance, float p_shadow_weight, int p_ray_steps, float p_light_radius, float p_thickness_falloff, float p_contact_distance, float p_fade_range, float p_history_weight, uint32_t p_frame_count, const Vector3 &p_camera_position, Transform3D light_dir, Projection p_projection, Transform3D p_view) {
+void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, ScreenSpaceShadowsRenderBuffers &p_sss_buffers, RID p_normal_roughness, float p_depth_threshold, float p_trace_distance, float p_shadow_weight, int p_ray_steps, float p_light_radius, float p_thickness_falloff, float p_contact_distance, float p_fade_range, float p_history_weight, uint32_t p_frame_count, const Vector3 &p_camera_position, Transform3D light_dir, Projection p_projection, Transform3D p_view) {
 	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
 	ERR_FAIL_NULL(uniform_set_cache);
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
@@ -2537,37 +2531,21 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	}
 	bool use_normals = p_normal_roughness.is_valid();
 	RID normal_texture = use_normals ? p_normal_roughness : depth;
-	bool history_requested = (p_history_weight > 0.0f) && p_render_buffers->get_view_count() == 1;
-	RID motion_vectors = history_requested ? p_render_buffers->get_velocity_buffer(false) : RID();
-	if (!motion_vectors.is_valid()) {
-		motion_vectors = screen_space_shadows.history_dummy;
-	}
-	if (history_requested) {
-		if (screen_space_shadows.history_textures[0].is_null() || screen_space_shadows.history_size != screen_size) {
-			for (int i = 0; i < 2; i++) {
-				if (screen_space_shadows.history_textures[i].is_valid()) {
-					RD::get_singleton()->free_rid(screen_space_shadows.history_textures[i]);
-				}
-				RD::TextureFormat tf;
-				tf.format = RD::DATA_FORMAT_R8_UNORM;
-				tf.width = screen_size.x;
-				tf.height = screen_size.y;
-				tf.mipmaps = 1;
-				tf.array_layers = 1;
-				tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
-				Vector<Vector<uint8_t>> dummy;
-				screen_space_shadows.history_textures[i] = RD::get_singleton()->texture_create(tf, RD::TextureView(), dummy);
-				if (screen_space_shadows.history_textures[i].is_valid()) {
-					RD::get_singleton()->texture_clear(screen_space_shadows.history_textures[i], Color(0, 0, 0, 0), 0, 1, 0, 1);
-				}
-			}
-			screen_space_shadows.history_size = screen_size;
-			screen_space_shadows.history_index = 0;
+	const bool history_requested = p_history_weight > 0.0f && p_render_buffers->get_view_count() == 1;
+	const StringName history_names[2] = { SNAME("shadow_history_0"), SNAME("shadow_history_1") };
+	if (history_requested && !p_render_buffers->has_texture(RB_SCOPE_SSS, history_names[0])) {
+		for (int i = 0; i < 2; i++) {
+			RID history = p_render_buffers->create_texture(RB_SCOPE_SSS, history_names[i], RD::DATA_FORMAT_R32G32_SFLOAT,
+					RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT);
+			RD::get_singleton()->texture_clear(history, Color(0, 0, 0, 0), 0, 1, 0, 1);
 		}
+		p_sss_buffers.history_valid = false;
+		p_sss_buffers.history_index = 0;
 	}
-	bool history_available = history_requested && screen_space_shadows.history_textures[0].is_valid() && screen_space_shadows.history_textures[1].is_valid();
-	RID history_read = history_available ? screen_space_shadows.history_textures[screen_space_shadows.history_index] : screen_space_shadows.history_dummy;
-	RID history_write = history_available ? screen_space_shadows.history_textures[screen_space_shadows.history_index ^ 1] : screen_space_shadows.history_dummy;
+	const bool history_available = history_requested && p_sss_buffers.history_valid && p_sss_buffers.last_frame + 1 == p_frame_count;
+	RID history_read = history_requested ? p_render_buffers->get_texture(RB_SCOPE_SSS, history_names[p_sss_buffers.history_index]) : screen_space_shadows.history_dummy;
+	RID history_write = history_requested ? p_render_buffers->get_texture(RB_SCOPE_SSS, history_names[p_sss_buffers.history_index ^ 1]) : screen_space_shadows.history_dummy;
+
 	auto dir = light_dir.basis.get_quaternion().normalized().xform(Vector3(0, 0, -1));
 
 	ScreenSpaceShadowsData data;
@@ -2595,6 +2573,8 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	float history_strength = CLAMP(p_history_weight, 0.0f, 1.0f);
 	screen_space_shadows.push_constant.history_blend = history_available ? (1.0f - history_strength) : 1.0f;
 	screen_space_shadows.push_constant.use_history = history_available ? 1 : 0;
+	screen_space_shadows.push_constant.write_history = history_requested ? 1 : 0;
+	screen_space_shadows.push_constant.history_pad = 0.0f;
 	screen_space_shadows.push_constant.camera_pos[0] = p_camera_position.x;
 	screen_space_shadows.push_constant.camera_pos[1] = p_camera_position.y;
 	screen_space_shadows.push_constant.camera_pos[2] = p_camera_position.z;
@@ -2604,6 +2584,10 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	MaterialStorage::store_camera(p_projection.inverse(), data.proj_inv);
 	MaterialStorage::store_transform(p_view, data.view_inv);
 	MaterialStorage::store_transform(p_view.affine_inverse(), data.view);
+	// This pass runs before opaque motion vectors exist. Reproject the current
+	// depth with the previous camera, and reject newly exposed surfaces by depth.
+	Projection previous_view_projection = p_sss_buffers.last_projection * Projection(p_sss_buffers.last_view.affine_inverse());
+	MaterialStorage::store_camera(previous_view_projection, data.previous_view_projection);
 
 	// printf("Projection:\n");
 	// printf("|%f,%f,%f,%f|\n", data.proj[0], data.proj[1], data.proj[2], data.proj[3]);
@@ -2615,12 +2599,12 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 
 	// Ensure output texture exists and is cleared to white so the shader writes a shadow factor.
 	if (!p_render_buffers->has_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW)) {
-		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT);
+		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT);
 	}
 	RID shadow_texture = p_render_buffers->get_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW);
 	if (shadow_texture.is_null()) {
 		// Previous allocation may have failed (e.g. when buffers were zero sized); try again now that we have a valid size.
-		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT);
+		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT);
 		shadow_texture = p_render_buffers->get_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW);
 	}
 	if (shadow_texture.is_null()) {
@@ -2631,9 +2615,6 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	}
 	if (history_write.is_null()) {
 		history_write = screen_space_shadows.history_dummy;
-	}
-	if (motion_vectors.is_null()) {
-		motion_vectors = screen_space_shadows.history_dummy;
 	}
 	RD::get_singleton()->texture_clear(shadow_texture, Color(1, 1, 1, 1), 0, 1, 0, 1);
 
@@ -2646,7 +2627,6 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 	RD::Uniform u_depthsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, depth }));
 	RD::Uniform u_normalsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, normal_texture }));
 	RD::Uniform u_historysampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ default_sampler, history_read }));
-	RD::Uniform u_motionvectorsampler(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ default_sampler, motion_vectors }));
 	RD::Uniform u_historywrite(RD::UNIFORM_TYPE_IMAGE, 4, Vector<RID>({ history_write }));
 	auto uniform_has_null = [](const RD::Uniform &u) {
 		uint32_t count = u.get_id_count();
@@ -2660,12 +2640,12 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 		}
 		return false;
 	};
-	if (!default_sampler.is_valid() || uniform_has_null(u_shadow_image) || uniform_has_null(u_depthsampler) || uniform_has_null(u_normalsampler) || uniform_has_null(u_historysampler) || uniform_has_null(u_motionvectorsampler) || uniform_has_null(u_historywrite)) {
+	if (!default_sampler.is_valid() || uniform_has_null(u_shadow_image) || uniform_has_null(u_depthsampler) || uniform_has_null(u_normalsampler) || uniform_has_null(u_historysampler) || uniform_has_null(u_historywrite)) {
 		RD::get_singleton()->compute_list_end();
 		return;
 	}
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_shadow_image), 0);
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_motionvectorsampler, u_historywrite), 1);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_depthsampler, u_normalsampler, u_historysampler, u_historywrite), 1);
 	RD::Uniform u_data(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, screen_space_shadows.ubo);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 2, u_data), 2);
 
@@ -2675,7 +2655,11 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 
 	RD::get_singleton()->compute_list_end();
 
-	if (history_available) {
-		screen_space_shadows.history_index ^= 1;
+	if (history_requested) {
+		p_sss_buffers.history_index ^= 1;
 	}
+	p_sss_buffers.history_valid = history_requested;
+	p_sss_buffers.last_frame = p_frame_count;
+	p_sss_buffers.last_projection = p_projection;
+	p_sss_buffers.last_view = p_view;
 }

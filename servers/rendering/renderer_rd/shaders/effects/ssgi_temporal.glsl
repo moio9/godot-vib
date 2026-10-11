@@ -27,7 +27,7 @@ layout(set = 0, binding = 1) uniform sampler2D input_history;
 layout(set = 0, binding = 2) uniform sampler2D input_depth;
 layout(set = 0, binding = 3) uniform sampler2D input_normal;
 layout(set = 0, binding = 4) uniform sampler2D input_velocity;
-layout(rgba16, set = 0, binding = 5) uniform restrict writeonly image2D output_image;
+layout(rgba16f, set = 0, binding = 5) uniform restrict writeonly image2D output_image;
 
 layout(push_constant, std430) uniform Params {
 	vec4 pixel_params; // xy: pixel_size, z: history_weight, w: luma_reject

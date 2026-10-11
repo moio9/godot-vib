@@ -114,6 +114,7 @@ public:
 			RendererRD::SSEffects::SSGIRenderBuffers ssgi;
 			RendererRD::SSEffects::SSAORenderBuffers ssao;
 			RendererRD::SSEffects::SSRRenderBuffers ssr;
+			RendererRD::SSEffects::ScreenSpaceShadowsRenderBuffers screen_space_shadows;
 		} ss_effects_data;
 
 		enum DepthFrameBufferType {

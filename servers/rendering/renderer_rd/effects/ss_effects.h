@@ -214,7 +214,15 @@ public:
 
 	void sub_surface_scattering(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_diffuse, RID p_depth, const Projection &p_camera, const Size2i &p_screen_size);
 
-	void gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_normal_roughness, float p_depth_threshold, float p_trace_distance, float p_shadow_weight, int p_ray_steps, float p_light_radius, float p_thickness_falloff, float p_contact_distance, float p_fade_range, float p_history_weight, uint32_t p_frame_count, const Vector3 &p_camera_position, Transform3D light_dir, Projection p_projection, Transform3D p_view);
+	struct ScreenSpaceShadowsRenderBuffers {
+		bool history_valid = false;
+		uint32_t history_index = 0;
+		uint32_t last_frame = 0;
+		Projection last_projection;
+		Transform3D last_view;
+	};
+
+	void gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buffers, ScreenSpaceShadowsRenderBuffers &p_sss_buffers, RID p_normal_roughness, float p_depth_threshold, float p_trace_distance, float p_shadow_weight, int p_ray_steps, float p_light_radius, float p_thickness_falloff, float p_contact_distance, float p_fade_range, float p_history_weight, uint32_t p_frame_count, const Vector3 &p_camera_position, Transform3D light_dir, Projection p_projection, Transform3D p_view);
 
 private:
 	/* Settings */
@@ -656,7 +664,7 @@ private:
 
 	struct ScreenSpaceShadowsPushConstant {
 		float screen_size_rcp[2];
-		float screen_size[2];
+		int32_t screen_size[2];
 
 		float light_dir[3];
 		float thickness;
@@ -674,7 +682,8 @@ private:
 		float shadow_fade_range;
 		float history_blend;
 		uint32_t use_history;
-		float history_pad[2];
+		uint32_t write_history;
+		float history_pad;
 	};
 
 	struct ScreenSpaceShadowsData {
@@ -682,6 +691,7 @@ private:
 		float proj_inv[16];
 		float view[16];
 		float view_inv[16];
+		float previous_view_projection[16];
 	};
 
 	struct ScreenSpaceShadows {
@@ -690,10 +700,7 @@ private:
 		RID shader_version;
 		RID pipelines[1];
 		RID ubo;
-		RID history_textures[2];
 		RID history_dummy;
-		Size2i history_size;
-		uint32_t history_index = 0;
 	} screen_space_shadows;
 };
 
