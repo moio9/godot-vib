@@ -189,6 +189,10 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 		version = SceneShaderForwardClustered::singleton->shader.version_create(false);
 	}
 
+	if (uniforms.has(StringName("mesh_blend"))) {
+		gen_code.defines.push_back(String("#define MATERIAL_HAS_MESH_BLEND\n"));
+	}
+
 	depth_draw = DepthDraw(depth_drawi);
 	if (depth_test_disabledi) {
 		depth_test = DEPTH_TEST_DISABLED;
@@ -296,6 +300,14 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 			return ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL + ubershader_base;
 		case PIPELINE_VERSION_DEPTH_PASS_WITH_SDF:
 			return ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_SDF + ubershader_base;
+		case PIPELINE_VERSION_VISIBILITY_BUFFER:
+			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS + ubershader_base;
+		case PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW:
+			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS_MULTIVIEW + ubershader_base;
+		case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX:
+			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS_NO_AUX + ubershader_base;
+		case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX_MULTIVIEW:
+			return ShaderVersion::SHADER_VERSION_VISIBILITY_PASS_NO_AUX_MULTIVIEW + ubershader_base;
 		case PIPELINE_VERSION_COLOR_PASS: {
 			int shader_flags = 0;
 
@@ -309,6 +321,10 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 
 			if (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS) {
 				shader_flags |= SHADER_COLOR_PASS_FLAG_MOTION_VECTORS;
+			}
+
+			if (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MESH_BLEND) {
+				shader_flags |= SHADER_COLOR_PASS_FLAG_MESH_BLEND;
 			}
 
 			if (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_LIGHTMAP) {
@@ -343,11 +359,13 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			"WIREFRAME:", p_pipeline_key.wireframe);
 #endif
 
-	// Color pass -> attachment 0: Color/Diffuse, attachment 1: Separate Specular, attachment 2: Motion Vectors
+	// Color pass -> attachment 0: Color/Diffuse, attachment 1: Separate Specular, attachment 2: Motion Vectors, attachment 3: Mesh Blend auxiliary/reserved.
+	// get_color_pass_fb() keeps all four color positions. With MSAA, Mesh Blend moves to the Visibility pass, so slot 3 is ATTACHMENT_UNUSED but remains part of the render pass.
 	RD::PipelineColorBlendState::Attachment blend_attachment = blend_mode_to_blend_attachment(BlendMode(blend_mode));
 	RD::PipelineColorBlendState blend_state_color_blend;
-	blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };
-	RD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(3);
+	blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };
+	const uint32_t color_attachment_count = 4;
+	RD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(color_attachment_count);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness = RD::PipelineColorBlendState::create_disabled(1);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness_giprobe = RD::PipelineColorBlendState::create_disabled(2);
 
@@ -470,6 +488,14 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			case PIPELINE_VERSION_DEPTH_PASS_WITH_MATERIAL:
 				// Writes to normal and roughness in opaque way.
 				blend_state = RD::PipelineColorBlendState::create_disabled(5);
+				break;
+			case PIPELINE_VERSION_VISIBILITY_BUFFER:
+			case PIPELINE_VERSION_VISIBILITY_BUFFER_MULTIVIEW:
+				blend_state = RD::PipelineColorBlendState::create_disabled(2);
+				break;
+			case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX:
+			case PIPELINE_VERSION_VISIBILITY_BUFFER_NO_AUX_MULTIVIEW:
+				blend_state = RD::PipelineColorBlendState::create_disabled(1);
 				break;
 			case PIPELINE_VERSION_DEPTH_PASS:
 			case PIPELINE_VERSION_DEPTH_PASS_DP:
@@ -657,6 +683,10 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED_MULTIVIEW, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_NORMAL_ROUGHNESS\n#define MODE_RENDER_VOXEL_GI\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_MATERIAL\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_SDF\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_SDF
+			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_BASE, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n", false)); // SHADER_VERSION_VISIBILITY_PASS
+			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_MULTIVIEW, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n", false)); // SHADER_VERSION_VISIBILITY_PASS_MULTIVIEW
+			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_BASE, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n#define MODE_RENDER_VISIBILITY_NO_AUX\n", false)); // SHADER_VERSION_VISIBILITY_PASS_NO_AUX
+			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_MULTIVIEW, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n#define MODE_RENDER_VISIBILITY_NO_AUX\n", false)); // SHADER_VERSION_VISIBILITY_PASS_NO_AUX_MULTIVIEW
 		}
 
 		Vector<String> color_pass_flags = {
@@ -665,6 +695,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 			"\n#define USE_LIGHTMAP\n", // SHADER_COLOR_PASS_FLAG_LIGHTMAP
 			"\n#define USE_MULTIVIEW\n", // SHADER_COLOR_PASS_FLAG_MULTIVIEW
 			"\n#define MOTION_VECTORS\n", // SHADER_COLOR_PASS_FLAG_MOTION_VECTORS
+			"\n#define MESH_BLEND_MAIN_PASS_OUTPUT\n", // SHADER_COLOR_PASS_FLAG_MESH_BLEND
 		};
 
 		for (int i = 0; i < SHADER_COLOR_PASS_FLAG_COUNT; i++) {
@@ -771,6 +802,11 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["BACKLIGHT"] = "backlight";
 		actions.renames["AO"] = "ao";
 		actions.renames["AO_LIGHT_AFFECT"] = "ao_light_affect";
+		actions.renames["MICRO_SHADOWS"] = "micro_shadows";
+		actions.renames["MESH_BLEND"] = "mesh_blend_output";
+		actions.renames["MESH_BLEND_GROUP"] = "mesh_blend_group_output";
+		actions.usage_defines["MESH_BLEND"] = "#define MESH_BLEND_OUTPUT_USED\n";
+		actions.usage_defines["MESH_BLEND_GROUP"] = "#define MESH_BLEND_GROUP_OUTPUT_USED\n";
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["POINT_COORD"] = "point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
@@ -823,6 +859,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.usage_defines["ANISOTROPY_FLOW"] = "@ANISOTROPY";
 		actions.usage_defines["AO"] = "#define AO_USED\n";
 		actions.usage_defines["AO_LIGHT_AFFECT"] = "#define AO_USED\n";
+		actions.usage_defines["MICRO_SHADOWS"] = "#define MICRO_SHADOWS_USED\n";
 		actions.usage_defines["UV"] = "#define UV_USED\n";
 		actions.usage_defines["UV2"] = "#define UV2_USED\n";
 		actions.usage_defines["BONE_INDICES"] = "#define BONES_USED\n";

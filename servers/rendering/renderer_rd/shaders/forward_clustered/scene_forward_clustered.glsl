@@ -650,6 +650,16 @@ void vertex_shader(vec3 vertex_input,
 			}
 		}
 
+		if (bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSS)) {
+#ifdef USE_MULTIVIEW
+			float sss_shadow = texture(sampler2DArray(sss_buffer, SAMPLER_LINEAR_CLAMP), vec3(clip_pos, ViewIndex)).r;
+#else
+			float sss_shadow = texture(sampler2D(sss_buffer, SAMPLER_LINEAR_CLAMP), clip_pos).r;
+#endif
+			directional_diffuse *= sss_shadow;
+			directional_specular *= sss_shadow;
+		}
+
 		// Calculate the contribution from the shadowed light so we can scale the shadows accordingly.
 		float diff_avg = dot(diffuse_light_interp.rgb, vec3(0.33333));
 		float diff_dir_avg = dot(directional_diffuse, vec3(0.33333));
@@ -865,6 +875,14 @@ void main() {
 
 #VERSION_DEFINES
 
+uint pack_visibility_aux(vec2 value) {
+	uint group_id = uint(round(clamp(value.y, 0.0, 1.0) * 255.0));
+	int weight_snorm = int(round(clamp(value.x, -1.0, 1.0) * 127.0));
+	uint weight_bits = uint(weight_snorm) & 0xFFu;
+	return (group_id << 8u) | weight_bits;
+}
+
+
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
 
@@ -1010,6 +1028,11 @@ layout(location = 2) out vec4 orm_output_buffer;
 layout(location = 3) out vec4 emission_output_buffer;
 layout(location = 4) out float depth_output_buffer;
 
+#elif defined(MODE_RENDER_VISIBILITY)
+layout(location = 0) out uvec4 visibility_id_output;
+#ifndef MODE_RENDER_VISIBILITY_NO_AUX
+layout(location = 1) out uint frag_visibility_aux;
+#endif
 #endif // MODE_RENDER_MATERIAL
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
@@ -1030,6 +1053,10 @@ layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface sc
 
 layout(location = 0) out vec4 frag_color;
 #endif // MODE_SEPARATE_SPECULAR
+
+#ifdef MESH_BLEND_MAIN_PASS_OUTPUT
+layout(location = 3) out uint frag_mesh_blend_aux;
+#endif
 
 #endif // RENDER DEPTH
 
@@ -1145,6 +1172,19 @@ uint cluster_get_range_clip_mask(uint i, uint z_min, uint z_max) {
 
 #endif //!MODE_RENDER DEPTH
 
+float sc_get_material_mesh_blend() {
+#if defined(MATERIAL_UNIFORMS_USED) && defined(MATERIAL_HAS_MESH_BLEND)
+	return material.m_mesh_blend;
+#else
+	return 0.0;
+#endif
+}
+
+float sc_instance_hash(uint id) {
+	const uint hashed = id * 1664525u + 1013904223u;
+	return float(hashed & 0x00FFFFFFu) * (1.0 / 16777215.0);
+}
+
 #if defined(MODE_RENDER_NORMAL_ROUGHNESS) || defined(MODE_RENDER_MATERIAL)
 // https://advances.realtimerendering.com/s2010/Kaplanyan-CryEngine3(SIGGRAPH%202010%20Advanced%20RealTime%20Rendering%20Course).pdf
 vec3 encode24(vec3 v) {
@@ -1169,6 +1209,14 @@ vec3 encode24(vec3 v) {
 
 void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
+
+#ifdef MODE_RENDER_VISIBILITY
+	uvec2 packed_ids = uvec2(uint(gl_PrimitiveID) + 1u, instance_index + 1u);
+	visibility_id_output = uvec4(packed_ids, 0u, 0u);
+#ifdef MODE_RENDER_VISIBILITY_NO_AUX
+	return;
+#endif
+#endif
 
 #ifdef PREMUL_ALPHA_USED
 	float premul_alpha = 1.0;
@@ -1202,7 +1250,10 @@ void fragment_shader(in SceneData scene_data) {
 	float anisotropy = 0.0;
 	vec2 anisotropy_flow = vec2(1.0, 0.0);
 	vec3 energy_compensation = vec3(1.0);
+	float mesh_blend_value = 0.0;
+#ifndef FOG_DISABLED
 	vec4 fog = vec4(0.0, 0.0, 0.0, 1.0);
+#endif
 #if defined(CUSTOM_RADIANCE_USED)
 	vec4 custom_radiance = vec4(0.0);
 #endif
@@ -1211,7 +1262,9 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 	float ao = 1.0;
+	float direct_ao = 0.0;
 	float ao_light_affect = 0.0;
+	float micro_shadows = 0.0;
 
 	float alpha_highp = float(instances.data[instance_index].flags >> INSTANCE_FLAGS_FADE_SHIFT) / float(255.0);
 
@@ -1313,7 +1366,37 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 	{
+float mesh_blend_output = 0.0;
+uint mesh_blend_group_output = 0u;
+
 #CODE : FRAGMENT
+#ifdef MESH_BLEND_MAIN_PASS_OUTPUT
+vec2 mesh_blend_main_aux_value = vec2(
+        clamp(sc_get_material_mesh_blend(), -1.0, 1.0),
+        sc_instance_hash(instance_index + 1u));
+#ifdef MESH_BLEND_OUTPUT_USED
+	mesh_blend_main_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
+#endif
+#ifdef MESH_BLEND_GROUP_OUTPUT_USED
+	mesh_blend_main_aux_value.y = float(min(mesh_blend_group_output, 255u)) / 255.0;
+#endif
+	frag_mesh_blend_aux = pack_visibility_aux(mesh_blend_main_aux_value);
+#endif
+
+#if defined(MODE_RENDER_VISIBILITY) && !defined(MODE_RENDER_VISIBILITY_NO_AUX)
+	float material_mesh_blend = clamp(sc_get_material_mesh_blend(), -1.0, 1.0);
+	float blend_id = sc_instance_hash(packed_ids.y);
+	vec2 mesh_blend_aux_value = vec2(material_mesh_blend, blend_id);
+#ifdef MESH_BLEND_OUTPUT_USED
+	mesh_blend_aux_value.x = clamp(mesh_blend_output, 0.0, 1.0);
+#endif
+#ifdef MESH_BLEND_GROUP_OUTPUT_USED
+	mesh_blend_aux_value.y = float(min(mesh_blend_group_output, 255u)) / 255.0;
+#endif
+	frag_visibility_aux = pack_visibility_aux(mesh_blend_aux_value);
+	return;
+#endif
+
 	}
 
 	float roughness = roughness_highp;
@@ -2275,6 +2358,17 @@ void fragment_shader(in SceneData scene_data) {
 			ambient_light += ssil.rgb * albedo.rgb;
 		}
 
+		if (bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSGI)) {
+#ifdef USE_MULTIVIEW
+			vec3 ssgi = textureLod(sampler2DArray(ssgi_buffer, SAMPLER_LINEAR_CLAMP), vec3(screen_uv, ViewIndex), 0.0).rgb;
+#else
+			vec3 ssgi = textureLod(sampler2D(ssgi_buffer, SAMPLER_LINEAR_CLAMP), screen_uv, 0.0).rgb;
+#endif // USE_MULTIVIEW
+			vec3 ssgi_scaled = ssgi * implementation_data.ssgi_intensity;
+			ssgi_scaled = ssgi_scaled / (vec3(1.0) + ssgi_scaled * 1.5);
+			ambient_light += ssgi_scaled * 0.425;
+		}
+
 		//process ssr
 		if (bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSR)) {
 			bool resolve_ssr = bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_RESOLVE_SSR);
@@ -2311,7 +2405,7 @@ void fragment_shader(in SceneData scene_data) {
 #endif // AMBIENT_LIGHT_DISABLED
 
 	// convert ao to direct light ao
-	ao = mix(1.0, ao, ao_light_affect);
+	direct_ao = mix(1.0, ao, ao_light_affect);
 
 	//this saves some VGPRs
 	vec3 f0 = F0(metallic, specular, albedo);
@@ -2736,6 +2830,15 @@ void fragment_shader(in SceneData scene_data) {
 			shadow = mix(1.0, shadow, directional_lights.data[i].shadow_opacity);
 #endif
 
+		if (i == 0 && bool(implementation_data.ss_effects_flags & SCREEN_SPACE_EFFECTS_FLAGS_USE_SSS)) {
+#ifdef USE_MULTIVIEW
+			float sss_shadow = texture(sampler2DArray(sss_buffer, SAMPLER_LINEAR_CLAMP), vec3(screen_uv, ViewIndex)).r;
+#else
+			float sss_shadow = texture(sampler2D(sss_buffer, SAMPLER_LINEAR_CLAMP), screen_uv).r;
+#endif
+			shadow *= sss_shadow;
+		}
+
 			blur_shadow(shadow);
 
 #ifdef DEBUG_DRAW_PSSM_SPLITS
@@ -2751,6 +2854,12 @@ void fragment_shader(in SceneData scene_data) {
 			}
 			tint = mix(tint, vec3(1.0), shadow);
 			shadow = 1.0;
+#endif
+
+#ifdef MICRO_SHADOWS_USED
+			float NdotL = dot(normal, directional_lights.data[i].direction);
+			// Disable microshadowing when facing away from light.
+			shadow *= NdotL >= 0.0 ? compute_micro_shadowing(NdotL, ao, micro_shadows) : 1.0;
 #endif
 
 			float size_A = sc_use_directional_soft_shadows() ? directional_lights.data[i].size : 0.0;
@@ -3100,7 +3209,7 @@ void fragment_shader(in SceneData scene_data) {
 	normal_output_buffer.a = 0.0;
 	depth_output_buffer.r = -vertex.z;
 
-	orm_output_buffer.r = ao;
+	orm_output_buffer.r = direct_ao;
 	orm_output_buffer.g = roughness;
 	orm_output_buffer.b = metallic;
 	orm_output_buffer.a = sss_strength;
@@ -3141,8 +3250,8 @@ void fragment_shader(in SceneData scene_data) {
 	diffuse_light *= albedo; // ambient must be multiplied by albedo at the end
 
 	// apply direct light AO
-	diffuse_light *= ao;
-	direct_specular_light *= ao;
+	diffuse_light *= direct_ao;
+	direct_specular_light *= direct_ao;
 
 	// apply metallic
 	diffuse_light *= 1.0 - metallic;

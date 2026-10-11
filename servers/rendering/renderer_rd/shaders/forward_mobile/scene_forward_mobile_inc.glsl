@@ -436,6 +436,12 @@ layout(set = 1, binding = 25, std430) buffer restrict MaterialFeedbackBuffer {
 }
 material_feedback;
 #endif
+// Brinck and Maximov 2016, "The Technical Art of Uncharted 4"
+half compute_micro_shadowing(half NoL, half ao, half opacity) {
+	half aperture = half(2.0) * ao * ao;
+	half microshadow = saturateHalf(NoL + aperture - half(1.0));
+	return mix(half(1.0), microshadow, opacity);
+}
 
 /* Set 2 Skeleton & Instancing (can change per item) */
 

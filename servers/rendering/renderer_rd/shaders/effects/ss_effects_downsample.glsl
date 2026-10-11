@@ -41,9 +41,11 @@ layout(r16f, set = 1, binding = 0) uniform restrict writeonly image2DArray dest_
 #ifdef GENERATE_MIPS
 layout(r16f, set = 2, binding = 0) uniform restrict writeonly image2DArray dest_image1;
 layout(r16f, set = 2, binding = 1) uniform restrict writeonly image2DArray dest_image2;
+#ifndef GENERATE_TWO_MIPS
 layout(r16f, set = 2, binding = 2) uniform restrict writeonly image2DArray dest_image3;
 #ifdef GENERATE_FULL_MIPS
 layout(r16f, set = 2, binding = 3) uniform restrict writeonly image2DArray dest_image4;
+#endif
 #endif
 #endif
 
@@ -139,7 +141,8 @@ void prepare_depths_and_mips(vec4 p_samples, uvec2 p_output_coord, uvec2 p_gtid)
 		depth_buffer[depth_array_index][buffer_coord.x][buffer_coord.y] = avg;
 	}
 
-	still_alive = p_gtid.x % 8 == depth_array_offset.x && depth_array_offset.y % 8 == depth_array_offset.y;
+#ifndef GENERATE_TWO_MIPS
+	still_alive = p_gtid.x % 8 == depth_array_offset.x && p_gtid.y % 8 == depth_array_offset.y;
 
 	p_output_coord /= 2;
 	groupMemoryBarrier();
@@ -158,7 +161,7 @@ void prepare_depths_and_mips(vec4 p_samples, uvec2 p_output_coord, uvec2 p_gtid)
 #else
 		depth_buffer[depth_array_index][buffer_coord.x][buffer_coord.y] = avg;
 	}
-	still_alive = p_gtid.x % 16 == depth_array_offset.x && depth_array_offset.y % 16 == depth_array_offset.y;
+	still_alive = p_gtid.x % 16 == depth_array_offset.x && p_gtid.y % 16 == depth_array_offset.y;
 
 	p_output_coord /= 2;
 
@@ -168,6 +171,7 @@ void prepare_depths_and_mips(vec4 p_samples, uvec2 p_output_coord, uvec2 p_gtid)
 		imageStore(dest_image4, ivec3(p_output_coord.x, p_output_coord.y, depth_array_index), vec4(sample_00));
 	}
 #endif
+#endif // !GENERATE_TWO_MIPS
 }
 #else
 #ifndef USE_HALF_BUFFERS
