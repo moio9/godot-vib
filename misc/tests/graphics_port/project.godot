@@ -1,0 +1,15 @@
+config_version=5
+
+[application]
+config/name="Godot 4.8 Graphics Port Smoke Test"
+run/main_scene="res://main.tscn"
+
+[display]
+window/size/viewport_width=320
+window/size/viewport_height=240
+
+[rendering]
+renderer/rendering_method="forward_plus"
+renderer/rendering_method.mobile="forward_plus"
+mesh_blend/enabled=true
+lights_and_shadows/contact_shadow/enabled=true

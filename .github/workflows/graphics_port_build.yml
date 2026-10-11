@@ -1,0 +1,120 @@
+name: Godot 4.8 graphics port
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["port/4.8-graphics"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: graphics-port-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux editor and Vulkan smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/godot-deps
+      - name: Install shader and Vulkan test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslang-tools mesa-vulkan-drivers xvfb xauth
+      - name: Check effect shaders
+        run: python3 misc/scripts/check_graphics_shaders.py
+      - name: Compile editor
+        run: |
+          set -o pipefail
+          scons -j2 platform=linuxbsd target=editor arch=x86_64 \
+            dev_mode=yes debug_symbols=no accesskit=no tests=no \
+            module_text_server_fb_enabled=yes 2>&1 | tee linux-build.log
+      - name: Run Vulkan graphics combinations
+        run: |
+          set -euxo pipefail
+          BIN=bin/godot.linuxbsd.editor.dev.x86_64
+          test -x "$BIN"
+          "$BIN" --headless --version | tee version.txt
+          LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$LVP_ICD"
+          timeout 240s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
+            "$BIN" --path misc/tests/graphics_port --rendering-method forward_plus \
+            --rendering-driver vulkan --verbose 2>&1 | tee vulkan-runtime.log
+          test "$(grep -c 'GRAPHICS_CASE_OK' vulkan-runtime.log)" -eq 6
+          grep -Fq GRAPHICS_FSR2_OK vulkan-runtime.log
+          grep -Fq GRAPHICS_PORT_OK vulkan-runtime.log
+          if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling' vulkan-runtime.log; then
+            exit 1
+          fi
+      - name: Package Linux editor
+        run: |
+          tar -cJf godot-vib-4.8-dev-linux-x86_64.tar.xz \
+            bin/godot.linuxbsd.editor.dev.x86_64 LICENSE.txt COPYRIGHT.txt version.txt
+          sha256sum godot-vib-4.8-dev-linux-x86_64.tar.xz > SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: godot-4.8-linux-${{ github.sha }}
+          path: |
+            godot-vib-4.8-dev-linux-x86_64.tar.xz
+            SHA256SUMS
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: graphics-linux-logs-${{ github.sha }}
+          path: |
+            linux-build.log
+            vulkan-runtime.log
+            version.txt
+
+  termux:
+    name: Termux aarch64 package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v6
+      - name: Checkout pinned Termux package builder
+        uses: actions/checkout@v6
+        with:
+          repository: termux/termux-packages
+          ref: b51ee964cce82cadb4be3d90162cd3a0e6f8dced
+          path: termux-packages
+          fetch-depth: 1
+      - name: Prepare 4.8 recipe
+        run: |
+          set -euxo pipefail
+          SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz"
+          curl -fL --retry 3 "$SOURCE_URL" -o "$RUNNER_TEMP/godot-source.tar.gz"
+          SOURCE_SHA256=$(sha256sum "$RUNNER_TEMP/godot-source.tar.gz" | cut -d ' ' -f1)
+          python3 misc/dist/termux/prepare_recipe.py termux-packages/x11-packages/godot \
+            --source-url "$SOURCE_URL" --sha256 "$SOURCE_SHA256"
+      - name: Free runner disk space
+        working-directory: termux-packages
+        run: ./scripts/free-space.sh
+      - name: Build package
+        working-directory: termux-packages
+        run: |
+          set -o pipefail
+          ./scripts/run-docker.sh -d ./build-package.sh -I -C -f -a aarch64 godot \
+            2>&1 | tee "$GITHUB_WORKSPACE/termux-build.log"
+      - name: Collect package
+        run: |
+          mkdir -p termux-artifacts
+          find termux-packages/output -maxdepth 1 -name 'godot*.deb' \
+            -exec cp {} termux-artifacts/ \;
+          test -n "$(find termux-artifacts -name 'godot*.deb' -print -quit)"
+          cd termux-artifacts
+          sha256sum godot*.deb > SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: godot-4.8-termux-aarch64-${{ github.sha }}
+          path: termux-artifacts/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: graphics-termux-logs-${{ github.sha }}
+          path: termux-build.log
