@@ -78,6 +78,19 @@ jobs:
           if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|RID.*leaked|ObjectDB.*leaked' resource-lifecycle-runtime.log; then
             exit 1
           fi
+      - name: Run shader engine version regression
+        run: |
+          set -euxo pipefail
+          BIN=bin/godot.linuxbsd.editor.x86_64
+          LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$LVP_ICD"
+          timeout 180s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
+            "$BIN" --path tests/rendering/shader_version --rendering-method forward_plus \
+            --rendering-driver vulkan --audio-driver Dummy --verbose 2>&1 | tee shader-version-runtime.log
+          grep -Fq 'SHADER_VERSION_RESULT checks=4 failures=0' shader-version-runtime.log
+          if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|RID.*leaked|ObjectDB.*leaked' shader-version-runtime.log; then
+            exit 1
+          fi
       - name: Package Linux editor
         run: |
           tar -cJf godot-vib-4.8-dev-linux-x86_64.tar.xz \
@@ -98,6 +111,7 @@ jobs:
             linux-build.log
             vulkan-runtime.log
             resource-lifecycle-runtime.log
+            shader-version-runtime.log
             version.txt
 
   windows:

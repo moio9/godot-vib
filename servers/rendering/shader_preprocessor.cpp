@@ -32,6 +32,7 @@
 
 #include "core/io/resource_loader.h"
 #include "core/os/os.h"
+#include "core/version.h"
 #include "servers/rendering/shader_expression.h"
 
 const char32_t CURSOR = 0xFFFF;
@@ -1349,6 +1350,10 @@ void ShaderPreprocessor::_prepare_state(ShaderPreprocessor::State &rp_state, con
 
 	// Built-in defines.
 	{
+		insert_builtin_define("GODOT_VERSION_MAJOR", _MKSTR(GODOT_VERSION_MAJOR), rp_state);
+		insert_builtin_define("GODOT_VERSION_MINOR", _MKSTR(GODOT_VERSION_MINOR), rp_state);
+		insert_builtin_define("GODOT_VERSION_PATCH", _MKSTR(GODOT_VERSION_PATCH), rp_state);
+
 		const String rendering_method = OS::get_singleton()->get_current_rendering_method();
 
 		if (rendering_method == "forward_plus") {

@@ -1,0 +1,14 @@
+config_version=5
+
+[application]
+config/name="Shader Engine Version Regression"
+run/main_scene="res://main.tscn"
+
+[display]
+window/size/viewport_width=128
+window/size/viewport_height=128
+window/size/no_focus=true
+window/vsync/vsync_mode=0
+
+[rendering]
+renderer/rendering_method="forward_plus"
