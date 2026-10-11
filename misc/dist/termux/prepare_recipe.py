@@ -63,6 +63,13 @@ def main() -> None:
     text = text.replace(old, "")
     text = text.replace("\t\tudev=no \\\n", "\t\tudev=no \\\n\t\taccesskit=no \\\n")
     (args.recipe / "crypto_core.cpp.patch").unlink()
+    # Regex moved from a module to core in 4.8 and now includes the bundled
+    # header by its full path. This recipe removes bundled PCRE2 and links
+    # libpcre2-32 from Termux, so use its public system header instead.
+    (args.recipe / "regex.cpp.patch").write_text(refreshed_patch(
+        root, "core/string/regex.cpp",
+        {"#include <thirdparty/pcre2/src/pcre2.h>": "#include <pcre2.h>"},
+    ))
     # Refresh patches against 4.8's upgraded OpenXR loader, preserving the
     # existing Termux behavior while avoiding fuzzy patch application.
     (args.recipe / "platform_utils.hpp.patch").write_text(refreshed_patch(

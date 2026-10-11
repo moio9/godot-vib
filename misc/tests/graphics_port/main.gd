@@ -36,7 +36,17 @@ func _ready() -> void:
 	floor_box.size = Vector3(6.0, 0.2, 6.0)
 	floor_mesh.mesh = floor_box
 	floor_mesh.position = Vector3(0.0, -0.6, 0.0)
+	var floor_material := StandardMaterial3D.new()
+	floor_material.metallic = 0.6
+	floor_material.roughness = 0.35
+	floor_mesh.material_override = floor_material
 	add_child(floor_mesh)
+
+	var reflection_probe := ReflectionProbe.new()
+	reflection_probe.size = Vector3(10.0, 6.0, 10.0)
+	reflection_probe.resolution = 128
+	reflection_probe.box_projection = true
+	add_child(reflection_probe)
 
 	moving_mesh = MeshInstance3D.new()
 	moving_mesh.mesh = BoxMesh.new()
@@ -64,6 +74,13 @@ void fragment() {
 				moving_mesh.position.x = sin(float(frame) * 0.25) * 0.5
 				await get_tree().process_frame
 			print("GRAPHICS_CASE_OK msaa=", samples, " gi=", gi_mode)
+
+	for box_projection in [false, true]:
+		reflection_probe.box_projection = box_projection
+		for frame in range(6):
+			camera.position.x = float(frame) * 0.05
+			await get_tree().process_frame
+		print("REFLECTION_PROBE_CASE_OK box_projection=", box_projection)
 
 	get_viewport().msaa_3d = Viewport.MSAA_DISABLED
 	get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2

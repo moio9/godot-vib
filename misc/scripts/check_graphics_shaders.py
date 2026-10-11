@@ -115,6 +115,38 @@ def dynamic_gi_variants() -> dict[str, list[str]]:
     return variants
 
 
+def reflection_shader_variants():
+    """Check the shared probe code in Mobile and the Compatibility shader."""
+    mobile = ROOT / "servers/rendering/renderer_rd/shaders/forward_mobile/scene_forward_mobile.glsl"
+    compatibility = ROOT / "drivers/gles3/shaders/scene.glsl"
+    general = (
+        "#define MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS 4\n"
+        "#define MAX_LIGHTMAP_TEXTURES 8\n#define MAX_ROUGHNESS_LOD 4.0\n"
+        "#define MATERIAL_UNIFORM_SET 3\n"
+    )
+    gles_general = (
+        "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+        "#define MAX_GLOBAL_SHADER_UNIFORMS 256\n#define MAX_LIGHT_DATA_STRUCTS 32\n"
+        "#define MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS 4\n#define MAX_FORWARD_LIGHTS 8u\n"
+        "#define MAX_ROUGHNESS_LOD 4.0\n#define MAX_DECALS 8\n#define BASE_PASS\n"
+    )
+    for shader, modes in (
+        (mobile, ["NORMAL_USED", "NORMAL_USED USE_HALF", "NORMAL_USED LIGHT_CLEARCOAT_USED"]),
+        (compatibility, ["NORMAL_USED", "NORMAL_USED SECOND_REFLECTION_PROBE", "NORMAL_USED SECOND_REFLECTION_PROBE LIGHT_CLEARCOAT_USED"]),
+    ):
+        source = re.sub(r"^#(?:MATERIAL_UNIFORMS|GLOBALS|CODE\s*:.*)\s*$", "", expand_includes(shader), flags=re.M)
+        split = re.split(r'^#\[(\w+)\]\s*$', source, flags=re.M)
+        for index in range(1, len(split), 2):
+            if split[index] not in STAGES:
+                continue
+            for variant, mode in enumerate(modes):
+                defines = "".join(f"#define {flag}\n" for flag in mode.split())
+                vulkan = shader == mobile
+                stage_source = split[index + 1]
+                stage_source = stage_source.replace("#VERSION_DEFINES", general + defines) if vulkan else gles_general + defines + stage_source
+                yield shader, STAGES[split[index]], variant, stage_source, vulkan
+
+
 def main() -> None:
     shaders = list(EFFECTS.glob("motion_blur*.glsl"))
     shaders += list(EFFECTS.glob("ssgi*.glsl"))
@@ -173,7 +205,18 @@ def main() -> None:
             if result.returncode:
                 raise SystemExit(f"{shader.name} {stage} variant {variant}:\n{result.stdout}{result.stderr}")
             count += 1
-    print(f"Compiled {count} graphics shader stages/variants to SPIR-V.")
+        reflection_count = 0
+        for shader, stage, variant, source, vulkan in reflection_shader_variants():
+            path = temp / f"reflection-{shader.stem}-{variant}.{stage}"
+            path.write_text(source)
+            args = ["glslangValidator", "-S", stage]
+            if vulkan:
+                args += ["-V", "--target-env", "vulkan1.2", "-o", str(temp / "reflection.spv")]
+            result = subprocess.run(args + [str(path)], capture_output=True, text=True)
+            if result.returncode:
+                raise SystemExit(f"{shader.name} {stage} variant {variant}:\n{result.stdout}{result.stderr}")
+            reflection_count += 1
+    print(f"Compiled {count} graphics shader stages/variants to SPIR-V and checked {reflection_count} Mobile/Compatibility reflection stages.")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,12 @@ name: Godot 4.8 graphics port
 
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: Platforms to build
+        type: choice
+        default: all
+        options: [all, termux]
   push:
     branches: ["port/4.8-graphics", "experimental/4.8-dynamic-gi"]
 
@@ -9,12 +15,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: graphics-port-${{ github.ref }}
+  group: graphics-port-${{ github.ref }}-${{ inputs.build_target || 'all' }}
   cancel-in-progress: true
 
 jobs:
   linux:
     name: Linux editor and Vulkan smoke test
+    if: inputs.build_target != 'termux'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -48,6 +55,7 @@ jobs:
             "$BIN" --path misc/tests/graphics_port --rendering-method forward_plus \
             --rendering-driver vulkan --audio-driver Dummy --verbose "${GI_ARGS[@]}" 2>&1 | tee vulkan-runtime.log
           test "$(grep -c 'GRAPHICS_CASE_OK' vulkan-runtime.log)" -eq 6
+          test "$(grep -c 'REFLECTION_PROBE_CASE_OK' vulkan-runtime.log)" -eq 2
           grep -Fq GRAPHICS_FSR2_OK vulkan-runtime.log
           grep -Fq GRAPHICS_PORT_OK vulkan-runtime.log
           if [ "$GITHUB_REF_NAME" = "experimental/4.8-dynamic-gi" ]; then
@@ -80,7 +88,7 @@ jobs:
 
   windows:
     name: Windows x86_64 editor (Vulkan and D3D12)
-    if: github.ref_name == 'experimental/4.8-dynamic-gi'
+    if: github.ref_name == 'experimental/4.8-dynamic-gi' && inputs.build_target != 'termux'
     runs-on: windows-2025
     timeout-minutes: 180
     env:
