@@ -1592,7 +1592,7 @@ uint mesh_blend_group_output = 0u;
 	hvec3 ambient_light = hvec3(0.0);
 
 #ifndef MODE_UNSHADED
-	// Used in regular draw pass and when drawing SDFs for SDFGI and materials for VoxelGI.
+	// Used in regular draw pass and when drawing SDFs for Dynamic GI and materials for VoxelGI.
 	emission *= half(scene_data.emissive_exposure_normalization);
 #endif
 

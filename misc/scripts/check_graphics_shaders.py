@@ -2,6 +2,7 @@
 """Compile the port's effect shaders to SPIR-V, independently of an editor build."""
 
 import re
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EFFECTS = ROOT / "servers/rendering/renderer_rd/shaders/effects"
+ENVIRONMENT = ROOT / "servers/rendering/renderer_rd/shaders/environment"
 STAGES = {"compute": "comp", "vertex": "vert", "fragment": "frag"}
 
 
@@ -31,7 +33,7 @@ def scene_shader_variants():
     general = (
         "#define MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS 4\n"
         "#define MAX_LIGHTMAP_TEXTURES 8\n#define MAX_LIGHTMAPS 8\n"
-        "#define SDFGI_OCT_SIZE 8\n#define MAX_ROUGHNESS_LOD 4.0\n"
+        "#define HDDAGI_OCT_SIZE 5\n#define MAX_ROUGHNESS_LOD 4.0\n"
         "#define MATERIAL_UNIFORM_SET 3\n"
     )
     modes = [
@@ -44,6 +46,8 @@ def scene_shader_variants():
         "MODE_RENDER_DEPTH",
         "MODE_RENDER_DEPTH MODE_RENDER_NORMAL_ROUGHNESS NORMAL_USED",
         "MODE_RENDER_DEPTH MODE_RENDER_NORMAL_ROUGHNESS MODE_RENDER_VOXEL_GI NORMAL_USED",
+        "MODE_RENDER_DEPTH MODE_RENDER_NORMAL_ROUGHNESS MOTION_VECTORS NORMAL_USED",
+        "MODE_RENDER_DEPTH MODE_RENDER_NORMAL_ROUGHNESS MODE_RENDER_VOXEL_GI MOTION_VECTORS NORMAL_USED USE_MULTIVIEW",
         "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY NORMAL_USED",
         "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY MODE_RENDER_VISIBILITY_NO_AUX NORMAL_USED",
         "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY NORMAL_USED USE_MULTIVIEW",
@@ -56,6 +60,59 @@ def scene_shader_variants():
         for variant, mode in enumerate(modes):
             defines = general + "".join(f"#define {flag}\n" for flag in mode.split())
             yield shader, stage, variant, split[index + 1].replace("#VERSION_DEFINES", defines)
+
+
+def dynamic_gi_variants() -> dict[str, list[str]]:
+    """Use the same stage modes as the renderer, including optional GI paths."""
+    renderer = ROOT / "servers/rendering/renderer_rd"
+    gi = (renderer / "environment/gi.cpp").read_text()
+
+    def modes(source: str, variable: str) -> list[str]:
+        return [json.loads('"' + value + '"') for value in re.findall(
+            rf'{variable}\.push_back\("((?:[^"\\]|\\.)*)"\)', source,
+        )]
+
+    common = (
+        "#define LIGHTPROBE_OCT_SIZE 5\n#define OCCLUSION_OCT_SIZE 14\n"
+        "#define OCCLUSION_OCT_SIZE_HALF 7\n#define OCCLUSION_SUBPIXELS 4\n"
+        "#define SH_SIZE 16\n#define SCREEN_PROBE_DIRECTIONAL_SIZE 8\n"
+    )
+    variants = {}
+    for shader, variable in (
+        ("hddagi_preprocess.glsl", "preprocess_modes"),
+        ("hddagi_direct_light.glsl", "direct_light_modes"),
+        ("hddagi_integrate.glsl", "integrate_modes"),
+        ("hddagi_screen_probe.glsl", "screen_probe_modes"),
+        ("hddagi_screen_probe_irradiance_cache.glsl", "irradiance_cache_modes"),
+        ("hddagi_filter.glsl", "filter_modes"),
+        ("gi.glsl", "gi_modes"),
+    ):
+        variants[shader] = [common + mode for mode in modes(gi, variable)]
+        if not variants[shader]:
+            raise SystemExit(f"Missing renderer shader modes for {shader}")
+    for shader in ("hddagi_integrate.glsl", "hddagi_screen_probe.glsl"):
+        variants[shader] += [mode + "#define USE_RADIANCE_OCTMAP_ARRAY\n" for mode in variants[shader]]
+    variants["hddagi_debug.glsl"] = [common]
+    debug_start = gi.rfind("Vector<String> versions;", 0, gi.index("hddagi_shader.debug_probes.initialize"))
+    debug_end = gi.index("hddagi_shader.debug_probes.initialize", debug_start)
+    variants["hddagi_debug_probes.glsl"] = [common + mode for mode in modes(gi[debug_start:debug_end], "versions")]
+    svgf = (renderer / "environment/hddagi_screen_probe_svgf.cpp").read_text()
+    variants["hddagi_screen_probe_svgf.glsl"] = modes(svgf, "modes")
+    for shader in ("hddagi_screen_probe_montage.glsl", "hddagi_screen_probe_reflection_debug.glsl"):
+        variants[shader] = ["", "#define USE_MULTIVIEW\n"]
+    resolve = (renderer / "effects/resolve.cpp").read_text()
+    variants["resolve.glsl"] = [mode for mode in modes(resolve, "resolve_modes") if mode]
+    ss_effects = (renderer / "effects/ss_effects.cpp").read_text()
+    variants["screen_space_reflection_hiz.glsl"] = modes(ss_effects, "ssr_hiz_modes")
+    fog_defines = "#define MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS 4\n#define MAX_SKY_LOD 4.0\n"
+    variants["volumetric_fog_process.glsl"] = [
+        fog_defines + sky + memory + atomics + "".join(f"#define {flag}\n" for flag in mode.split())
+        for sky in ("", "#define USE_RADIANCE_OCTMAP_ARRAY\n")
+        for memory in ("", "#define USE_VULKAN_MEMORY_MODEL\n")
+        for atomics in ("", "#define NO_IMAGE_ATOMICS\n")
+        for mode in ("MODE_DENSITY", "MODE_DENSITY ENABLE_HDDAGI", "MODE_FILTER", "MODE_FOG", "MODE_COPY")
+    ]
+    return variants
 
 
 def main() -> None:
@@ -79,6 +136,9 @@ def main() -> None:
             "#define GENERATE_MIPS\n#define GENERATE_TWO_MIPS\n",
         ],
     }
+    gi_variants = dynamic_gi_variants()
+    variants.update(gi_variants)
+    shaders += [(ENVIRONMENT if (ENVIRONMENT / name).exists() else EFFECTS) / name for name in gi_variants]
     count = 0
     motion_blur_header = (ROOT / "servers/rendering/renderer_rd/effects/motion_blur.h").read_text()
     tile_size = re.search(r"int tile_size = (\d+);", motion_blur_header)[1]

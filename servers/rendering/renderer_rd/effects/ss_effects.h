@@ -66,6 +66,7 @@
 #define RB_SCOPE_SSCS SNAME("rb_sscs")
 #define RB_SCOPE_SSS SNAME("SSS")
 #define RB_TEX_SSS_SHADOW SNAME("Shadow")
+#define RB_SCOPE_SS_HIZ SNAME("rb_ss_hiz")
 
 #define RB_LINEAR_DEPTH SNAME("linear_depth")
 #define RB_FINAL SNAME("final")
@@ -78,6 +79,7 @@
 #define RB_SSGI_PONG SNAME("ssgi_pong")
 #define RB_SSGI_HISTORY SNAME("ssgi_history")
 #define RB_LAST_FRAME SNAME("last_frame")
+#define RB_LAST_FRAME_DEPTH SNAME("last_frame_depth")
 #define RB_DEINTERLEAVED SNAME("deinterleaved")
 #define RB_DEINTERLEAVED_PONG SNAME("deinterleaved_pong")
 #define RB_EDGES SNAME("edges")
@@ -109,7 +111,7 @@ public:
 
 	/* Last Frame */
 
-	void allocate_last_frame_buffer(Ref<RenderSceneBuffersRD> p_render_buffers, bool p_use_ssil, bool p_use_ssgi, bool p_use_ssr);
+	bool allocate_last_frame_buffer(Ref<RenderSceneBuffersRD> p_render_buffers, bool p_use_ssil, bool p_use_ssgi, bool p_use_ssr, bool p_use_hddagi_screen_radiance);
 	void copy_internal_texture_to_last_frame(Ref<RenderSceneBuffersRD> p_render_buffers, CopyEffects &p_copy_effects);
 
 	/* SS Downsampler */
@@ -200,14 +202,23 @@ public:
 	/* Screen Space Reflection */
 	void ssr_set_half_size(bool p_half_size);
 
+	struct ScreenSpaceDepthPyramidRenderBuffers {
+		Size2i size;
+		uint32_t mipmaps = 1;
+	};
+
+	bool screen_space_depth_pyramid_allocate(Ref<RenderSceneBuffersRD> p_render_buffers, ScreenSpaceDepthPyramidRenderBuffers &p_depth_pyramid_buffers);
+	bool screen_space_depth_pyramid_build(Ref<RenderSceneBuffersRD> p_render_buffers, ScreenSpaceDepthPyramidRenderBuffers &p_depth_pyramid_buffers, RendererRD::CopyEffects &p_copy_effects);
+	RID screen_space_depth_pyramid_get_view(Ref<RenderSceneBuffersRD> p_render_buffers, const ScreenSpaceDepthPyramidRenderBuffers &p_depth_pyramid_buffers, uint32_t p_view);
+
 	struct SSRRenderBuffers {
 		Size2i size;
 		uint32_t mipmaps = 1;
 		bool half_size = false;
 	};
 
-	void ssr_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, SSRRenderBuffers &p_ssr_buffers, const RD::DataFormat p_color_format);
-	void screen_space_reflection(Ref<RenderSceneBuffersRD> p_render_buffers, SSRRenderBuffers &p_ssr_buffers, const RID *p_normal_roughness_slices, int p_max_steps, float p_fade_in, float p_fade_out, float p_tolerance, const Projection *p_projections, const Projection *p_reprojections, const Vector3 *p_eye_offsets, RendererRD::CopyEffects &p_copy_effects);
+	void ssr_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, SSRRenderBuffers &p_ssr_buffers, ScreenSpaceDepthPyramidRenderBuffers &p_depth_pyramid_buffers, const RD::DataFormat p_color_format);
+	void screen_space_reflection(Ref<RenderSceneBuffersRD> p_render_buffers, SSRRenderBuffers &p_ssr_buffers, ScreenSpaceDepthPyramidRenderBuffers &p_depth_pyramid_buffers, bool p_depth_pyramid_is_built, const RID *p_normal_roughness_slices, int p_max_steps, float p_fade_in, float p_fade_out, float p_tolerance, const Projection *p_projections, const Projection *p_reprojections, const Vector3 *p_eye_offsets, RendererRD::CopyEffects &p_copy_effects);
 
 	/* subsurface scattering */
 	void sss_set_quality(RSE::SubSurfaceScatteringQuality p_quality);
@@ -665,6 +676,7 @@ private:
 		float blur;
 		float taa_frame_count;
 	};
+	bool _screen_space_depth_pyramid_build_mips(Ref<RenderSceneBuffersRD> p_render_buffers, const StringName &p_context, const Size2i &p_size, uint32_t p_mipmaps, bool p_first_mip_from_scene_depth);
 
 	/* Subsurface scattering */
 

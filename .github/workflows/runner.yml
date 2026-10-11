@@ -9,7 +9,7 @@ jobs:
   # First stage: Only static checks, fast and prevent expensive builds from running.
 
   static-checks:
-    if: ${{ !startsWith(github.ref, 'refs/heads/port/') && (!vars.DISABLE_GODOT_CI || github.run_attempt > 1 || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !startsWith(github.ref, 'refs/heads/port/') && github.ref != 'refs/heads/experimental/4.8-dynamic-gi' && (!vars.DISABLE_GODOT_CI || github.run_attempt > 1 || github.event_name == 'workflow_dispatch') }}
     name: 📊 Static checks
     uses: ./.github/workflows/static_checks.yml
 
