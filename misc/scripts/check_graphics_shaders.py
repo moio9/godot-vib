@@ -22,6 +22,42 @@ def expand_includes(path: Path) -> str:
     )
 
 
+def scene_shader_variants():
+    shader = ROOT / "servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl"
+    source = re.sub(
+        r"^#(?:MATERIAL_UNIFORMS|GLOBALS|CODE\s*:.*)\s*$", "",
+        expand_includes(shader), flags=re.M,
+    )
+    general = (
+        "#define MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS 4\n"
+        "#define MAX_LIGHTMAP_TEXTURES 8\n#define MAX_LIGHTMAPS 8\n"
+        "#define SDFGI_OCT_SIZE 8\n#define MAX_ROUGHNESS_LOD 4.0\n"
+        "#define MATERIAL_UNIFORM_SET 3\n"
+    )
+    modes = [
+        "MOTION_VECTORS MESH_BLEND_MAIN_PASS_OUTPUT NORMAL_USED",
+        "MOTION_VECTORS MESH_BLEND_MAIN_PASS_OUTPUT NORMAL_USED USE_LIGHTMAP "
+        "MODE_SEPARATE_SPECULAR UBERSHADER MULTI_BOUNCE_OCCLUSION_ENABLED",
+        "MOTION_VECTORS MESH_BLEND_MAIN_PASS_OUTPUT NORMAL_USED USE_MULTIVIEW",
+        "MOTION_VECTORS MESH_BLEND_MAIN_PASS_OUTPUT NORMAL_USED TEXTURE_STREAMING "
+        "TEXTURE_STREAMING_DEPTH_PREPASS UV_USED",
+        "MODE_RENDER_DEPTH",
+        "MODE_RENDER_DEPTH MODE_RENDER_NORMAL_ROUGHNESS NORMAL_USED",
+        "MODE_RENDER_DEPTH MODE_RENDER_NORMAL_ROUGHNESS MODE_RENDER_VOXEL_GI NORMAL_USED",
+        "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY NORMAL_USED",
+        "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY MODE_RENDER_VISIBILITY_NO_AUX NORMAL_USED",
+        "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY NORMAL_USED USE_MULTIVIEW",
+        "MODE_RENDER_DEPTH MODE_RENDER_VISIBILITY NORMAL_USED UBERSHADER",
+        "MOTION_VECTORS MESH_BLEND_MAIN_PASS_OUTPUT NORMAL_USED USE_HALF",
+    ]
+    split = re.split(r'^#\[(\w+)\]\s*$', source, flags=re.M)
+    for index in range(1, len(split), 2):
+        stage = STAGES[split[index]]
+        for variant, mode in enumerate(modes):
+            defines = general + "".join(f"#define {flag}\n" for flag in mode.split())
+            yield shader, stage, variant, split[index + 1].replace("#VERSION_DEFINES", defines)
+
+
 def main() -> None:
     shaders = list(EFFECTS.glob("motion_blur*.glsl"))
     shaders += list(EFFECTS.glob("ssgi*.glsl"))
@@ -66,7 +102,18 @@ def main() -> None:
                     if result.returncode:
                         raise SystemExit(f"{shader.name} {stage} variant {variant}:\n{result.stdout}{result.stderr}")
                     count += 1
-    print(f"Compiled {count} effect shader stages/variants to SPIR-V.")
+        for shader, stage, variant, source in scene_shader_variants():
+            path = temp / f"{shader.stem}-{variant}.{stage}"
+            path.write_text(source)
+            result = subprocess.run(
+                ["glslangValidator", "-V", "--target-env", "vulkan1.2", "-S", stage,
+                 "-o", str(temp / "scene.spv"), str(path)],
+                capture_output=True, text=True,
+            )
+            if result.returncode:
+                raise SystemExit(f"{shader.name} {stage} variant {variant}:\n{result.stdout}{result.stderr}")
+            count += 1
+    print(f"Compiled {count} graphics shader stages/variants to SPIR-V.")
 
 
 if __name__ == "__main__":

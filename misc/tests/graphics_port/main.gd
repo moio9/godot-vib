@@ -8,6 +8,7 @@ func _ready() -> void:
 	camera.look_at_from_position(Vector3(0.0, 1.3, 5.0), Vector3.ZERO)
 	camera.current = true
 	var attributes := CameraAttributesPractical.new()
+	attributes.motion_blur_enabled = true
 	attributes.motion_blur_intensity = 0.2
 	camera.attributes = attributes
 	add_child(camera)
@@ -74,7 +75,7 @@ void fragment() {
 		await get_tree().process_frame
 	print("GRAPHICS_FSR2_OK")
 
-	attributes.motion_blur_intensity = 0.0
+	attributes.motion_blur_enabled = false
 	await get_tree().process_frame
 	print("GRAPHICS_PORT_OK")
 	get_tree().quit()
