@@ -3659,7 +3659,9 @@ void TextureStorage::update_area_light_atlas() {
 			Texture *src_tex = get_texture(E.key);
 			Rect2 uv_rect = t->uv_rect;
 
-			copy_effects->copy_to_atlas_fb(src_tex->rd_texture_srgb, mm0.fb, uv_rect, draw_list);
+			// Luminance and floating-point textures do not have an sRGB view.
+			RID source_texture = src_tex->rd_texture_srgb.is_valid() ? src_tex->rd_texture_srgb : src_tex->rd_texture;
+			copy_effects->copy_to_atlas_fb(source_texture, mm0.fb, uv_rect, draw_list);
 		}
 		RD::get_singleton()->draw_list_end();
 

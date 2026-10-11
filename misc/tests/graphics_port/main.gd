@@ -44,7 +44,6 @@ func _ready() -> void:
 
 	var reflection_probe := ReflectionProbe.new()
 	reflection_probe.size = Vector3(10.0, 6.0, 10.0)
-	reflection_probe.resolution = 128
 	reflection_probe.box_projection = true
 	add_child(reflection_probe)
 

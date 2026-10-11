@@ -11,5 +11,6 @@ window/size/viewport_height=240
 [rendering]
 renderer/rendering_method="forward_plus"
 renderer/rendering_method.mobile="forward_plus"
+reflections/reflection_atlas/reflection_size=128
 mesh_blend/enabled=true
 lights_and_shadows/contact_shadow/enabled=true

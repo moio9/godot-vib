@@ -1576,6 +1576,16 @@ void LightStorage::_reflection_atlas_clear(ReflectionAtlas *p_reflection_atlas) 
 	RD::get_singleton()->free_rid(p_reflection_atlas->reflection);
 	p_reflection_atlas->reflection = RID();
 
+	if (p_reflection_atlas->color_buffer.is_valid()) {
+		// Freeing the cubemap also releases its face views and dependent framebuffers.
+		RD::get_singleton()->free_rid(p_reflection_atlas->color_buffer);
+		p_reflection_atlas->color_buffer = RID();
+	}
+	for (int i = 0; i < 6; i++) {
+		p_reflection_atlas->color_views[i] = RID();
+		p_reflection_atlas->color_fbs[i] = RID();
+	}
+
 	RD::get_singleton()->free_rid(p_reflection_atlas->depth_fb);
 	p_reflection_atlas->depth_fb = RID();
 
