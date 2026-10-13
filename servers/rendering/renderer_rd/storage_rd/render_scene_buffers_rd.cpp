@@ -273,7 +273,8 @@ bool RenderSceneBuffersRD::ensure_visibility_textures(bool p_need_full_visibilit
 
 	if (p_need_aux && !has_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX)) {
 		const RenderingDevice::DataFormat fmt = RenderingDevice::DATA_FORMAT_R16_UINT;
-		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT;
+		// The mesh-blend main pass clears this texture before rendering.
+		const uint32_t usage = RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_STORAGE_BIT | RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_TO_BIT;
 		create_texture(RB_SCOPE_BUFFERS, RB_TEX_VB_AUX, fmt, usage, RenderingDevice::TEXTURE_SAMPLES_1, internal_size);
 	}
 

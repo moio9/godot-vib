@@ -1301,27 +1301,27 @@ void SSEffects::ssgi_allocate_buffers(Ref<RenderSceneBuffersRD> p_render_buffers
 	}
 	if (should_create) {
 		p_render_buffers->clear_context(RB_SCOPE_SSGI);
-		RID ssgi_half = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HALF, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
-		RID ssgi_input = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
+		RID ssgi_half = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HALF, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
+		RID ssgi_input = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, half_size, view_count);
 		RID ssgi_input_2;
 		RID ssgi_input_4;
 		RID ssgi_input_8;
 		RID ssgi_input_16;
 		if (p_settings.multirez) {
-			ssgi_input_2 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_2, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_2, view_count);
+			ssgi_input_2 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_2, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_2, view_count);
 			if (p_settings.multirez_levels >= 4) {
-				ssgi_input_4 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_4, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_4, view_count);
+				ssgi_input_4 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_4, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_4, view_count);
 			}
 			if (p_settings.multirez_levels >= 8) {
-				ssgi_input_8 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_8, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_8, view_count);
+				ssgi_input_8 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_8, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_8, view_count);
 			}
 			if (p_settings.multirez_levels >= 16) {
-				ssgi_input_16 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_16, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, level_16, view_count);
+				ssgi_input_16 = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_INPUT_16, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, level_16, view_count);
 			}
 		}
-		RID ssgi_pong = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
-		RID ssgi_history = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
-		RID final = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_FINAL, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RID ssgi_pong = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_PONG, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RID ssgi_history = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_SSGI_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
+		RID final = p_render_buffers->create_texture(RB_SCOPE_SSGI, RB_FINAL, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, full_size, view_count);
 		RD::get_singleton()->texture_clear(ssgi_half, Color(0, 0, 0, 0), 0, 1, 0, view_count);
 		RD::get_singleton()->texture_clear(ssgi_input, Color(0, 0, 0, 0), 0, 1, 0, view_count);
 		if (ssgi_input_2.is_valid()) {
@@ -2867,12 +2867,12 @@ void SSEffects::gen_screen_space_shadows(Ref<RenderSceneBuffersRD> p_render_buff
 
 	// Ensure output texture exists and is cleared to white so the shader writes a shadow factor.
 	if (!p_render_buffers->has_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW)) {
-		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT);
+		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT);
 	}
 	RID shadow_texture = p_render_buffers->get_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW);
 	if (shadow_texture.is_null()) {
 		// Previous allocation may have failed (e.g. when buffers were zero sized); try again now that we have a valid size.
-		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT);
+		p_render_buffers->create_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW, RD::DATA_FORMAT_R8G8B8A8_UNORM, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT);
 		shadow_texture = p_render_buffers->get_texture(RB_SCOPE_SSS, RB_TEX_SSS_SHADOW);
 	}
 	if (shadow_texture.is_null()) {
