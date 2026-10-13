@@ -1765,6 +1765,8 @@ vec2 mesh_blend_main_aux_value = vec2(
 	vec3 diffuse_light = vec3(0.0, 0.0, 0.0);
 	vec3 ambient_light = vec3(0.0, 0.0, 0.0);
 	float hddagi_reflection_coverage = 1.0;
+	vec3 hddagi_reflection_fallback = vec3(0.0);
+	bool using_hddagi_reflections = false;
 #ifndef MODE_UNSHADED
 	// Used in regular draw pass and when drawing SDFs for HDDAGI and materials for VoxelGI.
 	emission *= scene_data.emissive_exposure_normalization;
@@ -2034,6 +2036,9 @@ vec2 mesh_blend_main_aux_value = vec2(
 		hddagi_process(cam_vertex, cam_normal, cam_reflection, roughness, ret_ambient, ret_reflection);
 
 		ambient_light = mix(ambient_light, ret_ambient.rgb, ret_ambient.a);
+		hddagi_reflection_fallback = indirect_specular_light;
+		hddagi_reflection_coverage = ret_reflection.a;
+		using_hddagi_reflections = true;
 		indirect_specular_light = mix(indirect_specular_light, ret_reflection.rgb, ret_reflection.a);
 	}
 
@@ -2119,6 +2124,8 @@ vec2 mesh_blend_main_aux_value = vec2(
 		buffer_reflection.a = buffer_blend.g;
 		ambient_light = mix(ambient_light, buffer_ambient.rgb, buffer_ambient.a);
 		hddagi_reflection_coverage = buffer_reflection.a;
+		hddagi_reflection_fallback = indirect_specular_light;
+		using_hddagi_reflections = bool(instances.data[instance_index].flags & INSTANCE_FLAGS_USE_HDDAGI);
 		indirect_specular_light = mix(indirect_specular_light, buffer_reflection.rgb, buffer_reflection.a);
 	}
 #endif // !USE_LIGHTMAP
@@ -2208,7 +2215,8 @@ vec2 mesh_blend_main_aux_value = vec2(
 		}
 
 		if (reflection_accum.a < 1.0) {
-			reflection_accum.rgb = indirect_specular_light * (1.0 - reflection_accum.a) + reflection_accum.rgb;
+			vec3 reflection_fallback = using_hddagi_reflections ? hddagi_reflection_fallback : indirect_specular_light;
+			reflection_accum.rgb = reflection_fallback * (1.0 - reflection_accum.a) + reflection_accum.rgb;
 		}
 
 #ifdef LIGHT_CLEARCOAT_USED
@@ -2218,7 +2226,15 @@ vec2 mesh_blend_main_aux_value = vec2(
 #endif
 
 		if (reflection_accum.a > 0.0) {
-			indirect_specular_light = reflection_accum.rgb;
+			if (using_hddagi_reflections) {
+				// Replace only the environment fallback already mixed into HDDAGI.
+				// Scaling a normal probe-over-GI blend would also attenuate valid GI
+				// at partial coverage. Coverage, not radiance, preserves dark hits.
+				float uncovered_reflection = 1.0 - clamp(hddagi_reflection_coverage, 0.0, 1.0);
+				indirect_specular_light += (reflection_accum.rgb - hddagi_reflection_fallback) * uncovered_reflection;
+			} else {
+				indirect_specular_light = reflection_accum.rgb;
+			}
 		}
 
 #ifdef LIGHT_CLEARCOAT_USED

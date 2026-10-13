@@ -1,0 +1,16 @@
+config_version=5
+
+[application]
+config/name="HDDAGI ReflectionProbe Priority Regression"
+
+[display]
+window/size/viewport_width=256
+window/size/viewport_height=256
+window/size/no_focus=true
+window/vsync/vsync_mode=0
+
+[rendering]
+renderer/rendering_method="forward_plus"
+driver/threads/thread_model=1
+debug/visibility_buffer/test_pattern=false
+reflections/specular_occlusion/enabled=false
