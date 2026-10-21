@@ -11,6 +11,9 @@ on:
   push:
     branches: ["port/4.8-graphics", "experimental/4.8-dynamic-gi"]
 
+env:
+  GODOT_VERSION_STATUS: beta1
+
 permissions:
   contents: read
 
@@ -121,14 +124,14 @@ jobs:
           done
       - name: Package Linux editor
         run: |
-          tar -cJf godot-vib-4.8-dev-linux-x86_64.tar.xz \
+          tar -cJf godot-vib-4.8-beta1-linux-x86_64.tar.xz \
             bin/godot.linuxbsd.editor.x86_64 LICENSE.txt COPYRIGHT.txt version.txt
-          sha256sum godot-vib-4.8-dev-linux-x86_64.tar.xz > SHA256SUMS
+          sha256sum godot-vib-4.8-beta1-linux-x86_64.tar.xz > SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:
           name: godot-4.8-linux-${{ github.sha }}
           path: |
-            godot-vib-4.8-dev-linux-x86_64.tar.xz
+            godot-vib-4.8-beta1-linux-x86_64.tar.xz
             SHA256SUMS
           if-no-files-found: error
       - uses: actions/upload-artifact@v6
@@ -170,14 +173,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $files = @('bin/godot.windows.editor.x86_64.exe', 'LICENSE.txt', 'COPYRIGHT.txt', 'windows-version.txt')
           $files += @(Get-ChildItem bin -Filter '*.dll' | ForEach-Object { $_.FullName })
-          Compress-Archive -Path $files -DestinationPath godot-vib-4.8-dev-windows-x86_64.zip
-          $hash = (Get-FileHash godot-vib-4.8-dev-windows-x86_64.zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  godot-vib-4.8-dev-windows-x86_64.zip" | Set-Content -Encoding utf8 SHA256SUMS
+          Compress-Archive -Path $files -DestinationPath godot-vib-4.8-beta1-windows-x86_64.zip
+          $hash = (Get-FileHash godot-vib-4.8-beta1-windows-x86_64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  godot-vib-4.8-beta1-windows-x86_64.zip" | Set-Content -Encoding utf8 SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:
           name: godot-4.8-windows-${{ github.sha }}
           path: |
-            godot-vib-4.8-dev-windows-x86_64.zip
+            godot-vib-4.8-beta1-windows-x86_64.zip
             SHA256SUMS
           if-no-files-found: error
       - uses: actions/upload-artifact@v6
