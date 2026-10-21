@@ -98,6 +98,8 @@ private:
 	};
 
 	mutable SelfList<Node> xform_change;
+	bool shadow_group_enabled = false;
+	static void _propagate_shadow_group_changed(Node *p_node);
 	SelfList<Node3D> _client_physics_interpolation_node_3d_list;
 
 	// This Data struct is to avoid namespace pollution in derived classes.
@@ -213,6 +215,7 @@ protected:
 	// so all data is updated to the servers.
 	virtual void fti_update_servers_xform() {}
 	virtual void fti_update_servers_property() {}
+	virtual void _update_shadow_group() {}
 
 	// Pump the FTI data, also gives a chance for inherited classes
 	// to pump custom data, but they *must* call the base class here too.
@@ -231,6 +234,10 @@ protected:
 	bool _property_get_revert(const StringName &p_name, Variant &r_property) const;
 
 public:
+	void set_shadow_group_enabled(bool p_enabled);
+	bool is_shadow_group_enabled() const { return shadow_group_enabled; }
+	uint64_t get_shadow_group_id() const;
+
 	enum {
 		NOTIFICATION_TRANSFORM_CHANGED = 2000, // Keep in sync with SceneTree.
 		NOTIFICATION_ENTER_WORLD = 41,

@@ -86,8 +86,24 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 	/* Scene Shader */
 
 	SceneShaderForwardClustered scene_shader;
+	RID empty_shadow_group_buffer;
+	struct ShadowGroupData {
+		float matrix[16];
+		float rect[4];
+		float bias[2];
+		uint32_t light_index;
+		uint32_t pad;
+	};
+	struct ShadowGroupBuffer {
+		uint32_t count = 0;
+		uint32_t pad[3] = {};
+		ShadowGroupData maps[8] = {};
+	};
+	void _render_shadow_groups(RenderDataRD *p_render_data);
 
 public:
+	virtual bool supports_shadow_groups() const override { return true; }
+
 	/* Framebuffer */
 
 	class RenderBufferDataForwardClustered : public RenderBufferCustomDataRD {
@@ -127,6 +143,8 @@ public:
 		};
 
 		RID render_hddagi_uniform_set;
+		RID shadow_group_buffer;
+		int shadow_group_map_size = 0;
 
 		void ensure_specular();
 		bool has_specular() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_SPECULAR); }

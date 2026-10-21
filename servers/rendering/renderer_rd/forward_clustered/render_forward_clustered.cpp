@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "render_forward_clustered.h"
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
@@ -131,9 +132,16 @@ bool RenderForwardClustered::RenderBufferDataForwardClustered::ensure_mfx_tempor
 
 void RenderForwardClustered::RenderBufferDataForwardClustered::free_data() {
 	ss_effects_data.last_frame_valid = false;
+	if (shadow_group_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(shadow_group_buffer);
+		shadow_group_buffer = RID();
+	}
+	shadow_group_map_size = 0;
+
 	// JIC, should already have been cleared
 	if (render_buffers) {
 		render_buffers->clear_context(RB_SCOPE_FORWARD_CLUSTERED);
+		render_buffers->clear_context(SNAME("shadow_groups"));
 		render_buffers->clear_context(RB_SCOPE_SSDS);
 		render_buffers->clear_context(RB_SCOPE_SSIL);
 		render_buffers->clear_context(RB_SCOPE_SSGI);
@@ -1835,11 +1843,16 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 	p_render_data->cube_shadows.clear();
 	p_render_data->shadows.clear();
 	p_render_data->directional_shadows.clear();
+	p_render_data->shadow_groups.clear();
 	p_render_data->contact_shadows.clear();
 
 	float lod_distance_multiplier = p_render_data->scene_data->cam_projection.get_lod_multiplier();
 	{
 		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
+			if (p_render_data->render_shadows[i].shadow_group) {
+				p_render_data->shadow_groups.push_back(i);
+				continue;
+			}
 			RID li = p_render_data->render_shadows[i].light;
 			RID base = light_storage->light_instance_get_base_light(li);
 
@@ -1877,9 +1890,16 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 		}
 	}
 
+	if (p_render_data->shadow_groups.is_empty() && rb_data.is_valid() && rb_data->shadow_group_buffer.is_valid()) {
+		rb->clear_context(SNAME("shadow_groups"));
+		RD::get_singleton()->free_rid(rb_data->shadow_group_buffer);
+		rb_data->shadow_group_buffer = RID();
+		rb_data->shadow_group_map_size = 0;
+	}
+
 	// Render GI
 
-	bool render_shadows = p_render_data->directional_shadows.size() || p_render_data->shadows.size();
+	bool render_shadows = p_render_data->directional_shadows.size() || p_render_data->shadows.size() || p_render_data->shadow_groups.size();
 	bool render_gi = rb.is_valid() && p_use_gi;
 
 	if (render_shadows && render_gi) {
@@ -1903,6 +1923,7 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 			_render_shadow_pass(p_render_data->render_shadows[p_render_data->shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[p_render_data->shadows[i]].pass, p_render_data->render_shadows[p_render_data->shadows[i]].instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, i == 0, i == p_render_data->shadows.size() - 1, true, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
 		}
 
+		_render_shadow_groups(p_render_data);
 		_render_shadow_process();
 	}
 
@@ -2927,8 +2948,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		rb->ensure_upscaled();
 	}
 
-
-
 	if (scene_state.used_screen_texture || global_surface_data.screen_texture_used) {
 		RENDER_TIMESTAMP("Copy Screen Texture");
 
@@ -2973,8 +2992,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		RENDER_TIMESTAMP("Process Pre Transparent Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
-
-
 
 	RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
@@ -3035,7 +3052,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	if (!p_render_data->environment.is_valid()) {
 		ERR_PRINT_ONCE("Contact shadows: no environment active, skipping screen-space pass.");
 	} else {
-
 		RID directional_light;
 		for (int i = 0; i < p_render_data->render_shadow_count; i++) {
 			RID li = p_render_data->render_shadows[i].light;
@@ -3204,7 +3220,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RD::get_singleton()->draw_command_end_label();
 		}
 	}
-
 
 	bool visibility_debug = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VISIBILITY_BUFFER;
 	const bool mesh_blend_requires_visibility_pass = _mesh_blend_enabled() && !mesh_blend_main_pass;
@@ -3514,6 +3529,62 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 			}
 		}
 	}
+}
+
+void RenderForwardClustered::_render_shadow_groups(RenderDataRD *p_render_data) {
+	if (p_render_data->shadow_groups.is_empty()) {
+		return;
+	}
+	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	Ref<RenderBufferDataForwardClustered> rb_data = rb->get_custom_data(RB_SCOPE_FORWARD_CLUSTERED);
+	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
+	RenderingDevice *rd = RD::get_singleton();
+	const int map_size = CLAMP(int(GLOBAL_GET("rendering/lights_and_shadows/shadow_groups/map_size")), 256, 2048);
+	if (rb_data->shadow_group_map_size != map_size) {
+		rb->clear_context(SNAME("shadow_groups"));
+		rb->create_texture(SNAME("shadow_groups"), SNAME("atlas"), RD::DATA_FORMAT_D32_SFLOAT, RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, Size2i(map_size * 4, map_size * 2), 1);
+		rb_data->shadow_group_map_size = map_size;
+	}
+	if (rb_data->shadow_group_buffer.is_null()) {
+		rb_data->shadow_group_buffer = rd->storage_buffer_create(sizeof(ShadowGroupBuffer));
+	}
+	const RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache(rb->get_texture(SNAME("shadow_groups"), SNAME("atlas")));
+	ShadowGroupBuffer buffer;
+	static_assert(sizeof(ShadowGroupData) == 96);
+	for (const int &index : p_render_data->shadow_groups) {
+		const RenderShadowData &data = p_render_data->render_shadows[index];
+		const RID base = light_storage->light_instance_get_base_light(data.light);
+		uint32_t light_index = 0;
+		for (uint64_t light_it = 0; light_it < p_render_data->lights->size(); light_it++) {
+			const RID light = (*p_render_data->lights)[light_it];
+			if (light == data.light) {
+				break;
+			}
+			const RID light_base = light_storage->light_instance_get_base_light(light);
+			if (light_storage->light_get_type(light_base) == RSE::LIGHT_DIRECTIONAL && light_storage->light_directional_get_sky_mode(light_base) != RSE::LIGHT_DIRECTIONAL_SKY_MODE_SKY_ONLY) {
+				light_index++;
+			}
+		}
+		const uint32_t slot = buffer.count++;
+		ERR_FAIL_COND(slot >= 8);
+		ShadowGroupData &gpu_data = buffer.maps[slot];
+		const Rect2i rect(Vector2i(slot % 4, slot / 4) * map_size, Size2i(map_size, map_size));
+		gpu_data.rect[0] = float(rect.position.x) / (map_size * 4);
+		gpu_data.rect[1] = float(rect.position.y) / (map_size * 2);
+		gpu_data.rect[2] = 0.25f;
+		gpu_data.rect[3] = 0.5f;
+		gpu_data.bias[0] = light_storage->light_get_param(base, RSE::LIGHT_PARAM_SHADOW_BIAS) * data.group_texel_size;
+		gpu_data.bias[1] = light_storage->light_get_param(base, RSE::LIGHT_PARAM_SHADOW_NORMAL_BIAS) * data.group_texel_size;
+		gpu_data.light_index = light_index;
+		Projection correction;
+		correction.set_depth_correction(false, true, false);
+		Projection bias;
+		bias.set_light_bias();
+		const Transform3D modelview = data.group_transform.affine_inverse() * p_render_data->scene_data->cam_transform;
+		RendererRD::MaterialStorage::store_camera(bias * correction * data.group_projection * modelview, gpu_data.matrix);
+		_render_shadow_append(framebuffer, data.instances, data.group_projection, data.group_transform, data.group_zfar, 0, 0, light_storage->light_get_reverse_cull_face_mode(base), false, false, false, p_render_data->scene_data->cam_projection.get_lod_multiplier(), p_render_data->scene_data->screen_mesh_lod_threshold, rect, true, true, true, true, p_render_data->render_info, rb->get_internal_size(), p_render_data->scene_data->cam_transform);
+	}
+	rd->buffer_update(rb_data->shadow_group_buffer, 0, sizeof(buffer), &buffer);
 }
 
 void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform) {
@@ -4760,6 +4831,21 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		uniforms.push_back(u);
 	}
 
+	{
+		RD::Uniform u;
+		u.binding = 43;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		u.append_id(rb.is_valid() && rb->has_texture(SNAME("shadow_groups"), SNAME("atlas")) ? rb->get_texture(SNAME("shadow_groups"), SNAME("atlas")) : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_DEPTH));
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.binding = 44;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(rb_data.is_valid() && rb_data->shadow_group_buffer.is_valid() ? rb_data->shadow_group_buffer : empty_shadow_group_buffer);
+		uniforms.push_back(u);
+	}
+
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.get_default_shader_rd(is_multiview), RENDER_PASS_UNIFORM_SET, uniforms);
 }
 
@@ -4971,6 +5057,21 @@ RID RenderForwardClustered::_setup_hddagi_render_pass_uniform_set(RID p_albedo_t
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		RID instance_buffer = scene_shader.default_material_feedback_buffer;
 		u.append_id(instance_buffer);
+		uniforms.push_back(u);
+	}
+
+	{
+		RD::Uniform u;
+		u.binding = 43;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		u.append_id(texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_DEPTH));
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.binding = 44;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(empty_shadow_group_buffer);
 		uniforms.push_back(u);
 	}
 
@@ -6145,6 +6246,9 @@ void RenderForwardClustered::_update_shader_quality_settings() {
 }
 
 RenderForwardClustered::RenderForwardClustered() {
+	ShadowGroupBuffer empty_groups;
+	empty_shadow_group_buffer = RD::get_singleton()->storage_buffer_create(sizeof(empty_groups), Span<uint8_t>(reinterpret_cast<uint8_t *>(&empty_groups), sizeof(empty_groups)));
+
 	singleton = this;
 
 	/* SCENE SHADER */
@@ -6307,6 +6411,7 @@ RenderForwardClustered::RenderForwardClustered() {
 }
 
 RenderForwardClustered::~RenderForwardClustered() {
+	RD::get_singleton()->free_rid(empty_shadow_group_buffer);
 	if (ss_effects != nullptr) {
 		memdelete(ss_effects);
 		ss_effects = nullptr;

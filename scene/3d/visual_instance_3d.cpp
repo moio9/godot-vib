@@ -92,6 +92,7 @@ void VisualInstance3D::_notification(int p_what) {
 			ERR_FAIL_COND(get_world_3d().is_null());
 			RenderingServer::get_singleton()->instance_set_scenario(instance, get_world_3d()->get_scenario());
 			_update_visibility();
+			_update_shadow_group();
 		} break;
 
 		case NOTIFICATION_TRANSFORM_CHANGED: {
@@ -121,6 +122,10 @@ void VisualInstance3D::_notification(int p_what) {
 			_update_visibility();
 		} break;
 	}
+}
+
+void VisualInstance3D::_update_shadow_group() {
+	RS::get_singleton()->instance_geometry_set_shadow_group(instance, is_inside_tree() ? get_shadow_group_id() : 0);
 }
 
 RID VisualInstance3D::get_instance() const {

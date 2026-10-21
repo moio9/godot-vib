@@ -62,6 +62,12 @@
 				[b]Note:[/b] This method is not always equivalent to [method Node.get_parent], which does not take [member top_level] into account.
 			</description>
 		</method>
+		<method name="get_shadow_group_id" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the instance ID of the nearest ancestor (including this node) with [member shadow_group_enabled], or [code]0[/code] when there is none. Group inheritance stops at a [Viewport].
+			</description>
+		</method>
 		<method name="get_world_3d" qualifiers="const">
 			<return type="World3D" />
 			<description>
@@ -346,6 +352,11 @@
 			Scale of this node in local space (relative to this node). This value is obtained from [member basis]'s scale.
 			[b]Note:[/b] The behavior of some 3D node types is not affected by this property. These include [Light3D], [Camera3D], [AudioStreamPlayer3D], and more.
 			[b]Warning:[/b] The scale's components must either be all positive or all negative, and [b]not[/b] exactly [code]0.0[/code]. Otherwise, it won't be possible to obtain the scale from the [member basis]. This may cause the intended scale to be lost when reloaded from disk, and potentially other unstable behavior.
+		</member>
+		<member name="shadow_group_enabled" type="bool" setter="set_shadow_group_enabled" getter="is_shadow_group_enabled" default="false">
+			If [code]true[/code], this node and its descendant geometry share a dedicated directional shadow map. Enable this on the root of a car or character scene to include all its meshes. Nested enabled roots form independent groups. Runtime children, reparenting and visibility changes are supported.
+			This experimental feature is supported in Forward+ for the first shadow-casting [DirectionalLight3D]. Up to eight groups per camera use dedicated maps, prioritized by distance; remaining groups use ordinary cascaded shadows. The map resolution is controlled by [member ProjectSettings.rendering/lights_and_shadows/shadow_groups/map_size].
+			Dedicated maps currently use a fixed PCF filter and do not contribute to volumetric fog shadows. Reflection-probe renders and other rendering methods use ordinary shadows. Skinned meshes require bounds that contain their animation, as with ordinary shadow culling.
 		</member>
 		<member name="top_level" type="bool" setter="set_as_top_level" getter="is_set_as_top_level" default="false">
 			If [code]true[/code], the node does not inherit its transformations from its parent. As such, node transformations will only be in global space, which also means that [member global_transform] and [member transform] will be identical.

@@ -1345,6 +1345,25 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 	}
 }
 
+void RendererSceneCull::instance_geometry_set_shadow_group(RID p_instance, uint64_t p_group_id) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
+	if (instance->shadow_group_id == p_group_id) {
+		return;
+	}
+	if (instance->shadow_group_id) {
+		HashSet<Instance *> &members = shadow_groups[instance->shadow_group_id];
+		members.erase(instance);
+		if (members.is_empty()) {
+			shadow_groups.erase(instance->shadow_group_id);
+		}
+	}
+	instance->shadow_group_id = p_group_id;
+	if (p_group_id) {
+		shadow_groups[p_group_id].insert(instance);
+	}
+}
+
 void RendererSceneCull::instance_geometry_set_cast_shadows_setting(RID p_instance, RSE::ShadowCastingSetting p_shadow_casting_setting) {
 	Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL(instance);
@@ -2169,6 +2188,125 @@ void RendererSceneCull::_update_instance_lightmap_captures(Instance *p_instance)
 
 	ERR_FAIL_NULL(geom->geometry_instance);
 	geom->geometry_instance->set_lightmap_capture(p_instance->lightmap_sh.ptr());
+}
+
+void RendererSceneCull::_setup_shadow_groups(Scenario *p_scenario, const RendererSceneRender::CameraData *p_camera_data, uint32_t p_visible_layers, RID p_viewport) {
+	if (shadow_groups.is_empty() || cull.shadow_count == 0) {
+		return;
+	}
+	// Prototype: the first shadow-casting directional light, at most eight groups per view.
+	Instance *sun = nullptr;
+	for (Instance *light : p_scenario->directional_lights) {
+		if (static_cast<InstanceLightData *>(light->base_data)->instance == cull.shadows[0].light_instance) {
+			sun = light;
+			break;
+		}
+	}
+	ERR_FAIL_NULL(sun);
+	const Basis light_basis = sun->transform.basis.orthonormalized();
+	const uint32_t caster_mask = RSG::light_storage->light_get_shadow_caster_mask(sun->base) & p_visible_layers;
+	real_t distance = p_camera_data->main_projection.get_z_far();
+	const real_t shadow_distance = RSG::light_storage->light_get_param(sun->base, RSE::LIGHT_PARAM_SHADOW_MAX_DISTANCE);
+	if (shadow_distance > 0 && !p_camera_data->is_orthogonal) {
+		distance = MIN(distance, shadow_distance);
+	}
+	const int map_size = CLAMP(int(GLOBAL_GET("rendering/lights_and_shadows/shadow_groups/map_size")), 256, 2048);
+	CullData visibility_data;
+	visibility_data.scenario = p_scenario;
+	visibility_data.cam_transform = p_camera_data->main_transform;
+	visibility_data.visibility_viewport_mask = p_scenario->viewport_visibility_masks.has(p_viewport) ? p_scenario->viewport_visibility_masks[p_viewport] : 0;
+
+	struct Candidate {
+		uint64_t id = 0;
+		real_t distance_squared = 0;
+		AABB bounds;
+		LocalVector<Instance *> members;
+		bool operator<(const Candidate &p_other) const {
+			return distance_squared == p_other.distance_squared ? id < p_other.id : distance_squared < p_other.distance_squared;
+		}
+	};
+	LocalVector<Candidate> candidates;
+	for (const KeyValue<uint64_t, HashSet<Instance *>> &group : shadow_groups) {
+		Candidate candidate;
+		candidate.id = group.key;
+		for (Instance *instance : group.value) {
+			if (instance->scenario != p_scenario || instance->array_index < 0 || !instance->visible || !(instance->layer_mask & caster_mask) || !((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK) || !instance->base_data || !static_cast<InstanceGeometryData *>(instance->base_data)->can_cast_shadows) {
+				continue;
+			}
+			const InstanceData &idata = p_scenario->instance_data[instance->array_index];
+			const uint32_t flags = idata.flags & (InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN_CLOSE_RANGE | InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN | InstanceData::FLAG_VISIBILITY_DEPENDENCY_FADE_CHILDREN);
+			if (flags == InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN_CLOSE_RANGE || flags == InstanceData::FLAG_VISIBILITY_DEPENDENCY_HIDDEN ||
+					(flags == InstanceData::FLAG_VISIBILITY_DEPENDENCY_NEEDS_CHECK && ((idata.visibility_index >= 0 && _visibility_range_check<false>(p_scenario->instance_visibility[idata.visibility_index], p_camera_data->main_transform.origin, visibility_data.visibility_viewport_mask) != 0) || !_visibility_parent_check(visibility_data, idata)))) {
+				continue;
+			}
+			if (instance->base_type == RSE::INSTANCE_PARTICLES && RSG::particles_storage->particles_is_inactive(instance->base)) {
+				continue;
+			}
+			if (!instance->transformed_aabb.is_finite()) {
+				continue;
+			}
+			candidate.bounds = candidate.members.is_empty() ? instance->transformed_aabb : candidate.bounds.merge(instance->transformed_aabb);
+			candidate.members.push_back(instance);
+		}
+		if (candidate.members.is_empty()) {
+			continue;
+		}
+		candidate.distance_squared = candidate.bounds.get_center().distance_squared_to(p_camera_data->main_transform.origin);
+		// Include off-screen casters whose projected shadows can enter the camera frustum.
+		const Vector3 extrusion = -light_basis.get_column(2) * distance * 2.0;
+		AABB shadow_bounds = candidate.bounds.merge(AABB(candidate.bounds.position + extrusion, candidate.bounds.size));
+		if (!InstanceBounds(shadow_bounds).in_frustum(cull.frustum)) {
+			continue;
+		}
+		candidates.push_back(candidate);
+	}
+	candidates.sort();
+	HashSet<RenderGeometryInstance *> dedicated_casters;
+	for (uint32_t i = 0; i < MIN(8u, candidates.size()) && max_shadows_used < MAX_UPDATE_SHADOWS; i++) {
+		const Candidate &candidate = candidates[i];
+		Transform3D light_transform(light_basis, candidate.bounds.get_center());
+		const AABB local_bounds = light_transform.affine_inverse().xform(candidate.bounds);
+		// Square projection, with a PCF border and light-space texel snapping.
+		real_t extent = MAX(MAX(local_bounds.size.x, local_bounds.size.y) * 0.5, real_t(0.05));
+		extent *= real_t(map_size) / (map_size - 8);
+		const real_t texel_size = extent * 2 / map_size;
+		Vector3 light_position = light_basis.xform_inv(light_transform.origin);
+		light_position.x = Math::snapped(light_position.x, texel_size);
+		light_position.y = Math::snapped(light_position.y, texel_size);
+		light_position.z += local_bounds.get_end().z + 0.1;
+		light_transform.origin = light_basis.xform(light_position);
+		RendererSceneRender::RenderShadowData &data = render_shadow_data[max_shadows_used++];
+		data.light = cull.shadows[0].light_instance;
+		data.shadow_group = true;
+		data.group_transform = light_transform;
+		data.group_zfar = local_bounds.size.z + 0.2 + distance * 2.0;
+		data.group_texel_size = texel_size;
+		data.group_projection.set_orthogonal(-extent, extent, -extent, extent, 0.0, data.group_zfar);
+		for (Instance *member : candidate.members) {
+			RenderGeometryInstance *geometry = static_cast<InstanceGeometryData *>(member->base_data)->geometry_instance;
+			data.instances.push_back(geometry);
+			dedicated_casters.insert(geometry);
+			if (member->mesh_instance.is_valid()) {
+				RSG::mesh_storage->mesh_instance_check_for_update(member->mesh_instance);
+			}
+		}
+	}
+	// Keep ordinary CSM as the fallback for groups beyond the atlas capacity.
+	// Allocated groups are sampled separately, avoiding a coarse duplicate shadow.
+	for (uint32_t i = 0; i < max_shadows_used; i++) {
+		RendererSceneRender::RenderShadowData &data = render_shadow_data[i];
+		if (data.shadow_group || data.light != cull.shadows[0].light_instance) {
+			continue;
+		}
+		for (int64_t j = int64_t(data.instances.size()) - 1; j >= 0; j--) {
+			if (dedicated_casters.has(data.instances[j])) {
+				data.instances.remove_at_unordered(j);
+			}
+		}
+	}
+	if (!dedicated_casters.is_empty()) {
+		RSG::mesh_storage->update_mesh_instances();
+	}
 }
 
 void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_index, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect) {
@@ -3668,6 +3806,10 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		}
 	}
 
+	if (p_using_shadows && p_reflection_probe.is_null() && p_render_buffers.is_valid() && scene_render->supports_shadow_groups()) {
+		_setup_shadow_groups(scenario, p_camera_data, p_visible_layers, p_viewport);
+	}
+
 	//render HDDAGI
 
 	{
@@ -3735,6 +3877,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 	for (uint32_t i = 0; i < max_shadows_used; i++) {
 		render_shadow_data[i].instances.clear();
+		render_shadow_data[i].shadow_group = false;
 	}
 	max_shadows_used = 0;
 
@@ -4439,6 +4582,7 @@ bool RendererSceneCull::free(RID p_rid) {
 
 		Instance *instance = instance_owner.get_or_null(p_rid);
 
+		instance_geometry_set_shadow_group(p_rid, 0);
 		instance_geometry_set_lightmap(p_rid, RID(), Rect2(), 0);
 		instance_set_scenario(p_rid, RID());
 		instance_set_base(p_rid, RID());

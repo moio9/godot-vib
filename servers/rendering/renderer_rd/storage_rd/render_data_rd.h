@@ -90,6 +90,7 @@ public:
 	LocalVector<int> cube_shadows;
 	LocalVector<int> shadows;
 	LocalVector<int> directional_shadows;
+	LocalVector<int> shadow_groups;
 	LocalVector<int> contact_shadows;
 
 	/* GI info */

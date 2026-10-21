@@ -317,6 +317,21 @@ layout(set = 0, binding = 19) uniform texture2D ltc_lut2;
 layout(set = 0, binding = 20) uniform texture2D area_light_atlas;
 /* Set 1: Render Pass (changes per render pass) */
 
+struct ShadowGroupData {
+	mat4 matrix;
+	vec4 rect;
+	vec2 bias;
+	uint light_index;
+	uint pad;
+};
+
+layout(set = 1, binding = 43) uniform texture2D shadow_group_atlas;
+layout(set = 1, binding = 44, std430) restrict readonly buffer ShadowGroupBuffer {
+	uvec4 header;
+	ShadowGroupData maps[];
+}
+shadow_groups;
+
 layout(set = 1, binding = 0, std140) uniform SceneDataBlock {
 	SceneData data;
 	SceneData prev_data;

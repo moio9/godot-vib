@@ -2077,6 +2077,14 @@
 				[b]Note:[/b] [param transparency] is clamped between [code]0.0[/code] and [code]1.0[/code], so this property cannot be used to make transparent materials more opaque than they originally are.
 			</description>
 		</method>
+		<method name="instance_geometry_set_shadow_group">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="group_id" type="int" />
+			<description>
+				Assigns geometry to a dedicated directional shadow group. Members with the same nonzero ID share one map in Forward+. Passing [code]0[/code] restores ordinary cascaded shadows. This is normally managed by [member Node3D.shadow_group_enabled].
+			</description>
+		</method>
 		<method name="instance_geometry_set_visibility_range">
 			<return type="void" />
 			<param index="0" name="instance" type="RID" />

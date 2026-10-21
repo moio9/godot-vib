@@ -1099,6 +1099,40 @@ void Node3D::_propagate_visibility_changed() {
 	}
 }
 
+uint64_t Node3D::get_shadow_group_id() const {
+	for (const Node *node = this; node; node = node->get_parent()) {
+		if (Object::cast_to<Viewport>(node)) {
+			break;
+		}
+		const Node3D *node_3d = Object::cast_to<Node3D>(node);
+		if (node_3d && node_3d->shadow_group_enabled) {
+			return node_3d->get_instance_id();
+		}
+	}
+	return 0;
+}
+
+void Node3D::_propagate_shadow_group_changed(Node *p_node) {
+	Node3D *node_3d = Object::cast_to<Node3D>(p_node);
+	if (node_3d) {
+		node_3d->_update_shadow_group();
+	}
+	for (int i = 0; i < p_node->get_child_count(true); i++) {
+		_propagate_shadow_group_changed(p_node->get_child(i, true));
+	}
+}
+
+void Node3D::set_shadow_group_enabled(bool p_enabled) {
+	ERR_MAIN_THREAD_GUARD;
+	if (shadow_group_enabled == p_enabled) {
+		return;
+	}
+	shadow_group_enabled = p_enabled;
+	if (is_inside_tree()) {
+		_propagate_shadow_group_changed(this);
+	}
+}
+
 void Node3D::show() {
 	ERR_MAIN_THREAD_GUARD;
 	set_visible(true);
@@ -1533,6 +1567,10 @@ void Node3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "global_rotation", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "set_global_rotation", "get_global_rotation");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "global_rotation_degrees", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "set_global_rotation_degrees", "get_global_rotation_degrees");
 	ADD_GROUP("Visibility", "");
+	ClassDB::bind_method(D_METHOD("set_shadow_group_enabled", "enabled"), &Node3D::set_shadow_group_enabled);
+	ClassDB::bind_method(D_METHOD("is_shadow_group_enabled"), &Node3D::is_shadow_group_enabled);
+	ClassDB::bind_method(D_METHOD("get_shadow_group_id"), &Node3D::get_shadow_group_id);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shadow_group_enabled"), "set_shadow_group_enabled", "is_shadow_group_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "visible"), "set_visible", "is_visible");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "visibility_parent", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GeometryInstance3D"), "set_visibility_parent", "get_visibility_parent");
 

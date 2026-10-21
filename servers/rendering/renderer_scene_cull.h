@@ -425,6 +425,7 @@ public:
 		Vector<RID> materials;
 
 		RSE::ShadowCastingSetting cast_shadows;
+		uint64_t shadow_group_id = 0;
 
 		uint32_t layer_mask;
 		// Fit in 32 bits.
@@ -1009,6 +1010,8 @@ public:
 
 	RendererSceneRender::RenderShadowData render_shadow_data[MAX_UPDATE_SHADOWS];
 	uint32_t max_shadows_used = 0;
+	HashMap<uint64_t, HashSet<Instance *>> shadow_groups;
+	void _setup_shadow_groups(Scenario *p_scenario, const RendererSceneRender::CameraData *p_camera_data, uint32_t p_visible_layers, RID p_viewport);
 
 	RendererSceneRender::RenderHDDAGIData render_hddagi_data[HDDAGI_MAX_CASCADES * HDDAGI_MAX_REGIONS_PER_CASCADE];
 	RendererSceneRender::RenderHDDAGIUpdateData hddagi_update_data;
@@ -1058,6 +1061,7 @@ public:
 
 	virtual void instance_geometry_set_flag(RID p_instance, RSE::InstanceFlags p_flags, bool p_enabled);
 	virtual void instance_geometry_set_cast_shadows_setting(RID p_instance, RSE::ShadowCastingSetting p_shadow_casting_setting);
+	virtual void instance_geometry_set_shadow_group(RID p_instance, uint64_t p_group_id);
 	virtual void instance_geometry_set_material_override(RID p_instance, RID p_material);
 	virtual void instance_geometry_set_material_overlay(RID p_instance, RID p_material);
 

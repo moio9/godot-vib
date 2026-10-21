@@ -1207,6 +1207,36 @@ vec3 encode24(vec3 v) {
 }
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
+float sample_shadow_groups(uint light_index, vec3 vertex, vec3 normal, vec3 light_dir) {
+	float shadow = 1.0;
+	for (uint group = 0u; group < min(shadow_groups.header.x, 8u); group++) {
+		ShadowGroupData data = shadow_groups.maps[group];
+		if (data.light_index != light_index) {
+			continue;
+		}
+		vec3 normal_bias = normal * (1.0 - max(0.0, dot(light_dir, -normal))) * data.bias.y;
+		normal_bias -= light_dir * dot(light_dir, normal_bias);
+		vec4 coord = data.matrix * vec4(vertex + light_dir * data.bias.x + normal_bias, 1.0);
+		coord.xyz /= coord.w;
+		if (any(lessThanEqual(coord.xyz, vec3(0.0))) || any(greaterThanEqual(coord.xyz, vec3(1.0)))) {
+			continue;
+		}
+		vec2 pixel = 1.0 / vec2(textureSize(sampler2D(shadow_group_atlas, SAMPLER_NEAREST_CLAMP), 0));
+		vec2 uv = data.rect.xy + coord.xy * data.rect.zw;
+		vec2 uv_min = data.rect.xy + pixel * 0.5;
+		vec2 uv_max = data.rect.xy + data.rect.zw - pixel * 0.5;
+		float result = 0.0;
+		for (int y = -1; y <= 1; y += 2) {
+			for (int x = -1; x <= 1; x += 2) {
+				vec2 tap = clamp(uv + vec2(x, y) * pixel * 0.5, uv_min, uv_max);
+				result += texture(sampler2DShadow(shadow_group_atlas, shadow_sampler), vec3(tap, coord.z));
+			}
+		}
+		shadow = min(shadow, result * 0.25);
+	}
+	return shadow;
+}
+
 void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
 
@@ -2674,6 +2704,8 @@ vec2 mesh_blend_main_aux_value = vec2(
 							shadow = mix(shadow, shadow2, pssm_blend);
 						}
 					}
+
+					shadow = min(shadow, sample_shadow_groups(i, vertex, geo_normal, light_dir));
 
 #ifdef USE_LIGHTMAP
 					if (shadowmask_mode == LIGHTMAP_SHADOWMASK_MODE_REPLACE) {
