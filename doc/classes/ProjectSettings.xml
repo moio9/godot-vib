@@ -3148,6 +3148,9 @@
 		<member name="rendering/global_illumination/hddagi/screen_probe_denoiser_quality" type="int" setter="" getter="" default="2">
 			Denoiser quality. Higher values reduce noise at higher GPU cost.
 		</member>
+		<member name="rendering/global_illumination/hddagi/screen_probe_denoiser_reactive" type="bool" setter="" getter="" default="true">
+			Shortens diffuse screen-probe temporal history when nearby samples on the same surface agree that illumination has changed. This improves response to changing lights while retaining accumulation for isolated noisy samples. Only applies when the screen-probe denoiser is SVGF; disabling this restores the original diffuse temporal response.
+		</member>
 		<member name="rendering/global_illumination/hddagi/screen_probe_denoiser_temporal_only" type="bool" setter="" getter="" default="false">
 			Uses only temporal accumulation for Directional Gather diffuse denoising.
 		</member>

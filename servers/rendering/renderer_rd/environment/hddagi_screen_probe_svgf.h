@@ -55,6 +55,7 @@ public:
 		Quality quality = QUALITY_HIGH;
 		bool history_valid = false;
 		bool diffuse_temporal_only = false;
+		bool diffuse_reactive = true;
 		bool specular = false;
 		bool specular_full_resolution = false;
 	};

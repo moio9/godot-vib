@@ -224,6 +224,7 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 	const bool irradiance_cache_multibounce = !directional_gather && hddagi->screen_probe_radiance_cache_multibounce_active;
 	const int denoiser_setting = GLOBAL_GET_CACHED(int, "rendering/global_illumination/hddagi/screen_probe_denoiser");
 	const bool diffuse_temporal_only_setting = GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_denoiser_temporal_only");
+	const bool diffuse_reactive_setting = GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_denoiser_reactive");
 	const HDDAGIScreenProbeSVGF::Quality svgf_quality = static_cast<HDDAGIScreenProbeSVGF::Quality>(CLAMP(GLOBAL_GET_CACHED(int, "rendering/global_illumination/hddagi/screen_probe_denoiser_quality"), 0, int(HDDAGIScreenProbeSVGF::QUALITY_MAX) - 1));
 
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
@@ -482,6 +483,7 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 		configuration = hash_murmur3_one_32(directional_screen_radiance_setting ? 1u : 0u, configuration);
 	}
 	configuration = hash_murmur3_one_32(candidate_count, configuration);
+	configuration = hash_murmur3_one_32(diffuse_reactive_setting ? 1u : 0u, configuration);
 	configuration = hash_murmur3_one_32(guided_sampling ? 1u : 0u, configuration);
 	configuration = hash_murmur3_one_32(uniform_placement_jitter ? 1u : 0u, configuration);
 	configuration = hash_murmur3_one_32(detail_trace ? 1u : 0u, configuration);
@@ -1368,6 +1370,7 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 			svgf_frame.quality = svgf_quality;
 			svgf_frame.history_valid = svgf_history_valid;
 			svgf_frame.diffuse_temporal_only = directional_gather && diffuse_temporal_only_setting;
+			svgf_frame.diffuse_reactive = diffuse_reactive_setting;
 
 			HDDAGIScreenProbeSVGF::Resources svgf_resources;
 			svgf_resources.motion_vectors = svgf_motion[v];

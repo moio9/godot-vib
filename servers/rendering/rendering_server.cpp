@@ -3877,6 +3877,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_denoiser", PROPERTY_HINT_ENUM, "Disabled:0,SVGF:1"), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_denoiser_quality", PROPERTY_HINT_ENUM, "Low (Faster),Medium,High (Slower)"), 2);
 	GLOBAL_DEF("rendering/global_illumination/hddagi/screen_probe_denoiser_temporal_only", false);
+	GLOBAL_DEF("rendering/global_illumination/hddagi/screen_probe_denoiser_reactive", true);
 	GLOBAL_DEF("rendering/global_illumination/hddagi/screen_probe_detail_trace", false);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_detail_trace_quality", PROPERTY_HINT_ENUM, "High (Slow),Balanced,Performance (Fast)"), 0);
 	GLOBAL_DEF("rendering/global_illumination/hddagi/screen_probe_directional_adaptive", false);

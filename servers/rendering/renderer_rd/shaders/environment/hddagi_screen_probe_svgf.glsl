@@ -457,6 +457,64 @@ bool svgf_specular_neighborhood(vec3 center_signal, out vec3 r_center, out vec3 
 	return svgf_finite_vec3(r_center) && svgf_finite_vec3(r_extent);
 }
 
+// React to spatially coherent illumination changes, not a single stochastic ray.
+// Neighbor samples only control history length; they are never mixed into the
+// pixel color, so this response does not add spatial blur or change its hue.
+float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float view_z, bool dynamic_surface, float current_luminance, vec2 previous_moments, float previous_history_length) {
+	if ((params.control.x & 8u) == 0u || previous_history_length < 4.0) {
+		return params.atrous.w;
+	}
+	float old_luminance = previous_moments.x;
+	float difference = current_luminance - old_luminance;
+	float temporal_variance = max(previous_moments.y - old_luminance * old_luminance, 0.0);
+	float threshold = max(0.002, 0.25 * max(current_luminance, old_luminance));
+	if (abs(difference) <= max(threshold, 2.0 * sqrt(temporal_variance))) {
+		return params.atrous.w;
+	}
+
+	float sample_sum = current_luminance;
+	float sample_square_sum = current_luminance * current_luminance;
+	float sample_count = 1.0;
+	float agreeing_samples = 1.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			ivec2 tap = pixel + ivec2(x, y);
+			if ((x == 0 && y == 0) || any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, size))) {
+				continue;
+			}
+			float tap_z = texelFetch(sampler2D(current_view_z_input, nearest_sampler), tap, 0).r;
+			vec3 tap_normal;
+			if (!svgf_valid_view_z(tap_z) || abs(tap_z - view_z) > 0.01 + params.tuning.z * view_z ||
+					!svgf_decode_normal(texelFetch(sampler2D(current_normal_roughness_input, nearest_sampler), tap, 0), tap_normal) || dot(tap_normal, normal) < params.tuning.y) {
+				continue;
+			}
+			vec4 tap_motion = texelFetch(sampler2D(motion_input, nearest_sampler), tap, 0);
+			if (!svgf_finite_vec4(tap_motion) || (tap_motion.w > 1.0) != dynamic_surface) {
+				continue;
+			}
+			vec4 tap_signal = texelFetch(sampler2D(current_signal_input, nearest_sampler), tap, 0);
+			if (!svgf_finite_vec4(tap_signal)) {
+				continue;
+			}
+			float luminance = min(svgf_filter_luminance(max(tap_signal.rgb, vec3(0.0)), false), MOMENT_LUMINANCE_MAX);
+			sample_sum += luminance;
+			sample_square_sum += luminance * luminance;
+			sample_count += 1.0;
+			if ((luminance - old_luminance) * sign(difference) > threshold) {
+				agreeing_samples += 1.0;
+			}
+		}
+	}
+	if (sample_count < 5.0 || agreeing_samples < sample_count * 0.75) {
+		return params.atrous.w;
+	}
+	float mean = sample_sum / sample_count;
+	float variance = max(sample_square_sum / sample_count - mean * mean, 0.0);
+	float coherent_threshold = max(threshold, 2.0 * sqrt(variance));
+	float response = smoothstep(coherent_threshold, coherent_threshold * 2.0, abs(mean - old_luminance));
+	return mix(params.atrous.w, 2.0, response);
+}
+
 void svgf_temporal_main() {
 	ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 size = imageSize(current_signal_output);
@@ -612,6 +670,9 @@ void svgf_temporal_main() {
 				history_confidence = history_confidence * 0.75 + 0.25;
 				history_signal = svgf_specular_project_denoiser_space(svgf_ycocg_to_rgb(clamped_history_ycocg));
 			}
+		}
+		if (!specular_mode) {
+			maximum_history_length = svgf_diffuse_reactive_history(pixel, size, current_normal, current_view_z, current_dynamic, current_moment_luminance, previous_moments, previous_history_length);
 		}
 		float advanced_history_length = specular_mode ? previous_history_length * history_confidence + 1.0 : previous_history_length + 1.0;
 		history_length = max(1.0, min(advanced_history_length, maximum_history_length) * reprojection_quality);
