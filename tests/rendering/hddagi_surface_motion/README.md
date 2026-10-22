@@ -46,6 +46,17 @@ It verifies matching measurement frames, per-receiver noise and screenshots, and
 limits additional noise to 15 percent plus 0.05 percent of the mean GI signal.
 Pass `--baseline` to record a previous build without enforcing noise comparisons.
 
+`dynamic_sampling_check.gd` dispatches the exact production adaptive-sampling
+helpers on a local Vulkan device. It covers near/far receivers, fresh nearby
+Dynamic geometry, depth separation, validated/reprojected history, invalid
+history, disabled sampling, targets 1–8, perspective and orthographic cameras.
+It also requires bit-identical original rays and a separate, count-independent
+stream for extra rays. `--scene` runs the installed renderer and reads the actual
+candidate counts from the trace debug texture: near car and ground, unaffected
+scenery, movement, camera follow, stopping, MSAA, distant cars and actor removal.
+Scene GPU timings include the diagnostic montage and are not game benchmarks.
+Both modes accept `--out=<directory>` and report `DYNAMIC_SAMPLING_RESULT`.
+
 The renderer emits metadata only in the existing HDDAGI motion-vector depth prepass.
 Depth, normal, velocity and metadata resolve from the same MSAA sample. Each viewport
 keeps its own previous metadata, cleared on reconfiguration and freed when the screen

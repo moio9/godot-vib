@@ -128,16 +128,24 @@ jobs:
           set -euxo pipefail
           BIN=bin/godot.linuxbsd.editor.x86_64
           LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-          for SCRIPT in shader_check scene_check ground_check static_noise_check compile_probe; do
+          for SCRIPT in shader_check scene_check ground_check static_noise_check dynamic_sampling_check compile_probe; do
             timeout 600s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
               "$BIN" --path tests/rendering/hddagi_surface_motion --script "res://${SCRIPT}.gd" \
               --rendering-method forward_plus --rendering-driver vulkan --audio-driver Dummy \
               2>&1 | tee "moving-surface-${SCRIPT}.log"
-            grep -Eq '(SURFACE_MOTION|MOVING_SCENE|GROUND_TRANSFER|STATIC_NOISE|PROBE_COMPILE)_RESULT checks=[0-9]+ failures=0' "moving-surface-${SCRIPT}.log"
+            grep -Eq '(SURFACE_MOTION|MOVING_SCENE|GROUND_TRANSFER|STATIC_NOISE|DYNAMIC_SAMPLING|PROBE_COMPILE)_RESULT checks=[0-9]+ failures=0' "moving-surface-${SCRIPT}.log"
             if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' "moving-surface-${SCRIPT}.log"; then
               exit 1
             fi
           done
+          timeout 600s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
+            "$BIN" --path tests/rendering/hddagi_surface_motion --script res://dynamic_sampling_check.gd \
+            --rendering-method forward_plus --rendering-driver vulkan --audio-driver Dummy -- --scene \
+            2>&1 | tee moving-surface-dynamic-sampling-scene.log
+          grep -Eq 'DYNAMIC_SAMPLING_RESULT checks=[0-9]+ failures=0' moving-surface-dynamic-sampling-scene.log
+          if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' moving-surface-dynamic-sampling-scene.log; then
+            exit 1
+          fi
           timeout 600s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
             "$BIN" --path tests/rendering/hddagi_reactive_history --script res://check.gd \
             --rendering-method forward_plus --rendering-driver vulkan --audio-driver Dummy \
