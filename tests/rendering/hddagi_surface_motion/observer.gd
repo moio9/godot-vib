@@ -2,6 +2,7 @@ extends CompositorEffect
 var mutex := Mutex.new()
 var requested := false
 var observation: Dictionary = {}
+var signal_name := &"output"
 func _init() -> void:
 	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
 func request_capture() -> void:
@@ -69,7 +70,7 @@ void main() {
 		fallback = rd.texture_create(format, RDTextureView.new(), [PackedInt32Array([0, 0]).to_byte_array()])
 		metadata = fallback
 	var uniforms: Array[RDUniform] = []
-	var rids := [buffers.get_texture_slice(&"hddagi_screen_probe_denoiser", &"output", 0, 0, 1, 1), buffers.get_texture_slice(&"forward_clustered", &"normal_roughness", 0, 0, 1, 1), metadata, sampler, output]
+	var rids := [buffers.get_texture_slice(&"hddagi_screen_probe_denoiser", signal_name, 0, 0, 1, 1), buffers.get_texture_slice(&"forward_clustered", &"normal_roughness", 0, 0, 1, 1), metadata, sampler, output]
 	for binding in 5:
 		var u := RDUniform.new()
 		u.binding = binding

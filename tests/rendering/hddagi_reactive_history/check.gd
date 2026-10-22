@@ -55,9 +55,34 @@ func dispatch(kind: String, reactive: bool) -> Image:
 	var depth_modifier := Callable()
 	var normal_modifier := Callable()
 	var motion_modifier := Callable()
-	if kind == "off":
+	if kind in ["young_shadow_1", "young_shadow_2"]:
 		current = 0.0
 		previous = 0.125
+	elif kind == "off":
+		current = 0.0
+		previous = 0.125
+	elif kind in ["soft_shadow_enter", "soft_shadow_leave"]:
+		current = 0.00177 if kind == "soft_shadow_enter" else 0.00195
+		previous = 0.00195 if kind == "soft_shadow_enter" else 0.00177
+		variance = 1.0
+	elif kind == "noisy_soft_shadow":
+		current = 0.00175
+		previous = 0.00195
+		variance = 1.0
+		signal_modifier = func(x: int, y: int, c: Color) -> Color:
+			var scale := 1.0 + float((x % 3) + 3 * (y % 3) - 4) * 0.025
+			return Color(c.r * scale, c.g * scale, c.b * scale, c.a)
+	elif kind in ["faint_shadow_enter", "faint_shadow_leave"]:
+		current = 0.000002 if kind == "faint_shadow_enter" else 0.00001
+		previous = 0.00001 if kind == "faint_shadow_enter" else 0.000002
+		variance = 1.0
+	elif kind == "sloped_floor":
+		variance = 1.0
+		depth_modifier = func(_x: int, y: int, _c: Color) -> Color:
+			var ndc_y := (float(y) + 0.5) / SIZE.y * 2.0 - 1.0
+			return Color(2.0 / (1.0 - 4.0 * ndc_y), 0, 0, 1)
+		normal_modifier = func(_x: int, _y: int, c: Color) -> Color:
+			return Color(0.5, 0.9472136, 0.7236068, c.a)
 	elif kind == "stable" or kind == "noise":
 		current = previous
 		if kind == "noise":
@@ -84,7 +109,8 @@ func dispatch(kind: String, reactive: bool) -> Image:
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(previous, previous, previous, 1)))
 	var moment := previous * 64.0
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(moment, moment * moment + variance, 0, 0)))
-	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(0.5, 0.5, 1, 30.0 / 255.0)))
+	var history_frames := 1.0 if kind == "young_shadow_1" else (2.0 if kind == "young_shadow_2" else 30.0)
+	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(0.5, 0.5, 1, history_frames / 255.0), normal_modifier if kind == "sloped_floor" else Callable()))
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32_SFLOAT, Color(2, 0, 0, 1)))
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Color(0, 0, 0, 0)))
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Color(0, 0, 0, 0)))
@@ -163,7 +189,7 @@ func run() -> void:
 	data.append_array(PackedFloat32Array([0, 0, 0, 0]))
 	frame_buffer = rd.uniform_buffer_create(data.size() * 4, data.to_byte_array())
 	frame_set = rd.uniform_set_create([uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 0, frame_buffer)], shader, 1)
-	for kind in ["on", "off", "stable", "noise", "isolated", "depth_edge", "normal_edge", "dynamic_edge", "cut", "specular"]:
+	for kind in ["on", "off", "young_shadow_1", "young_shadow_2", "faint_shadow_enter", "faint_shadow_leave", "soft_shadow_enter", "soft_shadow_leave", "noisy_soft_shadow", "sloped_floor", "stable", "noise", "isolated", "depth_edge", "normal_edge", "dynamic_edge", "cut", "specular"]:
 		var baseline := dispatch(kind, false)
 		var adaptive := dispatch(kind, true)
 		var old_value := baseline.get_pixel(6, 5).r
@@ -173,6 +199,18 @@ func run() -> void:
 			check(absf(new_value - 0.125) < absf(old_value - 0.125) * 0.65, "light-on residual reduced by at least 35 percent")
 		elif kind == "off":
 			check(new_value < old_value * 0.65, "light-off residual reduced by at least 35 percent")
+		elif kind in ["young_shadow_1", "young_shadow_2"]:
+			check(new_value < 0.000001, kind + " clears even recent illumination history")
+		elif kind in ["faint_shadow_enter", "faint_shadow_leave"]:
+			var expected := 0.000002 if kind == "faint_shadow_enter" else 0.00001
+			check(absf(new_value - expected) < 0.0000002, kind + " removes faint floor shadow history despite old stochastic variance")
+		elif kind == "sloped_floor":
+			check(absf(new_value - 0.125) < 0.0001, "coherent lighting reacts on an oblique floor using plane distance")
+		elif kind in ["soft_shadow_enter", "soft_shadow_leave"]:
+			var expected := 0.00177 if kind == "soft_shadow_enter" else 0.00195
+			check(absf(new_value - expected) < 0.000002, kind + " reacts to low-contrast indirect ground occlusion")
+		elif kind == "noisy_soft_shadow":
+			check(absf(new_value - 0.0018375) < 0.000002, "low-contrast coherent shadow reacts despite spatial stochastic variance")
 		else:
 			check(absf(old_value - new_value) < 0.000001, kind + " preserves expected response")
 		var finite := true

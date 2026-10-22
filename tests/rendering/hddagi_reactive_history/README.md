@@ -18,7 +18,10 @@ bin/godot.linuxbsd.editor.x86_64 --display-driver x11 --rendering-method forward
 RenderingDevice. It compares old and reactive accumulation with identical input,
 including light-on/off steps, stable illumination, stochastic noise, isolated
 outliers, depth/normal/dynamic-surface boundaries, invalid history, specular
-invariance and partial workgroups. It reports 24 checks. This isolates temporal
+invariance and partial workgroups. It also checks faint and low-contrast shadow
+changes despite noisy old moments, and coherent changes on oblique surfaces
+whose neighboring view depths differ, including recent illumination history.
+It reports 40 checks. This isolates temporal
 response; it does not measure whole-scene GI convergence or frame time.
 
 `scene_check.gd` exercises both screen-probe modes with the integrated renderer,

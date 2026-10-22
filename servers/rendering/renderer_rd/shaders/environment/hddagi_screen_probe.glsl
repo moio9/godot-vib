@@ -53,7 +53,7 @@ const float SCREEN_PROBE_DETAIL_TRACE_MAX_DISTANCE = 2.0;
 const float SCREEN_PROBE_SPECULAR_DETAIL_TRACE_MAX_DISTANCE = 50.0;
 
 const int HDDAGI_TRACE_SCREEN_ENDPOINT = -2;
-const int HDDAGI_TRACE_SCREEN_ENDPOINT_SKY_FALLBACK = -3;
+const int HDDAGI_TRACE_SCREEN_ENDPOINT_UNLIT = -3;
 const int HDDAGI_TRACE_SCREEN_RADIANCE = -4;
 
 const int HDDAGI_REGION_SIZE = 8;
@@ -230,10 +230,14 @@ layout(rgba32ui, set = 0, binding = 13) uniform restrict readonly uimage2D direc
 layout(r8ui, set = 0, binding = 14) uniform restrict readonly uimage2D directional_previous_history_age_input;
 layout(r8ui, set = 0, binding = 15) uniform restrict writeonly uimage2D directional_history_age_output;
 layout(rgba32ui, set = 0, binding = 16) uniform restrict readonly uimage2D directional_previous_adaptive_tile_data_input;
-layout(set = 0, binding = 17) uniform texture2D directional_velocity_buffer;
 layout(set = 0, binding = 18) uniform texture2D directional_depth_buffer;
 layout(set = 0, binding = 19) uniform texture2D directional_previous_filtered_radiance_input;
 layout(r8ui, set = 0, binding = 20) uniform restrict writeonly uimage2D directional_trace_count_output;
+#endif
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE)
+// Both diffuse modes need endpoint motion and identity. Receiver reprojection
+// alone cannot transport a moving object's light to the stationary ground.
+layout(set = 0, binding = 17) uniform texture2D directional_velocity_buffer;
 layout(set = 0, binding = 21) uniform texture2D directional_screen_radiance_buffer;
 layout(set = 0, binding = 22) uniform texture2D directional_previous_depth_buffer;
 layout(set = 0, binding = 23) uniform utexture2D directional_surface_history;
@@ -2242,7 +2246,7 @@ void irradiance_cache_update_multibounce_main() {
 
 #else
 
-#ifdef MODE_DIRECTIONAL_TRACE
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE)
 
 bool directional_screen_radiance_clip_to_uv(vec4 clip_position, out vec2 r_uv) {
 	if (!(clip_position.w > 1e-6) || any(isnan(clip_position)) || any(isinf(clip_position))) {
@@ -2340,7 +2344,7 @@ bool directional_sample_screen_radiance(vec3 endpoint_world, out vec3 r_radiance
 		if (weight_sum < 0.25) {
 			return false;
 		}
-		r_radiance = radiance_sum / weight_sum * clamp(scene_data.previous_exposure_scale.x, 1.0 / 16.0, 16.0);
+		r_radiance = min(radiance_sum / weight_sum * clamp(scene_data.previous_exposure_scale.x, 1.0 / 16.0, 16.0), vec3(10.0));
 		return true;
 	}
 
@@ -2370,7 +2374,7 @@ bool directional_sample_screen_radiance(vec3 endpoint_world, out vec3 r_radiance
 		return false;
 	}
 	float exposure_scale = clamp(scene_data.previous_exposure_scale.x, 1.0 / 16.0, 16.0);
-	r_radiance = screen_radiance * exposure_scale;
+	r_radiance = min(screen_radiance * exposure_scale, vec3(10.0));
 	return true;
 }
 
@@ -2394,7 +2398,7 @@ bool trace_hddagi_sample(ivec2 origin_position, float origin_depth, vec3 origin_
 
 	if (trace_screen_detail(origin_view, ray_direction_view, detail_distance_limit, r_endpoint_world, r_endpoint_normal_world)) {
 		r_hit_cascade = HDDAGI_TRACE_SCREEN_ENDPOINT;
-#ifdef MODE_DIRECTIONAL_TRACE
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE)
 		if (directional_sample_screen_radiance(r_endpoint_world, r_radiance)) {
 			r_hit_cascade = HDDAGI_TRACE_SCREEN_RADIANCE;
 			screen_probe_debug_set_source(SCREEN_PROBE_DEBUG_SCREEN_HDDAGI);
@@ -2402,10 +2406,13 @@ bool trace_hddagi_sample(ivec2 origin_position, float origin_depth, vec3 origin_
 		}
 #endif
 		if (!query_endpoint_radiance(r_endpoint_world, r_endpoint_normal_world, trace_origin_world, r_radiance)) {
-			r_radiance = sample_environment(ray_direction_view);
-			r_hit_cascade = HDDAGI_TRACE_SCREEN_ENDPOINT_SKY_FALLBACK;
+			// We hit an opaque surface, even when it has no static voxel or
+			// valid previous color. Sky fallback would transmit light through
+			// moving cars and erase their indirect occlusion on the ground.
+			r_radiance = vec3(0.0);
+			r_hit_cascade = HDDAGI_TRACE_SCREEN_ENDPOINT_UNLIT;
 			screen_probe_debug_mark_source(SCREEN_PROBE_DEBUG_SCREEN_RADIANCE_FALLBACK);
-			screen_probe_debug_set_source(SCREEN_PROBE_DEBUG_SKY);
+			screen_probe_debug_set_source(SCREEN_PROBE_DEBUG_SCREEN_HDDAGI);
 		}
 		return true;
 	}

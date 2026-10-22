@@ -474,16 +474,27 @@ bool svgf_specular_neighborhood(vec3 center_signal, out vec3 r_center, out vec3 
 // Neighbor samples only control history length; they are never mixed into the
 // pixel color, so this response does not add spatial blur or change its hue.
 float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float view_z, bool dynamic_surface, float current_luminance, vec2 previous_moments, float previous_history_length) {
-	if ((params.control.x & 8u) == 0u || previous_history_length < 4.0) {
+	if ((params.control.x & 8u) == 0u || previous_history_length < 1.0) {
 		return params.atrous.w;
 	}
 	float old_luminance = previous_moments.x;
 	float difference = current_luminance - old_luminance;
-	float temporal_variance = max(previous_moments.y - old_luminance * old_luminance, 0.0);
-	float threshold = max(0.002, 0.25 * max(current_luminance, old_luminance));
-	if (abs(difference) <= max(threshold, 2.0 * sqrt(temporal_variance))) {
+	// Signals are exposure-normalized and can be much smaller than 0.002.
+	// Old stochastic variance must not hide a coherent change in the current
+	// neighborhood, such as a car's indirect shadow entering/leaving the floor.
+	float threshold = max(1e-6, 0.025 * max(current_luminance, old_luminance));
+	if (abs(difference) <= threshold) {
 		return params.atrous.w;
 	}
+	vec2 center_offset;
+	bool center_dynamic;
+	vec3 center_view;
+	vec4 center_motion = texelFetch(sampler2D(motion_input, nearest_sampler), pixel, 0);
+	if (!svgf_decode_surface_metadata(center_motion.zw, center_offset, center_dynamic) ||
+			!svgf_reconstruct_view(frame_data.current_inv_projection, (vec2(pixel) + 0.5) / vec2(size) + center_offset, view_z, (params.control.w & 1u) != 0u, center_view)) {
+		return params.atrous.w;
+	}
+	vec3 normal_view = transpose(mat3(frame_data.current_view_to_world)) * normal;
 
 	float sample_sum = current_luminance;
 	float sample_square_sum = current_luminance * current_luminance;
@@ -497,12 +508,20 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 			}
 			float tap_z = texelFetch(sampler2D(current_view_z_input, nearest_sampler), tap, 0).r;
 			vec3 tap_normal;
-			if (!svgf_valid_view_z(tap_z) || abs(tap_z - view_z) > 0.01 + params.tuning.z * view_z ||
+			if (!svgf_valid_view_z(tap_z) ||
 					!svgf_decode_normal(texelFetch(sampler2D(current_normal_roughness_input, nearest_sampler), tap, 0), tap_normal) || dot(tap_normal, normal) < params.tuning.y) {
 				continue;
 			}
 			vec4 tap_motion = texelFetch(sampler2D(motion_input, nearest_sampler), tap, 0);
 			if (!svgf_finite_vec4(tap_motion) || (tap_motion.w > 1.0) != dynamic_surface) {
+				continue;
+			}
+			vec2 tap_offset;
+			bool tap_dynamic;
+			vec3 tap_view;
+			if (!svgf_decode_surface_metadata(tap_motion.zw, tap_offset, tap_dynamic) ||
+					!svgf_reconstruct_view(frame_data.current_inv_projection, (vec2(tap) + 0.5) / vec2(size) + tap_offset, tap_z, (params.control.w & 1u) != 0u, tap_view) ||
+					abs(dot(tap_view - center_view, normal_view)) > 0.01 + params.tuning.z * max(view_z, tap_z)) {
 				continue;
 			}
 			vec4 tap_signal = texelFetch(sampler2D(current_signal_input, nearest_sampler), tap, 0);
@@ -523,9 +542,10 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 	}
 	float mean = sample_sum / sample_count;
 	float variance = max(sample_square_sum / sample_count - mean * mean, 0.0);
-	float coherent_threshold = max(threshold, 2.0 * sqrt(variance));
+	// The vote tests the neighborhood mean, rather than a single noisy sample.
+	float coherent_threshold = max(threshold, 2.0 * sqrt(variance / sample_count));
 	float response = smoothstep(coherent_threshold, coherent_threshold * 2.0, abs(mean - old_luminance));
-	return mix(params.atrous.w, 2.0, response);
+	return mix(params.atrous.w, 1.0, response);
 }
 
 void svgf_temporal_main() {

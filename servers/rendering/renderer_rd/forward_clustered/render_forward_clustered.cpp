@@ -1954,10 +1954,9 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 	const bool screen_probe_detail_trace_requested = GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_detail_trace");
 	const bool screen_probe_specular_requested = p_use_hddagi_screen_probes &&
 			(GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_specular_reflections") || is_hddagi_screen_probe_reflection_debug_draw(get_debug_draw_mode()));
-	const bool screen_probe_directional_screen_radiance_requested = p_use_hddagi_screen_probes && screen_probe_detail_trace_requested &&
-			GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_directional_screen_radiance") &&
-			environment_get_hddagi_screen_probe_mode(p_render_data->environment) == RSE::ENV_HDDAGI_SCREEN_PROBE_MODE_DIRECTIONAL_GATHER;
-	const bool screen_probe_screen_radiance_requested = screen_probe_specular_requested || screen_probe_directional_screen_radiance_requested;
+	const bool screen_probe_diffuse_screen_radiance_requested = p_use_hddagi_screen_probes && screen_probe_detail_trace_requested &&
+			GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_directional_screen_radiance");
+	const bool screen_probe_screen_radiance_requested = screen_probe_specular_requested || screen_probe_diffuse_screen_radiance_requested;
 	RID previous_screen_color_views[RendererSceneRender::MAX_RENDER_VIEWS] = {};
 	RID previous_screen_depth_views[RendererSceneRender::MAX_RENDER_VIEWS] = {};
 	bool previous_screen_color_valid = false;
@@ -2350,7 +2349,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			GLOBAL_GET_CACHED(int, "rendering/global_illumination/hddagi/screen_probe_denoiser") == 1 && HDDAGIScreenProbeSVGF::is_supported();
 	const bool hddagi_specular_reflections_active = hddagi_screen_probes_active &&
 			(GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_specular_reflections") || is_hddagi_screen_probe_reflection_debug_draw(get_debug_draw_mode()));
-	const bool hddagi_screen_probe_motion_vectors_required = hddagi_directional_screen_probes_active || hddagi_svgf_screen_probes_active || hddagi_specular_reflections_active;
+	const bool hddagi_diffuse_screen_radiance_active = hddagi_screen_probes_active &&
+			GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_detail_trace") &&
+			GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_directional_screen_radiance");
+	const bool hddagi_screen_probe_motion_vectors_required = hddagi_directional_screen_probes_active || hddagi_svgf_screen_probes_active || hddagi_specular_reflections_active || hddagi_diffuse_screen_radiance_active;
 	if (!hddagi_screen_probe_motion_vectors_required && rb.is_valid()) {
 		rb->clear_context(RB_SCOPE_HDDAGI_SURFACE_HISTORY);
 	}
@@ -2456,11 +2458,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		using_hddagi_screen_probes = using_hddagi && (environment_get_hddagi_screen_probes_enabled(p_render_data->environment) || is_hddagi_screen_probe_debug_draw(get_debug_draw_mode()));
 		const bool using_hddagi_specular_screen_radiance = using_hddagi_screen_probes &&
 				(GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_specular_reflections") || is_hddagi_screen_probe_reflection_debug_draw(get_debug_draw_mode()));
-		const bool using_hddagi_directional_screen_radiance = using_hddagi_screen_probes &&
+		const bool using_hddagi_diffuse_screen_radiance = using_hddagi_screen_probes &&
 				GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_detail_trace") &&
-				GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_directional_screen_radiance") &&
-				environment_get_hddagi_screen_probe_mode(p_render_data->environment) == RSE::ENV_HDDAGI_SCREEN_PROBE_MODE_DIRECTIONAL_GATHER;
-		using_hddagi_screen_radiance = using_hddagi_specular_screen_radiance || using_hddagi_directional_screen_radiance;
+				GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_directional_screen_radiance");
+		using_hddagi_screen_radiance = using_hddagi_specular_screen_radiance || using_hddagi_diffuse_screen_radiance;
 
 		if (GLOBAL_GET_CACHED(bool, "rendering/lights_and_shadows/contact_shadow/enabled")) {
 			using_sscs = true;

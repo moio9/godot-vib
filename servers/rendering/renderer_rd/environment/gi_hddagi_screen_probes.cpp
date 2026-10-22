@@ -750,7 +750,9 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 	const bool history_valid = directional_gather && common_history_valid;
 	const bool svgf_history_valid = svgf_active && common_history_valid && !svgf_resources_recreated;
 	const bool specular_history_valid = specular_reflections && common_history_valid && !specular_resources_recreated;
-	const bool directional_screen_radiance_valid = directional_gather && directional_screen_radiance_setting && detail_trace && screen_radiance_available && camera_history_valid;
+	// Keep the historical setting name, but share endpoint reprojection with
+	// Stochastic Integrated so dynamic geometry contributes there as well.
+	const bool directional_screen_radiance_valid = directional_screen_radiance_setting && detail_trace && screen_radiance_available && camera_history_valid;
 	const bool specular_screen_radiance_valid = specular_detail_trace && screen_radiance_available && camera_history_valid;
 	const bool reset_history = resources_recreated || !history_configuration_valid || camera_cut;
 	const uint32_t current_history_slot = reset_history ? 0u : (hddagi->screen_probe_history_slot ^ 1u);
@@ -900,7 +902,7 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 		const RID normal_roughness = p_normal_roughness_slices[v];
 		RID directional_velocity = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
 		bool directional_motion_valid = false;
-		if (directional_gather && p_render_buffers->has_velocity_buffer(false)) {
+		if ((directional_gather || directional_screen_radiance_setting) && p_render_buffers->has_velocity_buffer(false)) {
 			const RID velocity = p_render_buffers->get_velocity_buffer(false, v);
 			if (velocity.is_valid() && RD::get_singleton()->texture_is_valid(velocity) && RD::get_singleton()->texture_size(velocity) == internal_size) {
 				directional_velocity = velocity;
@@ -1051,7 +1053,12 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 					RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 8, hddagi->voxel_disocclusion_tex),
 					RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 9, rbgi->screen_probe_scene_data_ubo),
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 10, detail_trace ? p_hiz_slices[v] : detail_hiz_fallback),
-					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 11, normal_roughness));
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 11, normal_roughness),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 17, directional_velocity),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 21, directional_screen_radiance_valid ? p_previous_screen_color_slices[v] : detail_hiz_fallback),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 22, directional_screen_radiance_valid ? p_previous_screen_depth_slices[v] : detail_hiz_fallback),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 23, p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION) ? p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION, v, 0) : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT)),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 24, p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE) ? p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE, v, 0) : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT)));
 			trace_sky_sets[v] = UniformSetCacheRD::get_singleton()->get_cache(
 					hddagi_shader.screen_probe_shader_version[trace_mode], 1,
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 0, sky_texture),
