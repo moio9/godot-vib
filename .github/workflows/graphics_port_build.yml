@@ -128,12 +128,12 @@ jobs:
           set -euxo pipefail
           BIN=bin/godot.linuxbsd.editor.x86_64
           LVP_ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-          for SCRIPT in shader_check scene_check ground_check compile_probe; do
+          for SCRIPT in shader_check scene_check ground_check static_noise_check compile_probe; do
             timeout 600s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
               "$BIN" --path tests/rendering/hddagi_surface_motion --script "res://${SCRIPT}.gd" \
               --rendering-method forward_plus --rendering-driver vulkan --audio-driver Dummy \
               2>&1 | tee "moving-surface-${SCRIPT}.log"
-            grep -Eq '(SURFACE_MOTION|MOVING_SCENE|GROUND_TRANSFER|PROBE_COMPILE)_RESULT checks=[0-9]+ failures=0' "moving-surface-${SCRIPT}.log"
+            grep -Eq '(SURFACE_MOTION|MOVING_SCENE|GROUND_TRANSFER|STATIC_NOISE|PROBE_COMPILE)_RESULT checks=[0-9]+ failures=0' "moving-surface-${SCRIPT}.log"
             if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' "moving-surface-${SCRIPT}.log"; then
               exit 1
             fi
@@ -144,6 +144,14 @@ jobs:
             2>&1 | tee moving-surface-reactive.log
           grep -Eq 'HDDAGI_REACTIVE_RESULT checks=[0-9]+ failures=0' moving-surface-reactive.log
           if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' moving-surface-reactive.log; then
+            exit 1
+          fi
+          timeout 600s xvfb-run -a env VK_ICD_FILENAMES="$LVP_ICD" \
+            "$BIN" --path tests/rendering/hddagi_reactive_history --script res://motion_check.gd \
+            --rendering-method forward_plus --rendering-driver vulkan --audio-driver Dummy \
+            2>&1 | tee moving-surface-motion-detection.log
+          grep -Eq 'HDDAGI_MOTION_FLAG_RESULT checks=[0-9]+ failures=0' moving-surface-motion-detection.log
+          if grep -Eq 'ERROR:|SCRIPT ERROR|Parse Error|Error compiling|leaked' moving-surface-motion-detection.log; then
             exit 1
           fi
       - name: Package Linux editor

@@ -30,6 +30,14 @@ tracing still depends on visible geometry and does not add an off-screen dynamic
 voxel representation.
 A headless run cannot create the local Vulkan RenderingDevice.
 
+`static_noise_check.gd` measures temporal RGB variance in the actual diffuse GI
+buffer at Brake's High Stochastic budget (probe size 4, two candidates, SVGF High),
+with TAA and other screen-space effects disabled. It compares conservative and
+reactive accumulation on fixed static geometry, then moves a Dynamic mesh and
+repeats after it stops. The test records per-receiver noise and screenshots, and
+limits additional noise to 15 percent plus 0.05 percent of the mean GI signal.
+Pass `--baseline` to record a previous build without enforcing noise comparisons.
+
 The renderer emits metadata only in the existing HDDAGI motion-vector depth prepass.
 Depth, normal, velocity and metadata resolve from the same MSAA sample. Each viewport
 keeps its own previous metadata, cleared on reconfiguration and freed when the screen

@@ -1380,6 +1380,7 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 			svgf_frame.history_valid = svgf_history_valid;
 			svgf_frame.diffuse_temporal_only = directional_gather && diffuse_temporal_only_setting;
 			svgf_frame.diffuse_reactive = diffuse_reactive_setting;
+			svgf_frame.diffuse_dynamic_mask = !directional_gather;
 
 			HDDAGIScreenProbeSVGF::Resources svgf_resources;
 			svgf_resources.motion_vectors = svgf_motion[v];

@@ -1209,7 +1209,10 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 				bool has_mesh_instance = inst->mesh_instance.is_valid();
 				bool uses_particles = inst->base_flags & INSTANCE_DATA_FLAG_PARTICLES;
 				bool is_multimesh_with_motion = !uses_particles && (inst->base_flags & INSTANCE_DATA_FLAG_MULTIMESH) && mesh_storage->_multimesh_uses_motion_vectors_offsets(inst->data->base);
-				bool is_dynamic = transform_changed || has_mesh_instance || uses_particles || is_multimesh_with_motion;
+				// HDDAGI must recognize a stationary Dynamic actor as a possible
+				// lighting endpoint before it moves. Actual movement is tested
+				// separately by SVGF, so stopping still restores accumulation.
+				bool is_dynamic = transform_changed || has_mesh_instance || uses_particles || is_multimesh_with_motion || (p_using_hddagi && inst->data->use_dynamic_gi);
 				if (is_dynamic) {
 					flags |= INSTANCE_DATA_FLAGS_DYNAMIC;
 					if (p_pass_mode == PASS_MODE_COLOR && p_using_motion_pass) {

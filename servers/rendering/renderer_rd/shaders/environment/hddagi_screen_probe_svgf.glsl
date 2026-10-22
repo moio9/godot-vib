@@ -46,6 +46,7 @@ layout(rgba8, set = 0, binding = 11) uniform restrict writeonly image2D current_
 layout(r32f, set = 0, binding = 12) uniform restrict writeonly image2D current_view_z_output;
 layout(set = 0, binding = 13) uniform utexture2D current_surface_history;
 layout(set = 0, binding = 14) uniform utexture2D previous_surface_history;
+layout(set = 0, binding = 15) uniform utexture2D dynamic_motion_input;
 
 const int SPECULAR_NEIGHBORHOOD_RADIUS = 2;
 const int SPECULAR_NEIGHBORHOOD_SHARED_SIZE = 12;
@@ -473,8 +474,17 @@ bool svgf_specular_neighborhood(vec3 center_signal, out vec3 r_center, out vec3 
 // React to spatially coherent illumination changes, not a single stochastic ray.
 // Neighbor samples only control history length; they are never mixed into the
 // pixel color, so this response does not add spatial blur or change its hue.
-float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float view_z, bool dynamic_surface, float current_luminance, vec2 previous_moments, float previous_history_length) {
-	if ((params.control.x & 8u) == 0u || previous_history_length < 1.0) {
+float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float view_z, bool dynamic_surface, bool receiver_moving, float current_luminance, vec2 previous_moments, float previous_history_length, float current_dynamic_influence, float previous_dynamic_influence) {
+	if ((params.control.x & 8u) == 0u) {
+		return params.atrous.w;
+	}
+	// Keep the original conservative response on stable scenery. Only moving
+	// geometry and the lighting it contributes need the fast ground response.
+	// Camera motion is removed by the preceding geometry-motion pass.
+	bool moving_geometry = texelFetch(usampler2D(dynamic_motion_input, nearest_sampler), ivec2(0), 0).r != 0u;
+	bool dynamic_influence = (params.control.x & 32u) == 0u || max(current_dynamic_influence, previous_dynamic_influence) > 0.001;
+	bool fast_response = moving_geometry && (receiver_moving || dynamic_influence);
+	if (previous_history_length < (fast_response ? 1.0 : 4.0)) {
 		return params.atrous.w;
 	}
 	float old_luminance = previous_moments.x;
@@ -482,8 +492,9 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 	// Signals are exposure-normalized and can be much smaller than 0.002.
 	// Old stochastic variance must not hide a coherent change in the current
 	// neighborhood, such as a car's indirect shadow entering/leaving the floor.
-	float threshold = max(1e-6, 0.025 * max(current_luminance, old_luminance));
-	if (abs(difference) <= threshold) {
+	float threshold = fast_response ? max(1e-6, 0.025 * max(current_luminance, old_luminance)) : max(0.002, 0.25 * max(current_luminance, old_luminance));
+	float temporal_variance = max(previous_moments.y - old_luminance * old_luminance, 0.0);
+	if (abs(difference) <= (fast_response ? threshold : max(threshold, 2.0 * sqrt(temporal_variance)))) {
 		return params.atrous.w;
 	}
 	vec2 center_offset;
@@ -543,9 +554,9 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 	float mean = sample_sum / sample_count;
 	float variance = max(sample_square_sum / sample_count - mean * mean, 0.0);
 	// The vote tests the neighborhood mean, rather than a single noisy sample.
-	float coherent_threshold = max(threshold, 2.0 * sqrt(variance / sample_count));
+	float coherent_threshold = max(threshold, 2.0 * sqrt(variance / (fast_response ? sample_count : 1.0)));
 	float response = smoothstep(coherent_threshold, coherent_threshold * 2.0, abs(mean - old_luminance));
-	return mix(params.atrous.w, 1.0, response);
+	return mix(params.atrous.w, fast_response ? 1.0 : 2.0, response);
 }
 
 void svgf_temporal_main() {
@@ -610,6 +621,8 @@ void svgf_temporal_main() {
 	vec2 accumulated_moments = vec2(0.0);
 	float accumulated_history_length = 0.0;
 	float accumulated_history_screen_confidence = 0.0;
+	float accumulated_dynamic_influence = 0.0;
+	bool receiver_moving = false;
 	float history_weight_sum = 0.0;
 	float maximum_history_tap_weight = 0.0;
 	if ((params.control.x & 1u) != 0u && current_surface_valid && motion_valid) {
@@ -622,8 +635,15 @@ void svgf_temporal_main() {
 		if (svgf_finite_vec4(motion_sample) && svgf_finite_vec2(previous_uv) && svgf_finite_vec2(current_surface_uv) &&
 				svgf_reconstruct_view(frame_data.current_inv_projection, current_surface_uv, current_view_z, (params.control.w & 1u) != 0u, current_view_position)) {
 			vec3 expected_previous_position = (frame_data.current_view_to_previous_view * vec4(current_view_position, 1.0)).xyz;
-			if (receiver_surface.y != 0u && !hddagi_surface_previous_view(receiver_surface, previous_uv, frame_data.previous_inv_projection, expected_previous_position)) {
-				expected_previous_position = vec3(0.0);
+			if (receiver_surface.y != 0u) {
+				vec3 observed_previous_position;
+				if (hddagi_surface_previous_view(receiver_surface, previous_uv, frame_data.previous_inv_projection, observed_previous_position)) {
+					float movement_tolerance = 0.002 + 1e-4 * current_view_z;
+					receiver_moving = current_dynamic && distance(observed_previous_position, expected_previous_position) > movement_tolerance;
+					expected_previous_position = observed_previous_position;
+				} else {
+					expected_previous_position = vec3(0.0);
+				}
 			}
 			vec3 current_normal_previous_view = transpose(mat3(frame_data.previous_view_to_world)) * current_normal;
 			float expected_previous_view_z = -expected_previous_position.z;
@@ -669,6 +689,7 @@ void svgf_temporal_main() {
 								history_screen_confidence = history_metadata.z;
 							}
 							accumulated_history += max(history_signal.rgb, vec3(0.0)) * tap_weight;
+							accumulated_dynamic_influence += clamp(history_signal.a, 0.0, 1.0) * tap_weight;
 							accumulated_moments += tap_moments * tap_weight;
 							accumulated_history_length += tap_history_length * tap_weight;
 							accumulated_history_screen_confidence += history_screen_confidence * tap_weight;
@@ -717,12 +738,17 @@ void svgf_temporal_main() {
 			}
 		}
 		if (!specular_mode) {
-			maximum_history_length = svgf_diffuse_reactive_history(pixel, size, current_normal, current_view_z, current_dynamic, current_moment_luminance, previous_moments, previous_history_length);
+			maximum_history_length = svgf_diffuse_reactive_history(pixel, size, current_normal, current_view_z, current_dynamic, receiver_moving, current_moment_luminance, previous_moments, previous_history_length, current_signal.a, accumulated_dynamic_influence / history_weight_sum);
 		}
 		float advanced_history_length = specular_mode ? previous_history_length * history_confidence + 1.0 : previous_history_length + 1.0;
 		history_length = max(1.0, min(advanced_history_length, maximum_history_length) * reprojection_quality);
 		float signal_alpha = 1.0 / max(history_length, 1.0);
 		output_signal.rgb = mix(history_signal, current_signal.rgb, signal_alpha);
+		if (!specular_mode && (params.control.x & 32u) != 0u) {
+			// Age the influence exactly like the lighting. A cleared vacated
+			// receiver must not retain a permanent reactive marker.
+			output_signal.a = mix(accumulated_dynamic_influence / history_weight_sum, clamp(current_signal.a, 0.0, 1.0), signal_alpha);
+		}
 		output_moments = mix(max(previous_moments, vec2(0.0)), vec2(current_moment_luminance, current_moment_luminance * current_moment_luminance), signal_alpha);
 		output_screen_confidence = mix(previous_screen_confidence, current_screen_confidence, signal_alpha);
 		if (specular_mode) {
@@ -741,7 +767,11 @@ void svgf_temporal_main() {
 		output_moments = vec2(current_moment_luminance, current_moment_luminance * current_moment_luminance);
 	}
 	output_moments = clamp(output_moments, vec2(0.0), vec2(FP16_MAX));
-	output_signal.a = specular_mode ? svgf_pack_specular_metadata(current_roughness, current_signal.a, output_screen_confidence) : current_signal.a;
+	if (specular_mode) {
+		output_signal.a = svgf_pack_specular_metadata(current_roughness, current_signal.a, output_screen_confidence);
+	} else if ((params.control.x & 32u) == 0u) {
+		output_signal.a = current_signal.a;
+	}
 	imageStore(current_signal_output, pixel, output_signal);
 	imageStore(current_moments_output, pixel, vec4(output_moments, current_surface_valid && motion_valid ? motion_sample.zw : vec2(0.0)));
 	current_encoded_normal.a = history_length / HISTORY_LENGTH_STORAGE_SCALE;

@@ -55,7 +55,24 @@ func dispatch(kind: String, reactive: bool) -> Image:
 	var depth_modifier := Callable()
 	var normal_modifier := Callable()
 	var motion_modifier := Callable()
-	if kind in ["young_shadow_1", "young_shadow_2"]:
+	var current_influence := 1.0
+	var previous_influence := 1.0
+	var dynamic_motion := true
+	var influence_mode := kind.begins_with("mask_")
+	if kind in ["static_correlated_noise", "mask_static_far", "mask_current_dynamic", "mask_vacated_dynamic", "mask_stopped_dynamic"]:
+		# A coherent 8% fluctuation is deliberately indistinguishable from a
+		# faint shadow by RGB alone. Only independently supplied motion and
+		# endpoint influence may authorize destructive temporal rejection.
+		current = 0.001794
+		previous = 0.00195
+		variance = 1.0
+		dynamic_motion = kind not in ["static_correlated_noise", "mask_stopped_dynamic"]
+		current_influence = 1.0 if kind in ["mask_current_dynamic", "mask_stopped_dynamic"] else 0.0
+		previous_influence = 1.0 if kind in ["mask_vacated_dynamic", "mask_stopped_dynamic"] else 0.0
+		if kind == "mask_vacated_dynamic":
+			current = 0.00195
+			previous = 0.001794
+	elif kind in ["young_shadow_1", "young_shadow_2"]:
 		current = 0.0
 		previous = 0.125
 	elif kind == "off":
@@ -102,11 +119,11 @@ func dispatch(kind: String, reactive: bool) -> Image:
 		motion_modifier = func(x: int, y: int, c: Color) -> Color:
 			return c if x == 6 and y == 5 else Color(0, 0, 0, 2)
 	var resources: Array[RID] = []
-	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(current, current, current, 1), signal_modifier))
+	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(current, current, current, current_influence), signal_modifier))
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(0.5, 0.5, 1, 0.5), normal_modifier))
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32_SFLOAT, Color(2, 0, 0, 1), depth_modifier))
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(0, 0, 0, 0), motion_modifier))
-	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(previous, previous, previous, 1)))
+	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(previous, previous, previous, previous_influence)))
 	var moment := previous * 64.0
 	resources.append(texture(RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, Color(moment, moment * moment + variance, 0, 0)))
 	var history_frames := 1.0 if kind == "young_shadow_1" else (2.0 if kind == "young_shadow_2" else 30.0)
@@ -133,12 +150,22 @@ func dispatch(kind: String, reactive: bool) -> Image:
 	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 13, metadata))
 	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 14, metadata))
 	resources.append(metadata)
+	var motion_format := RDTextureFormat.new()
+	motion_format.width = 1
+	motion_format.height = 1
+	motion_format.format = RenderingDevice.DATA_FORMAT_R32_UINT
+	motion_format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	var motion_flag := rd.texture_create(motion_format, RDTextureView.new(), [PackedInt32Array([1 if dynamic_motion else 0]).to_byte_array()])
+	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 15, motion_flag))
+	resources.append(motion_flag)
 	var set_rid := rd.uniform_set_create(uniforms, shader, 0)
 	var control := 0 if kind == "cut" else 1
 	if reactive:
 		control |= 8
 	if kind == "specular":
 		control |= 2
+	if influence_mode:
+		control |= 32
 	var push := PackedInt32Array([control, 0, 0, 0]).to_byte_array()
 	push.append_array(PackedFloat32Array([500000, 0.9, 0.005, 2, 8, 0.005, 0.00004, 30]).to_byte_array())
 	var list := rd.compute_list_begin()
@@ -189,7 +216,7 @@ func run() -> void:
 	data.append_array(PackedFloat32Array([0, 0, 0, 0]))
 	frame_buffer = rd.uniform_buffer_create(data.size() * 4, data.to_byte_array())
 	frame_set = rd.uniform_set_create([uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 0, frame_buffer)], shader, 1)
-	for kind in ["on", "off", "young_shadow_1", "young_shadow_2", "faint_shadow_enter", "faint_shadow_leave", "soft_shadow_enter", "soft_shadow_leave", "noisy_soft_shadow", "sloped_floor", "stable", "noise", "isolated", "depth_edge", "normal_edge", "dynamic_edge", "cut", "specular"]:
+	for kind in ["on", "off", "young_shadow_1", "young_shadow_2", "faint_shadow_enter", "faint_shadow_leave", "soft_shadow_enter", "soft_shadow_leave", "noisy_soft_shadow", "sloped_floor", "stable", "noise", "isolated", "depth_edge", "normal_edge", "dynamic_edge", "cut", "specular", "static_correlated_noise", "mask_static_far", "mask_current_dynamic", "mask_vacated_dynamic", "mask_stopped_dynamic"]:
 		var baseline := dispatch(kind, false)
 		var adaptive := dispatch(kind, true)
 		var old_value := baseline.get_pixel(6, 5).r
@@ -211,6 +238,11 @@ func run() -> void:
 			check(absf(new_value - expected) < 0.000002, kind + " reacts to low-contrast indirect ground occlusion")
 		elif kind == "noisy_soft_shadow":
 			check(absf(new_value - 0.0018375) < 0.000002, "low-contrast coherent shadow reacts despite spatial stochastic variance")
+		elif kind in ["static_correlated_noise", "mask_static_far", "mask_stopped_dynamic"]:
+			check(absf(old_value - new_value) < 0.000001, kind + " preserves legacy accumulation for correlated stochastic noise")
+		elif kind in ["mask_current_dynamic", "mask_vacated_dynamic"]:
+			var expected := 0.00195 if kind == "mask_vacated_dynamic" else 0.001794
+			check(absf(old_value - expected) > 0.00005 and absf(new_value - expected) < 0.000002, kind + " clears affected floor history only with independent motion and influence")
 		else:
 			check(absf(old_value - new_value) < 0.000001, kind + " preserves expected response")
 		var finite := true

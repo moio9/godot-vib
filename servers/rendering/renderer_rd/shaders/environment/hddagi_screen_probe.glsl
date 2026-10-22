@@ -2248,6 +2248,10 @@ void irradiance_cache_update_multibounce_main() {
 
 #if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE)
 
+// Stochastic diffuse alpha carries dynamic endpoint influence, not distance.
+// Directional and specular traces keep their hit-distance representation.
+bool diffuse_dynamic_endpoint = false;
+
 bool directional_screen_radiance_clip_to_uv(vec4 clip_position, out vec2 r_uv) {
 	if (!(clip_position.w > 1e-6) || any(isnan(clip_position)) || any(isinf(clip_position))) {
 		r_uv = vec2(0.0);
@@ -2399,6 +2403,14 @@ bool trace_hddagi_sample(ivec2 origin_position, float origin_depth, vec3 origin_
 	if (trace_screen_detail(origin_view, ray_direction_view, detail_distance_limit, r_endpoint_world, r_endpoint_normal_world)) {
 		r_hit_cascade = HDDAGI_TRACE_SCREEN_ENDPOINT;
 #if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE)
+		vec3 endpoint_view = transpose(mat3(scene_data.cam_transform)) * (r_endpoint_world - scene_data.cam_transform[3].xyz);
+		vec2 endpoint_uv;
+		if (directional_screen_radiance_clip_to_uv(scene_data.projection[params.view_index] * vec4(endpoint_view, 1.0), endpoint_uv) &&
+				all(greaterThanEqual(endpoint_uv, vec2(0.0))) && all(lessThan(endpoint_uv, vec2(1.0)))) {
+			ivec2 endpoint_size = textureSize(sampler2D(detail_normal_roughness_buffer, linear_sampler), 0);
+			ivec2 endpoint_pixel = clamp(ivec2(endpoint_uv * vec2(endpoint_size)), ivec2(0), endpoint_size - 1);
+			diffuse_dynamic_endpoint = texelFetch(sampler2D(detail_normal_roughness_buffer, linear_sampler), endpoint_pixel, 0).a > 0.5;
+		}
 		if (directional_sample_screen_radiance(r_endpoint_world, r_radiance)) {
 			r_hit_cascade = HDDAGI_TRACE_SCREEN_RADIANCE;
 			screen_probe_debug_set_source(SCREEN_PROBE_DEBUG_SCREEN_HDDAGI);
@@ -2591,6 +2603,9 @@ bool trace_hddagi_sample(ivec2 origin_position, float origin_depth, vec3 origin_
 }
 
 bool trace_hddagi_radiance(ivec2 origin_position, float origin_depth, vec3 origin_normal, vec3 ray_direction_view, out vec3 r_radiance, out float r_hit_distance, out bool r_screen_radiance_used) {
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE)
+	diffuse_dynamic_endpoint = false;
+#endif
 	int hit_cascade;
 	vec3 endpoint_world;
 	vec3 endpoint_normal_world;
@@ -3787,6 +3802,7 @@ void screen_probe_trace_main() {
 	}
 	vec3 radiance = vec3(0.0);
 	float hit_distance = 0.0;
+	float dynamic_influence = 0.0;
 	for (uint candidate = 0u; candidate < candidate_count; candidate++) {
 		vec2 sample_position = sample_temporally_permuted_r2_sequence(uvec2(probe_position), params.frame_index * candidate_count + candidate, 0x44544330u);
 		float proposal_pdf;
@@ -3810,6 +3826,9 @@ void screen_probe_trace_main() {
 		float cosine_pdf = max(dot(origin_normal, ray_direction), 0.0) / PI;
 		radiance += candidate_radiance * (candidate_screen_radiance_used ? 1.0 : hddagi.energy) * (cosine_pdf / max(proposal_pdf, 1e-8));
 		hit_distance += candidate_hit_distance;
+#ifndef MODE_SPECULAR_TRACE
+		dynamic_influence += diffuse_dynamic_endpoint ? 1.0 : 0.0;
+#endif
 	}
 	radiance /= float(candidate_count);
 	hit_distance /= float(candidate_count);
@@ -3824,7 +3843,7 @@ void screen_probe_trace_main() {
 		screen_probe_debug_mark(SCREEN_PROBE_DEBUG_INVALID_OR_NONFINITE);
 	}
 #endif
-	imageStore(raw_radiance_output, probe_position, clamp(vec4(radiance, hit_distance), vec4(0.0), vec4(65504.0)));
+	imageStore(raw_radiance_output, probe_position, clamp(vec4(radiance, dynamic_influence / float(candidate_count)), vec4(0.0), vec4(65504.0)));
 	screen_probe_debug_store(probe_position);
 }
 
@@ -4174,11 +4193,9 @@ void store_svgf_prepare_outputs(ivec2 resolve_position, ivec2 screen_position, b
 	vec2 resolve_uv = (vec2(resolve_position) + 0.5) / vec2(imageSize(svgf_motion_output));
 	vec2 surface_uv = (vec2(screen_position) + 0.5) / vec2(params.screen_size);
 	vec2 surface_uv_offset = valid_surface ? surface_uv - resolve_uv : vec2(0.0);
-#ifdef MODE_DIRECTIONAL_RESOLVE
-	if (valid_surface && dynamic_surface && (params.flags & SCREEN_PROBE_FLAG_DIRECTIONAL_MOTION_VALID) != 0u) {
+	if (valid_surface && dynamic_surface) {
 		surface_uv_offset.y += 2.0;
 	}
-#endif
 
 	bool valid_signal = !any(isnan(raw_signal)) && !any(isinf(raw_signal));
 #ifndef MODE_DIRECTIONAL_RESOLVE

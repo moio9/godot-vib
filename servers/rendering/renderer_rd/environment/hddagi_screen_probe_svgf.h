@@ -56,6 +56,8 @@ public:
 		bool history_valid = false;
 		bool diffuse_temporal_only = false;
 		bool diffuse_reactive = true;
+		// Stochastic diffuse stores dynamic endpoint influence in signal alpha.
+		bool diffuse_dynamic_mask = false;
 		bool specular = false;
 		bool specular_full_resolution = false;
 	};
@@ -81,6 +83,8 @@ public:
 		RID temporal_signal;
 		RID moments;
 		RID history_normal_roughness;
+		// Sample as an unsigned texture; 1 means visible dynamic geometry moved.
+		RID dynamic_motion;
 
 		bool is_valid() const {
 			return temporal_signal.is_valid() && moments.is_valid() && history_normal_roughness.is_valid();

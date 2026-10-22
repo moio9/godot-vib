@@ -33,6 +33,7 @@
 #include "core/math/math_funcs.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "servers/rendering/renderer_rd/shaders/environment/hddagi_screen_probe_motion.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/hddagi_screen_probe_svgf.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
@@ -53,7 +54,7 @@ enum SVGFMode {
 static constexpr uint32_t MAX_ATROUS_ITERATION_COUNT = 4u;
 static constexpr uint32_t HISTORY_FIX_FRAME_COUNT = 3u;
 static constexpr uint32_t HISTORY_FIX_BASE_PIXEL_STRIDE = 14u;
-static constexpr uint32_t SAMPLED_TEXTURE_COUNT = 10u;
+static constexpr uint32_t SAMPLED_TEXTURE_COUNT = 11u;
 static constexpr uint32_t STORAGE_IMAGE_COUNT = 4u;
 
 struct alignas(16) SVGFFrameData {
@@ -85,14 +86,19 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		RID history_view_z[2];
 		RID filter_scratch;
 		RID frame_data_buffer;
+		RID dynamic_motion;
 		uint32_t history_slot = 0;
 		uint32_t frame_sequence = 0;
 		bool history_initialized = false;
 		bool diffuse_temporal_only = false;
+		bool diffuse_dynamic_mask = false;
 	};
 
 	HddagiScreenProbeSvgfShaderRD shader;
+	HddagiScreenProbeMotionShaderRD motion_shader;
 	RID shader_version;
+	RID motion_shader_version;
+	RID motion_pipeline;
 	RID pipelines[SVGF_MODE_MAX];
 	RID nearest_sampler;
 	HashMap<uint32_t, ViewContext *> views;
@@ -105,7 +111,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 					return ERR_CANT_CREATE;
 				}
 			}
-			return nearest_sampler.is_valid() ? OK : ERR_CANT_CREATE;
+			return nearest_sampler.is_valid() && motion_pipeline.is_valid() ? OK : ERR_CANT_CREATE;
 		}
 
 		RenderingDevice *rd = RenderingDevice::get_singleton();
@@ -132,6 +138,15 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 				return ERR_CANT_CREATE;
 			}
 		}
+		Vector<String> motion_modes;
+		motion_modes.push_back("");
+		motion_shader.initialize(motion_modes);
+		motion_shader_version = motion_shader.version_create();
+		ERR_FAIL_COND_V_MSG(motion_shader_version.is_null(), ERR_CANT_CREATE, "Failed to create the HDDAGI screen-probe motion shader version.");
+		const RID motion_shader_rid = motion_shader.version_get_shader(motion_shader_version, 0);
+		ERR_FAIL_COND_V(motion_shader_rid.is_null(), ERR_CANT_CREATE);
+		motion_pipeline = rd->compute_pipeline_create(motion_shader_rid);
+		ERR_FAIL_COND_V(motion_pipeline.is_null(), ERR_CANT_CREATE);
 
 		RD::SamplerState sampler_state;
 		sampler_state.mag_filter = RD::SAMPLER_FILTER_NEAREST;
@@ -148,7 +163,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		return OK;
 	}
 
-	RID create_texture(const Size2i &p_size, RD::DataFormat p_format, const String &p_name) const {
+	RID create_texture(const Size2i &p_size, RD::DataFormat p_format, const String &p_name, uint32_t p_extra_usage = 0u) const {
 		RenderingDevice *rd = RenderingDevice::get_singleton();
 		ERR_FAIL_NULL_V(rd, RID());
 		RD::TextureFormat texture_format;
@@ -159,7 +174,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		texture_format.array_layers = 1;
 		texture_format.mipmaps = 1;
 		texture_format.format = p_format;
-		texture_format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+		texture_format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | p_extra_usage;
 		RID texture = rd->texture_create(texture_format, RD::TextureView());
 		if (texture.is_valid()) {
 			rd->set_resource_name(texture, p_name);
@@ -184,6 +199,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 				p_view->history_view_z[1],
 				p_view->filter_scratch,
 				p_view->frame_data_buffer,
+				p_view->dynamic_motion,
 			};
 			for (const RID &resource : resources) {
 				if (resource.is_valid()) {
@@ -216,11 +232,12 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		}
 		view->filter_scratch = create_texture(p_size, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, vformat("HDDAGI SVGF View %d Filter Scratch", p_view_id));
 		view->frame_data_buffer = rd->uniform_buffer_create(sizeof(SVGFFrameData));
+		view->dynamic_motion = create_texture(Size2i(1, 1), RD::DATA_FORMAT_R32_UINT, vformat("HDDAGI SVGF View %d Dynamic Motion", p_view_id), RD::TEXTURE_USAGE_CAN_COPY_TO_BIT);
 		if (view->frame_data_buffer.is_valid()) {
 			rd->set_resource_name(view->frame_data_buffer, vformat("HDDAGI SVGF View %d Frame Data", p_view_id));
 		}
 
-		bool resources_valid = view->filter_scratch.is_valid() && view->frame_data_buffer.is_valid();
+		bool resources_valid = view->filter_scratch.is_valid() && view->frame_data_buffer.is_valid() && view->dynamic_motion.is_valid();
 		for (uint32_t slot = 0; slot < 2; slot++) {
 			resources_valid = resources_valid && view->history_signal[slot].is_valid() && view->history_moments[slot].is_valid() &&
 					view->history_normal_roughness[slot].is_valid() && view->history_view_z[slot].is_valid();
@@ -341,7 +358,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		const uint32_t previous_slot = view->history_slot;
 		const uint32_t current_slot = previous_slot ^ 1u;
 		const bool diffuse_temporal_only = !p_frame.specular && p_frame.diffuse_temporal_only;
-		const bool history_mode_valid = p_frame.specular || view->diffuse_temporal_only == diffuse_temporal_only;
+		const bool history_mode_valid = p_frame.specular || (view->diffuse_temporal_only == diffuse_temporal_only && view->diffuse_dynamic_mask == p_frame.diffuse_dynamic_mask);
 		const bool history_valid = p_frame.history_valid && view->history_initialized && history_mode_valid;
 		const uint32_t iteration_count = diffuse_temporal_only ? 0u : (p_frame.specular ? 1u : HDDAGIScreenProbeSVGF::get_atrous_iteration_count(p_frame.quality));
 
@@ -349,7 +366,8 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		push_constant.control[0] = (history_valid ? 1u : 0u) | (p_frame.specular ? 2u : 0u) |
 				(p_frame.specular && p_frame.specular_full_resolution ? 4u : 0u) |
 				(!p_frame.specular && p_frame.diffuse_reactive ? 8u : 0u) |
-				(p_resources.surface_history.is_valid() && p_resources.previous_surface_history.is_valid() ? 16u : 0u);
+				(p_resources.surface_history.is_valid() && p_resources.previous_surface_history.is_valid() ? 16u : 0u) |
+				(!p_frame.specular && p_frame.diffuse_dynamic_mask ? 32u : 0u);
 		push_constant.control[2] = uint32_t(p_frame.quality) << 2u;
 		push_constant.control[3] = (p_frame.projection.is_orthogonal() ? 1u : 0u) | (p_frame.previous_projection.is_orthogonal() ? 2u : 0u) |
 				((view->frame_sequence & 7u) << 2u);
@@ -389,6 +407,27 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		const RID temporal_signal_destination = p_frame.specular ? view->history_signal[current_slot] : (diffuse_temporal_only ? p_resources.output_diffuse_radiance_hit_distance : view->filter_scratch);
 		const RID temporal_moments_destination = p_frame.specular ? view->history_moments[current_slot] : (diffuse_temporal_only ? view->filter_scratch : p_resources.output_diffuse_radiance_hit_distance);
 		const RID surface_history_fallback = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT);
+		const bool detect_dynamic_motion = !p_frame.specular && p_frame.diffuse_reactive && p_resources.surface_history.is_valid();
+		RID motion_set;
+		RID motion_frame_data_set;
+		error = rd->texture_clear(view->dynamic_motion, Color(0, 0, 0, 0), 0, 1, 0, 1);
+		if (error != OK) {
+			return error;
+		}
+		if (detect_dynamic_motion) {
+			const RID motion_shader_rid = motion_shader.version_get_shader(motion_shader_version, 0);
+			ERR_FAIL_COND_V(motion_shader_rid.is_null(), ERR_CANT_CREATE);
+			motion_set = uniform_set_cache->get_cache(
+					motion_shader_rid, 0,
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 0, p_resources.motion_vectors),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 1, p_resources.view_z),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 2, p_resources.surface_history),
+					RD::Uniform(RD::UNIFORM_TYPE_SAMPLER, 3, nearest_sampler),
+					RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, view->dynamic_motion));
+			motion_frame_data_set = uniform_set_cache->get_cache(
+					motion_shader_rid, 1,
+					RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, view->frame_data_buffer));
+		}
 		const RID temporal_set = uniform_set_cache->get_cache(
 				temporal_shader, 0,
 				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 0, temporal_signal_input),
@@ -405,7 +444,8 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 11, view->history_normal_roughness[current_slot]),
 				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 12, view->history_view_z[current_slot]),
 				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 13, p_resources.surface_history.is_valid() ? p_resources.surface_history : surface_history_fallback),
-				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 14, p_resources.previous_surface_history.is_valid() ? p_resources.previous_surface_history : surface_history_fallback));
+				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 14, p_resources.previous_surface_history.is_valid() ? p_resources.previous_surface_history : surface_history_fallback),
+				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 15, p_frame.specular ? surface_history_fallback : view->dynamic_motion));
 		const RID temporal_frame_data_set = uniform_set_cache->get_cache(
 				temporal_shader, 1,
 				RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, view->frame_data_buffer));
@@ -447,6 +487,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 
 		const RID final_signal = diffuse_temporal_only ? temporal_signal_destination : signal_source;
 		if (!temporal_set.is_valid() || !temporal_frame_data_set.is_valid() ||
+				(detect_dynamic_motion && (!motion_set.is_valid() || !motion_frame_data_set.is_valid())) ||
 				(specular_reconstruction && !specular_reconstruct_set.is_valid()) ||
 				(!p_frame.specular && (!history_fix_set.is_valid() || !history_fix_frame_data_set.is_valid())) ||
 				final_signal != p_resources.output_diffuse_radiance_hit_distance) {
@@ -460,6 +501,14 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 
 		rd->draw_command_begin_label("HDDAGI Screen Probe SVGF");
 		RD::ComputeListID compute_list = rd->compute_list_begin();
+		if (detect_dynamic_motion) {
+			rd->compute_list_bind_compute_pipeline(compute_list, motion_pipeline);
+			rd->compute_list_bind_uniform_set(compute_list, motion_set, 0);
+			rd->compute_list_bind_uniform_set(compute_list, motion_frame_data_set, 1);
+			rd->compute_list_set_push_constant(compute_list, &push_constant, sizeof(push_constant));
+			rd->compute_list_dispatch_threads(compute_list, p_frame.size.x, p_frame.size.y, 1);
+			rd->compute_list_add_barrier(compute_list);
+		}
 		if (specular_reconstruction) {
 			RENDER_TIMESTAMP("HDDAGI Screen Probe Specular Reconstruction");
 			rd->compute_list_bind_compute_pipeline(compute_list, pipelines[SVGF_MODE_SPECULAR_RECONSTRUCT]);
@@ -514,6 +563,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		view->history_slot = current_slot;
 		view->frame_sequence++;
 		view->diffuse_temporal_only = diffuse_temporal_only;
+		view->diffuse_dynamic_mask = p_frame.diffuse_dynamic_mask;
 		return OK;
 	}
 
@@ -527,6 +577,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		textures.temporal_signal = view->history_signal[view->history_slot];
 		textures.moments = view->history_moments[view->history_slot];
 		textures.history_normal_roughness = view->history_normal_roughness[view->history_slot];
+		textures.dynamic_motion = view->dynamic_motion;
 		return textures;
 	}
 
@@ -541,6 +592,11 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 			shader.version_free(shader_version);
 		}
 		shader_version = RID();
+		if (shader_initialized && motion_shader_version.is_valid()) {
+			motion_shader.version_free(motion_shader_version);
+		}
+		motion_shader_version = RID();
+		motion_pipeline = RID();
 		for (uint32_t mode = 0; mode < SVGF_MODE_MAX; mode++) {
 			pipelines[mode] = RID();
 		}
@@ -559,6 +615,7 @@ bool HDDAGIScreenProbeSVGF::is_supported() {
 	}
 	const uint32_t sampled_storage_usage = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
 	return rd->texture_is_format_supported_for_usage(RD::DATA_FORMAT_R16G16B16A16_SFLOAT, sampled_storage_usage) &&
+			rd->texture_is_format_supported_for_usage(RD::DATA_FORMAT_R32_UINT, sampled_storage_usage | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT) &&
 			rd->texture_is_format_supported_for_usage(RD::DATA_FORMAT_R8G8B8A8_UNORM, sampled_storage_usage) &&
 			rd->texture_is_format_supported_for_usage(RD::DATA_FORMAT_R32_SFLOAT, sampled_storage_usage) &&
 			rd->limit_get(RD::LIMIT_MAX_BOUND_UNIFORM_SETS) >= 2u &&
