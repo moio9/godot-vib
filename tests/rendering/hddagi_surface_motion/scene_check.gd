@@ -123,7 +123,18 @@ func run() -> void:
 	world.add_child(car)
 	if car_scene.is_empty():
 		make_box(car, Vector3(0, 0.7, 0), Vector3(2, 0.6, 4.2), Color(0.55, 0.55, 0.55), GeometryInstance3D.GI_MODE_DYNAMIC)
-		make_box(car, Vector3(0, 1.2, -0.3), Vector3(1.5, 0.6, 2), Color(0.5, 0.5, 0.5), GeometryInstance3D.GI_MODE_DYNAMIC)
+		var roof := make_box(car, Vector3(0, 1.2, -0.3), Vector3(1.5, 0.6, 2), Color(0.5, 0.5, 0.5), GeometryInstance3D.GI_MODE_DYNAMIC)
+		# Exercise the same custom-varying interface as the consuming car-paint material.
+		var paint := Shader.new()
+		paint.code = """shader_type spatial;
+varying vec3 car_tangent_view;
+varying vec3 car_binormal_view;
+void vertex() { car_tangent_view = VERTEX; car_binormal_view = NORMAL; }
+void fragment() { ALBEDO = vec3(0.5) + (car_tangent_view + car_binormal_view) * 0.00001; ROUGHNESS = 0.8; }
+"""
+		var paint_material := ShaderMaterial.new()
+		paint_material.shader = paint
+		roof.material_override = paint_material
 	else:
 		var packed := load(car_scene) as PackedScene
 		check(packed != null, "Brake authored car loads")

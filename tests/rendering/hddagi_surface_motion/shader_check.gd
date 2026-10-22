@@ -74,6 +74,9 @@ func dispatch(kind: String, reactive: bool) -> Image:
 		previous = 0.125
 		current_identity = 124
 		current_dynamic = false
+		previous_dynamic = false
+		previous_z = 2.0
+		expected_depth = 0.8
 	if kind == "offscreen": motion.x = 2.0
 	if kind == "motion_xy": motion.x = -1.0 / SIZE.x
 	if kind == "invalid_depth": expected_depth = NAN
