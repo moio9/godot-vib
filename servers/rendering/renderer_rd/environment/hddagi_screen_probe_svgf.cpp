@@ -35,6 +35,7 @@
 #include "core/templates/local_vector.h"
 #include "servers/rendering/renderer_rd/shaders/environment/hddagi_screen_probe_svgf.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
+#include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/utilities.h"
@@ -52,7 +53,7 @@ enum SVGFMode {
 static constexpr uint32_t MAX_ATROUS_ITERATION_COUNT = 4u;
 static constexpr uint32_t HISTORY_FIX_FRAME_COUNT = 3u;
 static constexpr uint32_t HISTORY_FIX_BASE_PIXEL_STRIDE = 14u;
-static constexpr uint32_t SAMPLED_TEXTURE_COUNT = 8u;
+static constexpr uint32_t SAMPLED_TEXTURE_COUNT = 10u;
 static constexpr uint32_t STORAGE_IMAGE_COUNT = 4u;
 
 struct alignas(16) SVGFFrameData {
@@ -347,7 +348,8 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 		SVGFPushConstant push_constant = {};
 		push_constant.control[0] = (history_valid ? 1u : 0u) | (p_frame.specular ? 2u : 0u) |
 				(p_frame.specular && p_frame.specular_full_resolution ? 4u : 0u) |
-				(!p_frame.specular && p_frame.diffuse_reactive ? 8u : 0u);
+				(!p_frame.specular && p_frame.diffuse_reactive ? 8u : 0u) |
+				(p_resources.surface_history.is_valid() && p_resources.previous_surface_history.is_valid() ? 16u : 0u);
 		push_constant.control[2] = uint32_t(p_frame.quality) << 2u;
 		push_constant.control[3] = (p_frame.projection.is_orthogonal() ? 1u : 0u) | (p_frame.previous_projection.is_orthogonal() ? 2u : 0u) |
 				((view->frame_sequence & 7u) << 2u);
@@ -386,6 +388,7 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 
 		const RID temporal_signal_destination = p_frame.specular ? view->history_signal[current_slot] : (diffuse_temporal_only ? p_resources.output_diffuse_radiance_hit_distance : view->filter_scratch);
 		const RID temporal_moments_destination = p_frame.specular ? view->history_moments[current_slot] : (diffuse_temporal_only ? view->filter_scratch : p_resources.output_diffuse_radiance_hit_distance);
+		const RID surface_history_fallback = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT);
 		const RID temporal_set = uniform_set_cache->get_cache(
 				temporal_shader, 0,
 				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 0, temporal_signal_input),
@@ -400,7 +403,9 @@ struct HDDAGIScreenProbeSVGF::Implementation {
 				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 9, temporal_signal_destination),
 				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 10, temporal_moments_destination),
 				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 11, view->history_normal_roughness[current_slot]),
-				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 12, view->history_view_z[current_slot]));
+				RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 12, view->history_view_z[current_slot]),
+				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 13, p_resources.surface_history.is_valid() ? p_resources.surface_history : surface_history_fallback),
+				RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 14, p_resources.previous_surface_history.is_valid() ? p_resources.previous_surface_history : surface_history_fallback));
 		const RID temporal_frame_data_set = uniform_set_cache->get_cache(
 				temporal_shader, 1,
 				RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, view->frame_data_buffer));

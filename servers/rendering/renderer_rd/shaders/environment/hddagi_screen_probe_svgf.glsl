@@ -4,6 +4,8 @@
 
 #VERSION_DEFINES
 
+#include "hddagi_surface_history_inc.glsl"
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(push_constant, std430) uniform Params {
@@ -42,6 +44,8 @@ layout(rgba16f, set = 0, binding = 9) uniform restrict writeonly image2D current
 layout(rgba16f, set = 0, binding = 10) uniform restrict writeonly image2D current_moments_output;
 layout(rgba8, set = 0, binding = 11) uniform restrict writeonly image2D current_normal_roughness_output;
 layout(r32f, set = 0, binding = 12) uniform restrict writeonly image2D current_view_z_output;
+layout(set = 0, binding = 13) uniform utexture2D current_surface_history;
+layout(set = 0, binding = 14) uniform utexture2D previous_surface_history;
 
 const int SPECULAR_NEIGHBORHOOD_RADIUS = 2;
 const int SPECULAR_NEIGHBORHOOD_SHARED_SIZE = 12;
@@ -377,7 +381,7 @@ void svgf_specular_reconstruct_main() {
 
 #ifdef MODE_TEMPORAL
 
-bool svgf_history_tap_valid(ivec2 tap_pos, ivec2 size, bool current_dynamic, vec3 current_normal, vec3 current_normal_previous_view, vec3 expected_previous_position, out float r_history_length, out vec2 r_moments) {
+bool svgf_history_tap_valid(ivec2 tap_pos, ivec2 size, bool current_dynamic, vec3 current_normal, vec3 current_normal_previous_view, vec3 expected_previous_position, uvec2 receiver_surface, out float r_history_length, out vec2 r_moments) {
 	r_history_length = 0.0;
 	r_moments = vec2(0.0);
 	if (!svgf_finite_vec3(expected_previous_position) || expected_previous_position.z >= -1e-5) {
@@ -399,12 +403,21 @@ bool svgf_history_tap_valid(ivec2 tap_pos, ivec2 size, bool current_dynamic, vec
 	}
 	vec2 previous_surface_uv_offset;
 	bool previous_dynamic;
-	if (!svgf_decode_surface_metadata(previous_moments_surface_offset.zw, previous_surface_uv_offset, previous_dynamic) || previous_dynamic != current_dynamic) {
+	if (!svgf_decode_surface_metadata(previous_moments_surface_offset.zw, previous_surface_uv_offset, previous_dynamic) || (receiver_surface.y == 0u && previous_dynamic != current_dynamic)) {
 		return false;
+	}
+	if (receiver_surface.y != 0u) {
+		vec2 surface_uv = (vec2(tap_pos) + 0.5) / vec2(size) + previous_surface_uv_offset;
+		ivec2 surface_size = textureSize(usampler2D(previous_surface_history, nearest_sampler), 0);
+		ivec2 surface_pixel = ivec2(floor(surface_uv * vec2(surface_size)));
+		if (any(lessThan(surface_pixel, ivec2(0))) || any(greaterThanEqual(surface_pixel, surface_size)) ||
+				texelFetch(usampler2D(previous_surface_history, nearest_sampler), surface_pixel, 0).y != receiver_surface.y) {
+			return false;
+		}
 	}
 	float expected_previous_view_z = -expected_previous_position.z;
 	float relative_depth_tolerance = current_dynamic ? max(params.tuning.z * 6.0, 0.08) : max(params.tuning.z * 6.0, 0.02);
-	float depth_tolerance = 0.05 + relative_depth_tolerance * max(expected_previous_view_z, previous_view_z);
+	float depth_tolerance = receiver_surface.y != 0u ? 0.01 + 0.005 * max(expected_previous_view_z, previous_view_z) : 0.05 + relative_depth_tolerance * max(expected_previous_view_z, previous_view_z);
 	float normal_threshold = current_dynamic ? min(params.tuning.y, 0.7) : params.tuning.y;
 	r_history_length = previous_encoded_normal.a * HISTORY_LENGTH_STORAGE_SCALE;
 	r_moments = max(previous_moments_surface_offset.xy, vec2(0.0));
@@ -564,6 +577,15 @@ void svgf_temporal_main() {
 		current_dynamic = false;
 	}
 
+	uvec2 receiver_surface = uvec2(0u);
+	if ((params.control.x & 16u) != 0u && current_surface_valid && motion_valid) {
+		ivec2 surface_size = textureSize(usampler2D(current_surface_history, nearest_sampler), 0);
+		vec2 surface_uv = (vec2(pixel) + 0.5) / vec2(size) + current_surface_uv_offset;
+		ivec2 surface_pixel = ivec2(floor(surface_uv * vec2(surface_size)));
+		if (all(greaterThanEqual(surface_pixel, ivec2(0))) && all(lessThan(surface_pixel, surface_size))) {
+			receiver_surface = texelFetch(usampler2D(current_surface_history, nearest_sampler), surface_pixel, 0).xy;
+		}
+	}
 	vec3 accumulated_history = vec3(0.0);
 	vec2 accumulated_moments = vec2(0.0);
 	float accumulated_history_length = 0.0;
@@ -580,6 +602,9 @@ void svgf_temporal_main() {
 		if (svgf_finite_vec4(motion_sample) && svgf_finite_vec2(previous_uv) && svgf_finite_vec2(current_surface_uv) &&
 				svgf_reconstruct_view(frame_data.current_inv_projection, current_surface_uv, current_view_z, (params.control.w & 1u) != 0u, current_view_position)) {
 			vec3 expected_previous_position = (frame_data.current_view_to_previous_view * vec4(current_view_position, 1.0)).xyz;
+			if (receiver_surface.y != 0u && !hddagi_surface_previous_view(receiver_surface, previous_uv, frame_data.previous_inv_projection, expected_previous_position)) {
+				expected_previous_position = vec3(0.0);
+			}
 			vec3 current_normal_previous_view = transpose(mat3(frame_data.previous_view_to_world)) * current_normal;
 			float expected_previous_view_z = -expected_previous_position.z;
 			if (svgf_valid_view_z(expected_previous_view_z)) {
@@ -596,7 +621,7 @@ void svgf_temporal_main() {
 							float tap_weight = axis_weight.x * axis_weight.y;
 							float tap_history_length;
 							vec2 tap_moments;
-							if (!(tap_weight > 0.0) || !svgf_history_tap_valid(tap_pos, size, current_dynamic, current_normal, current_normal_previous_view, expected_previous_position, tap_history_length, tap_moments)) {
+							if (!(tap_weight > 0.0) || !svgf_history_tap_valid(tap_pos, size, current_dynamic, current_normal, current_normal_previous_view, expected_previous_position, receiver_surface, tap_history_length, tap_moments)) {
 								continue;
 							}
 							vec4 history_signal = texelFetch(sampler2D(previous_signal_input, nearest_sampler), tap_pos, 0);

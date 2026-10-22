@@ -59,6 +59,7 @@ namespace RendererSceneRenderImplementation {
 
 class RenderForwardClustered : public RendererSceneRenderRD {
 	friend SceneShaderForwardClustered;
+	uint32_t next_surface_history_id = 0;
 
 	enum {
 		SCENE_UNIFORM_SET = 0,
@@ -160,6 +161,7 @@ public:
 		RID get_normal_roughness_msaa(uint32_t p_layer) { return render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS_MSAA, p_layer, 0); }
 
 		void ensure_voxelgi();
+		void ensure_surface_history();
 		bool has_voxelgi() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_VOXEL_GI); }
 		RID get_voxelgi() const { return render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_VOXEL_GI); }
 		RID get_voxelgi(uint32_t p_layer) { return render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_VOXEL_GI, p_layer, 0); }
@@ -373,7 +375,8 @@ private:
 
 		struct InstanceData {
 			float transform[12];
-			float compressed_aabb_position[4];
+			float compressed_aabb_position[3];
+			uint32_t surface_history_id; // Shares the existing AABB padding slot.
 			float compressed_aabb_size[3];
 			uint32_t material_feedback_index;
 			float uv_scale[4];
@@ -604,6 +607,7 @@ private:
 
 	class GeometryInstanceForwardClustered : public RenderGeometryInstanceBase {
 	public:
+		uint32_t surface_history_id = 0;
 		// lightmap
 		RID lightmap_instance;
 		Rect2 lightmap_uv_scale;

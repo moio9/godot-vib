@@ -26,6 +26,10 @@ layout(rg8ui, set = 3, binding = 0) uniform restrict writeonly uimage2D dest_vox
 #ifdef MOTION_VECTORS_RESOLVE
 layout(set = 0, binding = 2) uniform sampler2DMS source_motion_vectors;
 layout(rg16f, set = 1, binding = 2) uniform restrict writeonly image2D dest_motion_vectors;
+#ifdef SURFACE_HISTORY_RESOLVE
+layout(set = 0, binding = 3) uniform usampler2DMS source_surface_history;
+layout(rg32ui, set = 1, binding = 3) uniform restrict writeonly uimage2D dest_surface_history;
+#endif
 #endif
 
 #endif
@@ -244,6 +248,9 @@ void main() {
 #endif
 #ifdef MOTION_VECTORS_RESOLVE
 	imageStore(dest_motion_vectors, pos, vec4(best_motion_vectors, 0.0, 0.0));
+#ifdef SURFACE_HISTORY_RESOLVE
+	imageStore(dest_surface_history, pos, texelFetch(source_surface_history, pos, best_index));
+#endif
 #endif
 
 #endif

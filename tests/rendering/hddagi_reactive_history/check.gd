@@ -96,6 +96,17 @@ func dispatch(kind: String, reactive: bool) -> Image:
 	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_SAMPLER, 8, sampler))
 	for i in 4:
 		uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_IMAGE, 9 + i, resources[8 + i]))
+	var metadata_format := RDTextureFormat.new()
+	metadata_format.width = SIZE.x
+	metadata_format.height = SIZE.y
+	metadata_format.format = RenderingDevice.DATA_FORMAT_R32G32_UINT
+	metadata_format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	var metadata_data := PackedByteArray()
+	metadata_data.resize(SIZE.x * SIZE.y * 8)
+	var metadata := rd.texture_create(metadata_format, RDTextureView.new(), [metadata_data])
+	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 13, metadata))
+	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 14, metadata))
+	resources.append(metadata)
 	var set_rid := rd.uniform_set_create(uniforms, shader, 0)
 	var control := 0 if kind == "cut" else 1
 	if reactive:
@@ -127,6 +138,7 @@ func run() -> void:
 		return
 	var shader_path := ProjectSettings.globalize_path("res://../../../servers/rendering/renderer_rd/shaders/environment/hddagi_screen_probe_svgf.glsl")
 	var code := FileAccess.get_file_as_string(shader_path).replace("#[compute]", "")
+	code = code.replace('#include "hddagi_surface_history_inc.glsl"', FileAccess.get_file_as_string(shader_path.get_base_dir().path_join("hddagi_surface_history_inc.glsl")))
 	for mode in ["MODE_TEMPORAL", "MODE_HISTORY_FIX", "MODE_ATROUS", "MODE_SPECULAR_RECONSTRUCT"]:
 		var source := RDShaderSource.new()
 		source.source_compute = code.replace("#VERSION_DEFINES", "#define " + mode)

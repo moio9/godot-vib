@@ -42,6 +42,11 @@
 #endif
 
 #define RB_SCOPE_BUFFERS SNAME("render_buffers")
+// Opaque surface identity and previous raster depth, scoped to HDDAGI view history.
+#define RB_SCOPE_HDDAGI_SURFACE_HISTORY SNAME("hddagi_surface_history")
+#define RB_TEX_HDDAGI_SURFACE_MOTION SNAME("surface_motion")
+#define RB_TEX_HDDAGI_SURFACE_MOTION_MSAA SNAME("surface_motion_msaa")
+#define RB_TEX_HDDAGI_PREVIOUS_SURFACE SNAME("previous_surface")
 #define RB_SCOPE_VRS SNAME("VRS")
 
 #define RB_TEXTURE SNAME("texture")

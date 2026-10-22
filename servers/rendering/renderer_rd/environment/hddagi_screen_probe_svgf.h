@@ -62,6 +62,8 @@ public:
 
 	struct Resources {
 		RID motion_vectors;
+		RID surface_history;
+		RID previous_surface_history;
 		RID normal_roughness;
 		RID view_z;
 		RID diffuse_radiance_hit_distance;

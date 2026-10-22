@@ -10,6 +10,7 @@
 #endif
 
 #include "../oct_inc.glsl"
+#include "hddagi_surface_history_inc.glsl"
 
 #ifdef MODE_IRRADIANCE_CACHE_UPDATE_MULTIBOUNCE
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -235,6 +236,8 @@ layout(set = 0, binding = 19) uniform texture2D directional_previous_filtered_ra
 layout(r8ui, set = 0, binding = 20) uniform restrict writeonly uimage2D directional_trace_count_output;
 layout(set = 0, binding = 21) uniform texture2D directional_screen_radiance_buffer;
 layout(set = 0, binding = 22) uniform texture2D directional_previous_depth_buffer;
+layout(set = 0, binding = 23) uniform utexture2D directional_surface_history;
+layout(set = 0, binding = 24) uniform utexture2D directional_previous_surface_history;
 #endif
 #ifdef MODE_SPECULAR_TRACE
 layout(set = 0, binding = 12) uniform texture2D specular_depth_buffer;
@@ -2279,11 +2282,14 @@ bool directional_sample_screen_radiance(vec3 endpoint_world, out vec3 r_radiance
 		return false;
 	}
 
-	ivec2 endpoint_pixel = clamp(ivec2(floor(current_raster_uv * vec2(params.screen_size))), ivec2(0), params.screen_size - ivec2(1));
-	float endpoint_roughness_dynamic = texelFetch(sampler2D(detail_normal_roughness_buffer, linear_sampler), endpoint_pixel, 0).a;
-	bool dynamic_endpoint = endpoint_roughness_dynamic > 0.5;
-	// Per-ray motion is unavailable, so moving endpoints cannot reuse history.
-	if (dynamic_endpoint) {
+	if (any(lessThan(current_raster_uv, vec2(0.0))) || any(greaterThanEqual(current_raster_uv, vec2(1.0)))) {
+		return false;
+	}
+	ivec2 endpoint_pixel = ivec2(floor(current_raster_uv * vec2(params.screen_size)));
+	bool dynamic_endpoint = texelFetch(sampler2D(detail_normal_roughness_buffer, linear_sampler), endpoint_pixel, 0).a > 0.5;
+	uvec2 endpoint_surface = texelFetch(usampler2D(directional_surface_history, linear_sampler), endpoint_pixel, 0).xy;
+	// Unsupported geometry (e.g. particles) keeps the conservative fallback.
+	if (dynamic_endpoint && endpoint_surface.y == 0u) {
 		return false;
 	}
 	vec2 history_uv = previous_raster_uv;
@@ -2296,6 +2302,46 @@ bool directional_sample_screen_radiance(vec3 endpoint_world, out vec3 r_radiance
 			history_uv = current_raster_uv + endpoint_velocity + previous_jitter_uv - current_jitter_uv;
 			object_motion_pixels = length((history_uv - previous_raster_uv) * vec2(history_size));
 		}
+	}
+
+	if (endpoint_surface.y != 0u) {
+		vec3 expected_previous_view;
+		if (!hddagi_surface_previous_view(endpoint_surface, history_uv, scene_data.previous_inv_projection[params.view_index], expected_previous_view)) {
+			return false;
+		}
+		vec2 previous_texel = history_uv * vec2(history_size) - 0.5;
+		ivec2 base = ivec2(floor(previous_texel));
+		vec2 fraction = fract(previous_texel);
+		vec3 radiance_sum = vec3(0.0);
+		float weight_sum = 0.0;
+		for (int y = 0; y < 2; y++) {
+			for (int x = 0; x < 2; x++) {
+				ivec2 tap = base + ivec2(x, y);
+				if (any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, history_size)) ||
+						texelFetch(usampler2D(directional_previous_surface_history, linear_sampler), tap, 0).y != endpoint_surface.y) {
+					continue;
+				}
+				float depth = texelFetch(sampler2D(directional_previous_depth_buffer, linear_sampler), tap, 0).r;
+				vec4 previous_h = scene_data.previous_inv_projection[params.view_index] * vec4((vec2(tap) + 0.5) / vec2(history_size) * 2.0 - 1.0, depth, 1.0);
+				if (any(isnan(previous_h)) || any(isinf(previous_h)) || abs(previous_h.w) < 1e-6 || depth <= 0.0 ||
+						abs(previous_h.z / previous_h.w - expected_previous_view.z) > 0.01 + 0.005 * abs(expected_previous_view.z)) {
+					continue;
+				}
+				vec3 radiance = texelFetch(sampler2D(directional_screen_radiance_buffer, linear_sampler), tap, 0).rgb;
+				if (any(isnan(radiance)) || any(isinf(radiance)) || any(lessThan(radiance, vec3(0.0)))) {
+					continue;
+				}
+				vec2 axis_weight = mix(vec2(1.0) - fraction, fraction, bvec2(x != 0, y != 0));
+				float weight = axis_weight.x * axis_weight.y;
+				radiance_sum += radiance * weight;
+				weight_sum += weight;
+			}
+		}
+		if (weight_sum < 0.25) {
+			return false;
+		}
+		r_radiance = radiance_sum / weight_sum * clamp(scene_data.previous_exposure_scale.x, 1.0 / 16.0, 16.0);
+		return true;
 	}
 
 	vec2 half_texel = 0.5 / vec2(history_size);

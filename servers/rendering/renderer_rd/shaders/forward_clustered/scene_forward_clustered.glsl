@@ -114,6 +114,9 @@ layout(location = 6) out vec3 binormal_interp;
 #ifdef MOTION_VECTORS
 layout(location = 7) out vec4 screen_position;
 layout(location = 8) out vec4 prev_screen_position;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_NORMAL_ROUGHNESS)
+layout(location = 15) out flat uint surface_history_id_interp;
+#endif
 #endif
 
 #ifdef MATERIAL_UNIFORMS_USED
@@ -782,6 +785,9 @@ void main() {
 	}
 
 	instance_index_interp = instance_index;
+#if defined(MOTION_VECTORS) && defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_NORMAL_ROUGHNESS)
+	surface_history_id_interp = sc_multimesh() ? 0u : floatBitsToUint(instances.data[instance_index].compressed_aabb_position_pad.w);
+#endif
 
 #ifdef MOTION_VECTORS
 	// Previous vertex.
@@ -949,6 +955,9 @@ layout(location = 6) in vec3 binormal_interp;
 #ifdef MOTION_VECTORS
 layout(location = 7) in vec4 screen_position;
 layout(location = 8) in vec4 prev_screen_position;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_NORMAL_ROUGHNESS)
+layout(location = 15) in flat uint surface_history_id_interp;
+#endif
 #endif
 
 #ifdef MODE_DUAL_PARABOLOID
@@ -1062,6 +1071,9 @@ layout(location = 3) out uint frag_mesh_blend_aux;
 
 #ifdef MOTION_VECTORS
 layout(location = 2) out vec2 motion_vector;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_NORMAL_ROUGHNESS)
+layout(location = 3) out uvec2 surface_motion;
+#endif
 #endif
 
 #include "../scene_forward_aa_inc.glsl"
@@ -3329,6 +3341,11 @@ vec2 mesh_blend_main_aux_value = vec2(
 	vec2 prev_position_uv = prev_position_clip * vec2(0.5, 0.5);
 
 	motion_vector = prev_position_uv - position_uv;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_NORMAL_ROUGHNESS)
+	float previous_depth = prev_screen_position.z / prev_screen_position.w;
+	bool previous_valid = prev_screen_position.w > 0.0 && !isnan(previous_depth) && !isinf(previous_depth) && previous_depth > 0.0 && previous_depth <= 1.0;
+	surface_motion = previous_valid ? uvec2(floatBitsToUint(previous_depth), surface_history_id_interp) : uvec2(0u);
+#endif
 #endif
 }
 

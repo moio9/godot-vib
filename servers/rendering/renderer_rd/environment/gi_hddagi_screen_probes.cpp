@@ -1000,7 +1000,9 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 19, directional_filter_scratch[1]),
 					RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 20, directional_trace_count),
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 21, directional_screen_radiance),
-					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 22, directional_previous_depth));
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 22, directional_previous_depth),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 23, p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION, v, 0)),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 24, p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE, v, 0)));
 			directional_trace_sky_sets[v] = UniformSetCacheRD::get_singleton()->get_cache(
 					hddagi_shader.screen_probe_shader_version[directional_trace_mode], 1,
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 0, sky_texture),
@@ -1374,6 +1376,10 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 
 			HDDAGIScreenProbeSVGF::Resources svgf_resources;
 			svgf_resources.motion_vectors = svgf_motion[v];
+			if (p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION)) {
+				svgf_resources.surface_history = p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION, v, 0);
+				svgf_resources.previous_surface_history = p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE, v, 0);
+			}
 			svgf_resources.normal_roughness = svgf_normal_roughness[v];
 			svgf_resources.view_z = svgf_view_z[v];
 			svgf_resources.diffuse_radiance_hit_distance = svgf_input[v];
@@ -1422,6 +1428,10 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 
 				HDDAGIScreenProbeSVGF::Resources resources;
 				resources.motion_vectors = specular_motion[v];
+				if (p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION)) {
+					resources.surface_history = p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION, v, 0);
+					resources.previous_surface_history = p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE, v, 0);
+				}
 				resources.normal_roughness = specular_normal_roughness[v];
 				resources.view_z = specular_view_z[v];
 				resources.diffuse_radiance_hit_distance = specular_raw[v];
