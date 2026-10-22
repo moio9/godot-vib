@@ -478,13 +478,13 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 	if ((params.control.x & 8u) == 0u) {
 		return params.atrous.w;
 	}
-	// Keep the original conservative response on stable scenery. Only moving
-	// geometry and the lighting it contributes need the fast ground response.
+	// Keep normal accumulation on stable scenery. Even a conservative global
+	// luminance reset can mistake correlated low-ray-count noise for lighting.
+	// Only moving geometry and its lighting need the fast ground response.
 	// Camera motion is removed by the preceding geometry-motion pass.
 	bool moving_geometry = texelFetch(usampler2D(dynamic_motion_input, nearest_sampler), ivec2(0), 0).r != 0u;
 	bool dynamic_influence = (params.control.x & 32u) == 0u || max(current_dynamic_influence, previous_dynamic_influence) > 0.001;
-	bool fast_response = moving_geometry && (receiver_moving || dynamic_influence);
-	if (previous_history_length < (fast_response ? 1.0 : 4.0)) {
+	if (!moving_geometry || (!receiver_moving && !dynamic_influence) || previous_history_length < 1.0) {
 		return params.atrous.w;
 	}
 	float old_luminance = previous_moments.x;
@@ -492,9 +492,8 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 	// Signals are exposure-normalized and can be much smaller than 0.002.
 	// Old stochastic variance must not hide a coherent change in the current
 	// neighborhood, such as a car's indirect shadow entering/leaving the floor.
-	float threshold = fast_response ? max(1e-6, 0.025 * max(current_luminance, old_luminance)) : max(0.002, 0.25 * max(current_luminance, old_luminance));
-	float temporal_variance = max(previous_moments.y - old_luminance * old_luminance, 0.0);
-	if (abs(difference) <= (fast_response ? threshold : max(threshold, 2.0 * sqrt(temporal_variance)))) {
+	float threshold = max(1e-6, 0.025 * max(current_luminance, old_luminance));
+	if (abs(difference) <= threshold) {
 		return params.atrous.w;
 	}
 	vec2 center_offset;
@@ -554,9 +553,9 @@ float svgf_diffuse_reactive_history(ivec2 pixel, ivec2 size, vec3 normal, float 
 	float mean = sample_sum / sample_count;
 	float variance = max(sample_square_sum / sample_count - mean * mean, 0.0);
 	// The vote tests the neighborhood mean, rather than a single noisy sample.
-	float coherent_threshold = max(threshold, 2.0 * sqrt(variance / (fast_response ? sample_count : 1.0)));
+	float coherent_threshold = max(threshold, 2.0 * sqrt(variance / sample_count));
 	float response = smoothstep(coherent_threshold, coherent_threshold * 2.0, abs(mean - old_luminance));
-	return mix(params.atrous.w, fast_response ? 1.0 : 2.0, response);
+	return mix(params.atrous.w, 1.0, response);
 }
 
 void svgf_temporal_main() {

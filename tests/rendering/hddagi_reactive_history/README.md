@@ -8,7 +8,8 @@ A GPU motion pass compares actual previous vertices with camera-only reprojectio
 camera movement alone does not disable accumulation. Stochastic traces also carry
 dynamic endpoint influence, including opaque unlit hits, so fast clearing stays
 local to affected receivers and their reprojected history. Other diffuse lighting
-uses the original conservative response to brightness changes. It does not enable
+keeps normal temporal accumulation rather than resetting on stochastic brightness
+fluctuations. It does not enable
 screen probes or SVGF automatically and does not change SSIL, SSGI or specular
 filtering.
 
