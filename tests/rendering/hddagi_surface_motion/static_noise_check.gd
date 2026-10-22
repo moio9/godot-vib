@@ -2,6 +2,10 @@ extends "res://scene_check.gd"
 
 # Keep the sampling budget at Brake's High preset. A fixed camera and unchanging
 # surfaces isolate temporal GI noise from motion, shadow maps and post effects.
+# Disable the irradiance cache only in this denoiser isolation: atomic allocation
+# chooses entry/generation seeds and representatives in GPU invocation order, so
+# separate processes cannot reproduce its multi-bounce input from frame IDs alone.
+# Cached transport remains covered by ground_check.gd and scene_check.gd.
 const WARMUP_FRAMES := 90
 const MEASURED_FRAMES := 96
 const SAMPLE_STEP := 4
@@ -194,8 +198,8 @@ func run_control(control: String) -> void:
 		"screen_probe_detail_trace_quality": 0,
 		"screen_probe_directional_screen_radiance": true,
 		"screen_probe_guided_sampling": true,
-		"screen_probe_radiance_cache": 1,
-		"screen_probe_radiance_cache_multibounce": true,
+		"screen_probe_radiance_cache": 0,
+		"screen_probe_radiance_cache_multibounce": false,
 		"screen_probe_specular_reflections": false,
 	}
 	for setting in settings:
@@ -281,7 +285,7 @@ func run_control(control: String) -> void:
 	await frames(4)
 	root.get_texture().get_image()
 	var windows := {"all_static": frame_windows.get(static_label, {}), "stopped_dynamic": frame_windows.get("04_stopped_dynamic_reactive_on" if reactive else "03_stopped_dynamic_reactive_off", {})}
-	noise_results = {"control": control, "reactive": reactive, "checks": checks, "failures": failures, "warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": settings, "all_static": stationary, "stopped_dynamic": stopped_result, "frame_windows": windows}
+	noise_results = {"test_scope": "temporal_denoiser_isolation", "control": control, "reactive": reactive, "checks": checks, "failures": failures, "warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": settings, "all_static": stationary, "stopped_dynamic": stopped_result, "frame_windows": windows}
 	FileAccess.open(out.path_join("child-measurements.json"), FileAccess.WRITE).store_string(JSON.stringify(noise_results, "\t"))
 	print("STATIC_NOISE_CHILD_RESULT control=%s checks=%d failures=%d" % [control, checks, failures])
 	quit(1 if failures else 0)
@@ -352,7 +356,7 @@ func run() -> void:
 		var stopped_legacy: Dictionary = off.stopped_dynamic
 		var stopped_reactive: Dictionary = on.stopped_dynamic
 		var stopped_results := {"legacy": stopped_legacy, "reactive": stopped_reactive, "comparisons": compare_noise(stopped_legacy, stopped_reactive, "stopped_dynamic")}
-		noise_results = {"warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "baseline": baseline, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": off.settings, "legacy": legacy, "reactive": reactive, "comparisons": comparisons, "stopped_dynamic": stopped_results, "frame_windows": {"off": off.frame_windows, "on": on.frame_windows}, "isolated_controls": true}
+		noise_results = {"test_scope": "temporal_denoiser_isolation", "warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "baseline": baseline, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": off.settings, "legacy": legacy, "reactive": reactive, "comparisons": comparisons, "stopped_dynamic": stopped_results, "frame_windows": {"off": off.frame_windows, "on": on.frame_windows}, "isolated_controls": true}
 		FileAccess.open(out.path_join("measurements.json"), FileAccess.WRITE).store_string(JSON.stringify(noise_results, "\t"))
 	print("STATIC_NOISE_RESULT checks=%d failures=%d" % [checks, failures])
 	quit(1 if failures else 0)

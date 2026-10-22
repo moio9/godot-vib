@@ -31,8 +31,15 @@ voxel representation.
 A headless run cannot create the local Vulkan RenderingDevice.
 
 `static_noise_check.gd` measures temporal RGB variance in the actual diffuse GI
-buffer at Brake's High Stochastic budget (probe size 4, two candidates, SVGF High),
-with TAA and other screen-space effects disabled. It compares normal and reactive
+buffer at Brake's High Stochastic sampling budget (probe size 4, two candidates,
+SVGF High), with TAA and other screen-space effects disabled. This is a temporal
+denoiser isolation: screen-radiance transport stays enabled, but the irradiance
+cache and its multi-bounce training are disabled in both controls. Cache allocation
+and representative selection depend on GPU atomic arrival order; entry/generation
+values then seed multi-bounce rays, so equal frame numbers do not make that input
+reproducible across processes. Cached transport is covered separately by
+`ground_check.gd` and `scene_check.gd`.
+The noise test compares normal and reactive
 accumulation in separate processes with identical rendered-frame sample sequences,
 first on fixed static geometry, then after moving and stopping a Dynamic mesh.
 It verifies matching measurement frames, per-receiver noise and screenshots, and
