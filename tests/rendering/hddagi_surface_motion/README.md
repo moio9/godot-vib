@@ -32,9 +32,10 @@ A headless run cannot create the local Vulkan RenderingDevice.
 
 `static_noise_check.gd` measures temporal RGB variance in the actual diffuse GI
 buffer at Brake's High Stochastic budget (probe size 4, two candidates, SVGF High),
-with TAA and other screen-space effects disabled. It compares conservative and
-reactive accumulation on fixed static geometry, then moves a Dynamic mesh and
-repeats after it stops. The test records per-receiver noise and screenshots, and
+with TAA and other screen-space effects disabled. It compares normal and reactive
+accumulation in separate processes with identical rendered-frame sample sequences,
+first on fixed static geometry, then after moving and stopping a Dynamic mesh.
+It verifies matching measurement frames, per-receiver noise and screenshots, and
 limits additional noise to 15 percent plus 0.05 percent of the mean GI signal.
 Pass `--baseline` to record a previous build without enforcing noise comparisons.
 

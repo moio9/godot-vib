@@ -13,6 +13,7 @@ var receiver_ids: Dictionary = {}
 var pixel_regions: Dictionary = {}
 var noise_results: Dictionary = {}
 var stopped_dynamic_box: MeshInstance3D
+var frame_windows: Dictionary = {}
 
 func check(ok: bool, message: String) -> void:
 	checks += 1
@@ -96,8 +97,11 @@ func measure(label: String, reactive: bool, dynamic_region := "") -> Dictionary:
 	var expected_mobility := true
 	var metadata := true
 	var valid_frames := 0
+	var rendered_frames := PackedInt64Array()
+	var first_rendered_frame := Engine.get_frames_drawn()
 	for frame in MEASURED_FRAMES:
 		var info: Dictionary = await read_buffers()
+		rendered_frames.append(Engine.get_frames_drawn())
 		if info.is_empty():
 			continue
 		valid_frames += 1
@@ -154,6 +158,7 @@ func measure(label: String, reactive: bool, dynamic_region := "") -> Dictionary:
 		total_pixels += count
 	measured["all_receivers"] = {"pixels": total_pixels, "rgb_temporal_rms": sqrt(total_variance / maxi(total_pixels * 3, 1)), "mean_luminance": total_luminance / maxi(total_pixels, 1)}
 	check(float(measured.all_receivers.mean_luminance) > 1e-6, label + " has measurable indirect illumination")
+	frame_windows[label] = {"begin": first_rendered_frame, "end": Engine.get_frames_drawn(), "sampled_frames": Array(rendered_frames), "valid_frames": valid_frames}
 	print("STATIC_NOISE_SAMPLE ", JSON.stringify({"label": label, "reactive": reactive, "frames": valid_frames, "regions": measured}))
 	return measured
 
@@ -162,7 +167,8 @@ func compare_noise(legacy: Dictionary, reactive: Dictionary, scenario: String) -
 	for region in legacy:
 		var before := float(legacy[region].rgb_temporal_rms)
 		var after := float(reactive[region].rgb_temporal_rms)
-		# 15% allows different stochastic phases over a finite 96-frame window.
+		# Separate child processes use the same renderer-frame ray sequence;
+		# 15% is retained as the original strict noise-regression allowance.
 		# The absolute allowance is only 0.05% of receiver illumination, so a
 		# nearly deterministic reference is not judged using a meaningless ratio.
 		var noise_floor := maxf(1e-7, float(legacy[region].mean_luminance) * ABSOLUTE_NOISE_FRACTION)
@@ -173,7 +179,9 @@ func compare_noise(legacy: Dictionary, reactive: Dictionary, scenario: String) -
 	print("STATIC_NOISE_COMPARISON ", JSON.stringify({"scenario": scenario, "regions": comparisons}))
 	return comparisons
 
-func run() -> void:
+func run_control(control: String) -> void:
+	var reactive := control == "on"
+	ProjectSettings.set_setting(GI_PREFIX + "screen_probe_denoiser_reactive", reactive)
 	root.size = Vector2i(640, 360)
 	root.use_taa = false
 	root.msaa_3d = Viewport.MSAA_DISABLED
@@ -251,9 +259,8 @@ func run() -> void:
 		quit(1)
 		return
 	choose_receivers(initial)
-	var legacy := await measure("01_reactive_off", false)
-	var reactive := await measure("02_reactive_on", true)
-	var comparisons := compare_noise(legacy, reactive, "all_static")
+	var static_label := "02_reactive_on" if reactive else "01_reactive_off"
+	var stationary := await measure(static_label, reactive)
 	# A Dynamic mesh is not necessarily moving. Exercise its real motion and
 	# subsequent stop before comparing settled accumulation on it and its floor.
 	stopped_dynamic_box.gi_mode = GeometryInstance3D.GI_MODE_DYNAMIC
@@ -263,18 +270,89 @@ func run() -> void:
 	await frames(WARMUP_FRAMES)
 	var stopped: Dictionary = await read_buffers()
 	check(not stopped.is_empty(), "stopped Dynamic box retains actual GI buffers after motion")
-	var stopped_results: Dictionary = {}
+	var stopped_result: Dictionary = {}
 	if not stopped.is_empty():
 		receiver_ids.clear()
 		pixel_regions.clear()
 		choose_receivers(stopped)
-		var stopped_legacy := await measure("03_stopped_dynamic_reactive_off", false, "box")
-		var stopped_reactive := await measure("04_stopped_dynamic_reactive_on", true, "box")
-		stopped_results = {"legacy": stopped_legacy, "reactive": stopped_reactive, "comparisons": compare_noise(stopped_legacy, stopped_reactive, "stopped_dynamic")}
-	noise_results = {"warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "baseline": baseline, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": settings, "legacy": legacy, "reactive": reactive, "comparisons": comparisons, "stopped_dynamic": stopped_results}
-	FileAccess.open(out.path_join("measurements.json"), FileAccess.WRITE).store_string(JSON.stringify(noise_results, "\t"))
+		var stopped_label := "04_stopped_dynamic_reactive_on" if reactive else "03_stopped_dynamic_reactive_off"
+		stopped_result = await measure(stopped_label, reactive, "box")
 	world.queue_free()
 	await frames(4)
 	root.get_texture().get_image()
+	var windows := {"all_static": frame_windows.get(static_label, {}), "stopped_dynamic": frame_windows.get("04_stopped_dynamic_reactive_on" if reactive else "03_stopped_dynamic_reactive_off", {})}
+	noise_results = {"control": control, "reactive": reactive, "checks": checks, "failures": failures, "warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": settings, "all_static": stationary, "stopped_dynamic": stopped_result, "frame_windows": windows}
+	FileAccess.open(out.path_join("child-measurements.json"), FileAccess.WRITE).store_string(JSON.stringify(noise_results, "\t"))
+	print("STATIC_NOISE_CHILD_RESULT control=%s checks=%d failures=%d" % [control, checks, failures])
+	quit(1 if failures else 0)
+
+func child_control(control: String) -> Dictionary:
+	var child_out := ProjectSettings.globalize_path(out.path_join("control_" + control))
+	DirAccess.make_dir_recursive_absolute(child_out)
+	var data_path := child_out.path_join("child-measurements.json")
+	if FileAccess.file_exists(data_path):
+		DirAccess.remove_absolute(data_path)
+	var log_path := child_out.path_join("godot.log")
+	var args := PackedStringArray([
+		"--path", ProjectSettings.globalize_path("res://"),
+		"--display-driver", "x11", "--audio-driver", "Dummy", "--position", "1280,800",
+		"--log-file", log_path, "--script", get_script().resource_path,
+		"--", "--out=" + child_out, "--noise-control=" + control,
+	])
+	var pid := OS.create_process(OS.get_executable_path(), args)
+	check(pid > 0, control + " launches an isolated identical-sequence renderer")
+	if pid <= 0:
+		return {}
+	var deadline := Time.get_ticks_msec() + 300000
+	while OS.is_process_running(pid) and Time.get_ticks_msec() < deadline:
+		await create_timer(0.05).timeout
+	var timed_out := OS.is_process_running(pid)
+	if timed_out:
+		OS.kill(pid)
+	check(not timed_out, control + " child finishes within five minutes")
+	check(OS.get_process_exit_code(pid) == 0, control + " child exits successfully")
+	var log_text := FileAccess.get_file_as_string(log_path) if FileAccess.file_exists(log_path) else "ERROR: missing child log"
+	check(not log_text.contains("ERROR:") and not log_text.contains("leaked"), control + " child has no renderer/script errors or leaks")
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(data_path)) if FileAccess.file_exists(data_path) else null
+	check(parsed is Dictionary and parsed.get("control", "") == control, control + " child produces fresh measurement JSON")
+	if not parsed is Dictionary:
+		return {}
+	check(int(parsed.get("failures", -1)) == 0 and int(parsed.get("checks", 0)) >= 28, control + " child passes all finite, identity, mobility and illumination checks")
+	checks += int(parsed.get("checks", 0))
+	failures += int(parsed.get("failures", 0))
+	var image_labels := ["01_reactive_off", "03_stopped_dynamic_reactive_off"] if control == "off" else ["02_reactive_on", "04_stopped_dynamic_reactive_on"]
+	for label in image_labels:
+		var source := child_out.path_join(label + ".png")
+		check(FileAccess.file_exists(source) and DirAccess.copy_absolute(source, ProjectSettings.globalize_path(out.path_join(label + ".png"))) == OK, label + " preserves the standard comparison image")
+	return parsed
+
+func run() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--noise-control="):
+			var control := arg.trim_prefix("--noise-control=")
+			check(control in ["off", "on"], "child control is valid")
+			if control in ["off", "on"]:
+				await run_control(control)
+			else:
+				quit(1)
+			return
+	# The stochastic generator consumes the renderer's global frame number.
+	# Sequential toggles in one process compare different correlated samples.
+	# Fresh renderers instead execute exactly the same scene/frame sequence.
+	var off := await child_control("off")
+	var on := await child_control("on")
+	if not off.is_empty() and not on.is_empty():
+		for scenario in ["all_static", "stopped_dynamic"]:
+			var off_window: Dictionary = off.frame_windows.get(scenario, {})
+			var on_window: Dictionary = on.frame_windows.get(scenario, {})
+			check(not off_window.is_empty() and off_window == on_window and int(off_window.get("valid_frames", 0)) == MEASURED_FRAMES, scenario + " pairs identical renderer-frame samples and finite frame counts")
+		var legacy: Dictionary = off.all_static
+		var reactive: Dictionary = on.all_static
+		var comparisons := compare_noise(legacy, reactive, "all_static")
+		var stopped_legacy: Dictionary = off.stopped_dynamic
+		var stopped_reactive: Dictionary = on.stopped_dynamic
+		var stopped_results := {"legacy": stopped_legacy, "reactive": stopped_reactive, "comparisons": compare_noise(stopped_legacy, stopped_reactive, "stopped_dynamic")}
+		noise_results = {"warmup_frames": WARMUP_FRAMES, "measured_frames": MEASURED_FRAMES, "baseline": baseline, "probe_size": 4, "candidate_count": 2, "svgf_quality": 2, "taa": false, "settings": off.settings, "legacy": legacy, "reactive": reactive, "comparisons": comparisons, "stopped_dynamic": stopped_results, "frame_windows": {"off": off.frame_windows, "on": on.frame_windows}, "isolated_controls": true}
+		FileAccess.open(out.path_join("measurements.json"), FileAccess.WRITE).store_string(JSON.stringify(noise_results, "\t"))
 	print("STATIC_NOISE_RESULT checks=%d failures=%d" % [checks, failures])
 	quit(1 if failures else 0)
