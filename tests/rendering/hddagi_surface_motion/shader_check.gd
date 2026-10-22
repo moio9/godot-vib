@@ -140,6 +140,8 @@ func dispatch(kind: String, reactive: bool) -> Image:
 	var old_metadata := rd.texture_create(metadata_format, RDTextureView.new(), [previous_data.to_byte_array()])
 	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 13, metadata))
 	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 14, old_metadata))
+	# This reprojection test has no independently moving lighting source.
+	uniforms.append(uniform(RenderingDevice.UNIFORM_TYPE_TEXTURE, 15, old_metadata))
 	resources.append(metadata)
 	resources.append(old_metadata)
 	var set_rid := rd.uniform_set_create(uniforms, shader, 0)
