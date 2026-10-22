@@ -240,6 +240,11 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 		hiz_available = p_hiz_slices[v].is_valid();
 	}
 	const bool detail_trace = p_detail_trace && hiz_available;
+	const uint32_t dynamic_candidate_count = MAX(candidate_count, uint32_t(CLAMP(GLOBAL_GET_CACHED(int, "rendering/global_illumination/hddagi/screen_probe_dynamic_candidate_count"), 1, 8)));
+	const float dynamic_sampling_distance = CLAMP(GLOBAL_GET_CACHED(float, "rendering/global_illumination/hddagi/screen_probe_dynamic_sampling_distance"), 0.0f, SCREEN_PROBE_SVGF_DENOISING_RANGE);
+	const float dynamic_sampling_radius = CLAMP(GLOBAL_GET_CACHED(float, "rendering/global_illumination/hddagi/screen_probe_dynamic_sampling_radius"), 0.0f, 10.0f);
+	const bool dynamic_sampling = !directional_gather && detail_trace && dynamic_candidate_count > candidate_count && dynamic_sampling_distance > 0.0f &&
+			GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_dynamic_sampling");
 	const uint32_t detail_trace_mip_count = detail_trace ? CLAMP(p_hiz_mip_count, 1u, 16u) : 0u;
 	bool specular_reflections = (GLOBAL_GET_CACHED(bool, "rendering/global_illumination/hddagi/screen_probe_specular_reflections") || p_force_specular_reflections) &&
 			p_render_buffers->has_texture(RB_SCOPE_GI, RB_TEX_REFLECTION_U32);
@@ -483,6 +488,12 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 		configuration = hash_murmur3_one_32(directional_screen_radiance_setting ? 1u : 0u, configuration);
 	}
 	configuration = hash_murmur3_one_32(candidate_count, configuration);
+	configuration = hash_murmur3_one_32(dynamic_sampling ? 1u : 0u, configuration);
+	if (dynamic_sampling) {
+		configuration = hash_murmur3_one_32(dynamic_candidate_count, configuration);
+		configuration = hash_murmur3_one_float(dynamic_sampling_distance, configuration);
+		configuration = hash_murmur3_one_float(dynamic_sampling_radius, configuration);
+	}
 	configuration = hash_murmur3_one_32(diffuse_reactive_setting ? 1u : 0u, configuration);
 	configuration = hash_murmur3_one_32(guided_sampling ? 1u : 0u, configuration);
 	configuration = hash_murmur3_one_32(uniform_placement_jitter ? 1u : 0u, configuration);
@@ -801,9 +812,13 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 			(directional_adaptive ? uint32_t(HDDAGIShader::ScreenProbePushConstant::FLAG_DIRECTIONAL_ADAPTIVE) : 0u) |
 			(directional_screen_radiance_valid ? uint32_t(HDDAGIShader::ScreenProbePushConstant::FLAG_DIRECTIONAL_SCREEN_RADIANCE_VALID) : 0u) |
 			(uniform_placement_jitter ? uint32_t(HDDAGIShader::ScreenProbePushConstant::FLAG_UNIFORM_PLACEMENT_JITTER) : 0u) |
+			(dynamic_sampling ? uint32_t(HDDAGIShader::ScreenProbePushConstant::FLAG_DYNAMIC_SAMPLING) : 0u) |
 			detail_trace_quality_flags;
 	push_constant.normal_bias = normal_bias;
 	push_constant.candidate_count = candidate_count;
+	push_constant.dynamic_candidate_count = dynamic_candidate_count;
+	push_constant.dynamic_sampling_distance = dynamic_sampling_distance;
+	push_constant.dynamic_sampling_radius = dynamic_sampling_radius;
 	push_constant.sky_mode = screen_probe_sky_mode;
 	push_constant.sky_energy = screen_probe_sky_energy;
 	push_constant.detail_trace_mip_count = detail_trace_mip_count;
@@ -1040,6 +1055,20 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 			}
 		}
 		if (!directional_gather) {
+			RID dynamic_previous_signal = detail_hiz_fallback;
+			const bool dynamic_previous_depth_valid = p_previous_screen_color_valid && p_previous_screen_depth_slices != nullptr &&
+					p_previous_screen_depth_slices[v].is_valid() && RD::get_singleton()->texture_is_valid(p_previous_screen_depth_slices[v]) &&
+					RD::get_singleton()->texture_size(p_previous_screen_depth_slices[v]) == internal_size;
+			if (dynamic_sampling && svgf_active && svgf_history_valid &&
+					dynamic_previous_depth_valid &&
+					p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION) &&
+					p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE)) {
+				const HDDAGIScreenProbeSVGF::DebugTextures history = rbgi->screen_probe_svgf.get_debug_textures(v);
+				if (history.temporal_signal.is_valid() && RD::get_singleton()->texture_is_valid(history.temporal_signal)) {
+					dynamic_previous_signal = history.temporal_signal;
+					view_flags[v] |= uint32_t(HDDAGIShader::ScreenProbePushConstant::FLAG_DYNAMIC_SAMPLING_HISTORY_VALID);
+				}
+			}
 			trace_sets[v] = UniformSetCacheRD::get_singleton()->get_cache(
 					hddagi_shader.screen_probe_shader_version[trace_mode], 0,
 					RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 0, surface),
@@ -1056,9 +1085,10 @@ void GI::process_hddagi_screen_probes(Ref<RenderSceneBuffersRD> p_render_buffers
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 11, normal_roughness),
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 17, directional_velocity),
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 21, directional_screen_radiance_valid ? p_previous_screen_color_slices[v] : detail_hiz_fallback),
-					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 22, directional_screen_radiance_valid ? p_previous_screen_depth_slices[v] : detail_hiz_fallback),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 22, (directional_screen_radiance_valid || dynamic_previous_depth_valid) ? p_previous_screen_depth_slices[v] : detail_hiz_fallback),
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 23, p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION) ? p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_SURFACE_MOTION, v, 0) : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT)),
-					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 24, p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE) ? p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE, v, 0) : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT)));
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 24, p_render_buffers->has_texture(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE) ? p_render_buffers->get_texture_slice(RB_SCOPE_HDDAGI_SURFACE_HISTORY, RB_TEX_HDDAGI_PREVIOUS_SURFACE, v, 0) : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT)),
+					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 25, dynamic_previous_signal));
 			trace_sky_sets[v] = UniformSetCacheRD::get_singleton()->get_cache(
 					hddagi_shader.screen_probe_shader_version[trace_mode], 1,
 					RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 0, sky_texture),

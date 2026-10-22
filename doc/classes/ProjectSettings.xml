@@ -3149,7 +3149,7 @@
 			Denoiser quality. Higher values reduce noise at higher GPU cost.
 		</member>
 		<member name="rendering/global_illumination/hddagi/screen_probe_denoiser_reactive" type="bool" setter="" getter="" default="true">
-			Shortens diffuse screen-probe temporal history when nearby samples on the same surface agree that illumination has changed. This improves response to changing lights while retaining accumulation for isolated noisy samples. Only applies when the screen-probe denoiser is SVGF; disabling this restores the original diffuse temporal response.
+			Shortens diffuse screen-probe temporal history when visible geometry is moving and nearby samples on the same surface agree that illumination has changed. Stochastic Integrated mode limits this response to moving receivers and their dynamic influence; stationary and unaffected receivers retain normal accumulation. Only applies when the screen-probe denoiser is SVGF; disabling this restores the original diffuse temporal response.
 		</member>
 		<member name="rendering/global_illumination/hddagi/screen_probe_denoiser_temporal_only" type="bool" setter="" getter="" default="false">
 			Uses only temporal accumulation for Directional Gather diffuse denoising.
@@ -3164,7 +3164,19 @@
 			Adds probes near depth and normal discontinuities in Directional Gather mode.
 		</member>
 		<member name="rendering/global_illumination/hddagi/screen_probe_directional_screen_radiance" type="bool" setter="" getter="" default="false">
-			Reuses screen radiance for static Directional Gather detail-trace hits.
+			Reuses screen radiance for visible detail-trace hits in Directional Gather and Stochastic Integrated modes, with surface motion and identity validation.
+		</member>
+		<member name="rendering/global_illumination/hddagi/screen_probe_dynamic_candidate_count" type="int" setter="" getter="" default="4">
+			Maximum total ray candidates for nearby stochastic probes on dynamic geometry or scenery influenced by it when [member rendering/global_illumination/hddagi/screen_probe_dynamic_sampling] is enabled. This never reduces [member rendering/global_illumination/hddagi/screen_probe_candidate_count], which remains the baseline on unaffected static scenery. Higher values reduce noise at additional GPU cost.
+		</member>
+		<member name="rendering/global_illumination/hddagi/screen_probe_dynamic_sampling" type="bool" setter="" getter="" default="true">
+			Concentrates additional stochastic screen-probe rays on nearby [constant GeometryInstance3D.GI_MODE_DYNAMIC] surfaces and visible scenery close to them or identified by reprojected dynamic-influence history. The baseline candidates and temporal accumulation are preserved on unaffected scenery. Only applies to Stochastic Integrated screen probes with [member rendering/global_illumination/hddagi/screen_probe_detail_trace] enabled; Directional Gather and reflections are unchanged. Visible geometry is required; the conservative neighborhood search may miss thin or off-screen objects.
+		</member>
+		<member name="rendering/global_illumination/hddagi/screen_probe_dynamic_sampling_distance" type="float" setter="" getter="" default="30.0">
+			Maximum distance from the camera, in meters, for additional dynamic screen-probe candidates. The additional candidate budget fades over the final quarter of this distance. A value of [code]0.0[/code] disables additional candidates.
+		</member>
+		<member name="rendering/global_illumination/hddagi/screen_probe_dynamic_sampling_radius" type="float" setter="" getter="" default="2.0">
+			World-space radius, in meters, used to anticipate dynamic influence on nearby static receivers, such as the ground around a moving car. This uses a conservative search of visible dynamic geometry, allowing new receivers to receive extra candidates before temporal influence history exists. Reprojected influence history is also used when SVGF is active. This does not change the detail ray tracing distance.
 		</member>
 		<member name="rendering/global_illumination/hddagi/screen_probe_guided_sampling" type="bool" setter="" getter="" default="false">
 			Guides stochastic probe rays toward useful lighting samples.

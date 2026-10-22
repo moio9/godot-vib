@@ -34,6 +34,8 @@ const uint SCREEN_PROBE_FLAG_SPECULAR_SPATIAL_STRATIFICATION = 1u << 6u;
 const uint SCREEN_PROBE_DETAIL_TRACE_QUALITY_SHIFT = 7u;
 const uint SCREEN_PROBE_DETAIL_TRACE_QUALITY_MASK = 3u << SCREEN_PROBE_DETAIL_TRACE_QUALITY_SHIFT;
 const uint SCREEN_PROBE_FLAG_UNIFORM_PLACEMENT_JITTER = 1u << 9u;
+const uint SCREEN_PROBE_FLAG_DYNAMIC_SAMPLING = 1u << 10u;
+const uint SCREEN_PROBE_FLAG_DYNAMIC_SAMPLING_HISTORY_VALID = 1u << 11u;
 const uint SCREEN_PROBE_SKY_COLOR = 1u;
 const uint SCREEN_PROBE_SKY_TEXTURE = 2u;
 const uint SCREEN_PROBE_DEBUG_VALID = 1u << 0u;
@@ -105,6 +107,11 @@ layout(push_constant, std430) uniform Params {
 	uint detail_trace_mip_count;
 
 	vec4 sky_color;
+
+	uint dynamic_candidate_count;
+	float dynamic_sampling_distance;
+	float dynamic_sampling_radius;
+	uint dynamic_sampling_reserved;
 
 #if defined(MODE_SPECULAR_TRACE) || defined(MODE_SPECULAR_APPLY)
 	vec4 specular_tuning;
@@ -242,6 +249,9 @@ layout(set = 0, binding = 21) uniform texture2D directional_screen_radiance_buff
 layout(set = 0, binding = 22) uniform texture2D directional_previous_depth_buffer;
 layout(set = 0, binding = 23) uniform utexture2D directional_surface_history;
 layout(set = 0, binding = 24) uniform utexture2D directional_previous_surface_history;
+#endif
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE) && !defined(MODE_DIRECTIONAL_TRACE)
+layout(set = 0, binding = 25) uniform texture2D dynamic_previous_signal_input;
 #endif
 #ifdef MODE_SPECULAR_TRACE
 layout(set = 0, binding = 12) uniform texture2D specular_depth_buffer;
@@ -3777,6 +3787,10 @@ void specular_trace_main() {
 
 #endif
 
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE) && !defined(MODE_DIRECTIONAL_TRACE)
+#include "hddagi_screen_probe_dynamic_sampling_inc.glsl"
+#endif
+
 void screen_probe_trace_main() {
 	ivec2 probe_position = ivec2(gl_GlobalInvocationID.xy);
 	if (any(greaterThanEqual(probe_position, imageSize(raw_radiance_output)))) {
@@ -3794,7 +3808,12 @@ void screen_probe_trace_main() {
 	}
 	screen_probe_debug_mark(SCREEN_PROBE_DEBUG_VALID);
 
-	uint candidate_count = clamp(params.candidate_count, 1u, 8u);
+	uint base_candidate_count = clamp(params.candidate_count, 1u, 8u);
+	uint candidate_count = base_candidate_count;
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE) && !defined(MODE_DIRECTIONAL_TRACE)
+	candidate_count = stochastic_dynamic_candidate_count(origin_position, origin_depth, base_candidate_count);
+	screen_probe_debug_mark((candidate_count & 15u) << 12u);
+#endif
 	bool guided_sampling = (params.flags & SCREEN_PROBE_FLAG_GUIDED_SAMPLING) != 0u;
 	GuidedSamplingDistribution guided_distribution;
 	if (guided_sampling) {
@@ -3804,7 +3823,11 @@ void screen_probe_trace_main() {
 	float hit_distance = 0.0;
 	float dynamic_influence = 0.0;
 	for (uint candidate = 0u; candidate < candidate_count; candidate++) {
+#if defined(MODE_TRACE) && !defined(MODE_SPECULAR_TRACE) && !defined(MODE_DIRECTIONAL_TRACE)
+		vec2 sample_position = stochastic_dynamic_candidate_sample(uvec2(probe_position), candidate, base_candidate_count);
+#else
 		vec2 sample_position = sample_temporally_permuted_r2_sequence(uvec2(probe_position), params.frame_index * candidate_count + candidate, 0x44544330u);
+#endif
 		float proposal_pdf;
 		vec3 ray_direction;
 		if (guided_sampling) {

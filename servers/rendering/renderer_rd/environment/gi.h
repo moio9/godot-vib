@@ -559,6 +559,8 @@ private:
 				FLAG_SPECULAR_SPATIAL_STRATIFICATION = FLAG_DIRECTIONAL_SCREEN_RADIANCE_VALID,
 				FLAG_DETAIL_TRACE_QUALITY_SHIFT = 7u,
 				FLAG_UNIFORM_PLACEMENT_JITTER = 1u << 9u,
+				FLAG_DYNAMIC_SAMPLING = 1u << 10u,
+				FLAG_DYNAMIC_SAMPLING_HISTORY_VALID = 1u << 11u,
 			};
 
 			int32_t gi_size[2];
@@ -580,6 +582,11 @@ private:
 			uint32_t detail_trace_mip_count;
 
 			float sky_color[4];
+
+			uint32_t dynamic_candidate_count;
+			float dynamic_sampling_distance;
+			float dynamic_sampling_radius;
+			uint32_t dynamic_sampling_reserved;
 		};
 
 		struct ScreenProbeSVGFPreparePushConstant {

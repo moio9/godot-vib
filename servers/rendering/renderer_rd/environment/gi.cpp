@@ -3291,9 +3291,9 @@ void GI::init(SkyRD *p_sky) {
 	}
 
 	{
-		static_assert(sizeof(HDDAGIShader::ScreenProbePushConstant) == 80, "Screen probe push constant must match the shader ABI.");
-		static_assert(sizeof(HDDAGIShader::ScreenProbeSVGFPreparePushConstant) == 112, "Screen probe SVGF prepare push constant must match the shader ABI.");
-		static_assert(sizeof(HDDAGIShader::ScreenProbeSpecularPushConstant) == 112, "Screen probe specular push constant must match the shader ABI.");
+		static_assert(sizeof(HDDAGIShader::ScreenProbePushConstant) == 96, "Screen probe push constant must match the shader ABI.");
+		static_assert(sizeof(HDDAGIShader::ScreenProbeSVGFPreparePushConstant) == 128, "Screen probe SVGF prepare push constant must match the shader ABI.");
+		static_assert(sizeof(HDDAGIShader::ScreenProbeSpecularPushConstant) == 128, "Screen probe specular push constant must match the shader ABI.");
 		static_assert(sizeof(ScreenProbeSceneData) == 1088, "Screen probe scene data must match the shader ABI.");
 		static_assert(offsetof(ScreenProbeSceneData, previous_projection) == 816, "Screen probe previous projection offset must match the shader ABI.");
 		static_assert(offsetof(ScreenProbeSceneData, cam_inv_transform) == 944, "Screen probe camera inverse transform offset must match the shader ABI.");

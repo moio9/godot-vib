@@ -3876,6 +3876,10 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/frames_to_update_lights", PROPERTY_HINT_ENUM, "1 (Faster),2,4,8,16 (Slower)"), 2);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/frames_to_update_inactive_probes", PROPERTY_HINT_ENUM, "1 (Faster),2,4,8 (Slower)"), 3);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_candidate_count", PROPERTY_HINT_RANGE, "1,8,1"), 1);
+	GLOBAL_DEF("rendering/global_illumination/hddagi/screen_probe_dynamic_sampling", true);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_dynamic_candidate_count", PROPERTY_HINT_RANGE, "1,8,1"), 4);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/global_illumination/hddagi/screen_probe_dynamic_sampling_distance", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), 30.0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/global_illumination/hddagi/screen_probe_dynamic_sampling_radius", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:m"), 2.0);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_denoiser", PROPERTY_HINT_ENUM, "Disabled:0,SVGF:1"), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/global_illumination/hddagi/screen_probe_denoiser_quality", PROPERTY_HINT_ENUM, "Low (Faster),Medium,High (Slower)"), 2);
 	GLOBAL_DEF("rendering/global_illumination/hddagi/screen_probe_denoiser_temporal_only", false);
